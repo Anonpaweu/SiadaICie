@@ -1,0 +1,59 @@
+"""Pydantic schemas for API request/response models."""
+from typing import List, Optional
+from pydantic import BaseModel
+
+
+class AnalyzeRequest(BaseModel):
+    from_station: str
+    to_station: str
+    date: str = "2026-11-15"
+    train_no: str = "IC 3520"
+    dep_time: Optional[str] = None
+    mode: str = "mock_classic"  # "mock_classic", "mock_overlap", "mock_standing", "live"
+    prefer_window: bool = False
+
+
+class StepResponse(BaseModel):
+    seat_uid: str
+    carriage_no: int
+    seat_no: str
+    from_station_idx: int
+    to_station_idx: int
+    from_station_name: str
+    to_station_name: str
+    duration_min: int
+    is_standing: bool = False
+    transfer_Instruction: Optional[str] = None
+
+
+class StrategyResponse(BaseModel):
+    rank: int
+    title: str
+    total_score: float
+    transfers_count: int
+    total_standing_min: int
+    carriages_used: List[int]
+    steps: List[StepResponse]
+
+
+class SeatAvailability(BaseModel):
+    seat_uid: str
+    carriage_no: int
+    seat_no: str
+    availability: List[int]
+
+
+class AnalyzeResponse(BaseModel):
+    stations: List[str]
+    segments: List[dict]
+    strategies: List[StrategyResponse]
+    seat_matrix: List[SeatAvailability]
+
+
+class HealthResponse(BaseModel):
+    status: str = "ok"
+
+
+class StationSearchResult(BaseModel):
+    name: str
+    eva_code: str

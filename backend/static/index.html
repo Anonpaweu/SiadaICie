@@ -1,0 +1,751 @@
+<!DOCTYPE html>
+<html lang="pl" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PKP Seat Optimizer — "Siedzisz.pl"</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#eff6ff',
+              500: '#3b82f6',
+              600: '#2563eb',
+              700: '#1d4ed8',
+              900: '#1e3a8a',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    .cell-selected {
+      box-shadow: inset 0 0 0 3px #fbbf24, 0 0 14px rgba(251, 191, 36, 0.45);
+      background-color: #1e3a8a !important;
+      color: #fbbf24 !important;
+      font-weight: bold;
+    }
+    .cell-custom {
+      box-shadow: inset 0 0 0 3px #a855f7, 0 0 14px rgba(168, 85, 247, 0.45);
+      background-color: #581c87 !important;
+      color: #f3e8ff !important;
+      font-weight: bold;
+    }
+    .scrollbar-thin::-webkit-scrollbar {
+      height: 6px;
+      width: 6px;
+    }
+    .scrollbar-thin::-webkit-scrollbar-thumb {
+      background: #475569;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans flex flex-col antialiased">
+
+  <!-- Header -->
+  <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-50 px-6 py-4 flex items-center justify-between">
+    <div class="flex items-center space-x-3">
+      <div class="w-10 h-10 rounded-lg bg-blue-600 flex items-center justify-center text-xl font-bold shadow-lg shadow-blue-500/20">
+        🚄
+      </div>
+      <div>
+        <h1 class="text-xl font-extrabold tracking-tight text-white flex items-center gap-2">
+          PKP Seat Optimizer
+          <span class="text-xs font-semibold px-2 py-0.5 rounded bg-blue-500/20 text-blue-400 border border-blue-500/30">Pro &bull; v1.2</span>
+        </h1>
+        <p class="text-xs text-slate-400">Autonomiczny optymalizator miejsc siedzących w pociągach PKP Intercity</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-4 text-xs">
+      <div id="wsIndicator" class="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-3 py-1.5 rounded-full">
+        <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+        WebSocket &bull; Silnik DAG / DP aktywny
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
+
+    <!-- 1. Panel Sterowania -->
+    <section class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl space-y-4">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+          <span>⚙️</span> Parametry Podróży i Preferencje
+        </h2>
+        <span class="text-xs text-slate-500">Wybierz scenariusz symulacyjny lub odpytaj API na żywo</span>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <!-- Mode selection -->
+        <div>
+          <label class="block text-xs font-medium text-slate-300 mb-1.5">Tryb / Scenariusz</label>
+          <select id="modeSelect" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 text-slate-200">
+            <option value="mock_classic">Scenariusz 1: Blok B-C (Wagon 10)</option>
+            <option value="mock_overlap" selected>Scenariusz 2: Zakładka (Wagony 8 → 6 → 7)</option>
+            <option value="mock_standing">Scenariusz 3: Stanie na korytarzu (C-D)</option>
+            <option value="live">Tryb Live (ebilet.intercity.pl)</option>
+          </select>
+        </div>
+
+        <!-- From Station -->
+        <div class="relative">
+          <label class="block text-xs font-medium text-slate-300 mb-1.5">Stacja początkowa (A)</label>
+          <input type="text" id="fromStation" value="Warszawa Centralna" autocomplete="off" oninput="handleStationSearch('fromStation', 'fromSuggestions')" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 text-slate-200" />
+          <div id="fromSuggestions" class="hidden absolute left-0 right-0 top-full mt-1 bg-slate-900 border border-slate-700 rounded-lg shadow-2xl z-50 max-h-56 overflow-y-auto divide-y divide-slate-800 text-xs"></div>
+        </div>
+
+        <!-- To Station -->
+        <div class="relative">
+          <label class="block text-xs font-medium text-slate-300 mb-1.5">Stacja docelowa (G)</label>
+          <input type="text" id="toStation" value="Gdańsk Główny" autocomplete="off" oninput="handleStationSearch('toStation', 'toSuggestions')" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 text-slate-200" />
+          <div id="toSuggestions" class="hidden absolute left-0 right-0 top-full mt-1 bg-slate-900 border border-slate-700 rounded-lg shadow-2xl z-50 max-h-56 overflow-y-auto divide-y divide-slate-800 text-xs"></div>
+        </div>
+
+        <!-- Train No & Date -->
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <div class="flex justify-between items-center mb-1">
+              <label class="block text-xs font-medium text-slate-300">Pociąg</label>
+              <button type="button" onclick="loadAvailableTrains()" class="text-[10px] text-blue-400 hover:text-blue-300 underline font-medium">🔍 Szukaj pociągów</button>
+            </div>
+            <select id="trainSelect" onchange="onTrainSelected()" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-200 mb-1">
+              <option value="">-- Wybierz z rozkładu PKP --</option>
+            </select>
+            <input type="text" id="trainNo" value="IC 1510" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500 text-slate-200" placeholder="np. IC 1510" />
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-slate-300 mb-1.5">Data podróży</label>
+            <input type="date" id="travelDate" value="2026-10-29" onchange="loadAvailableTrains()" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 text-slate-200" />
+            <div class="flex items-center gap-2 mt-2">
+              <input type="checkbox" id="directOnly" onchange="toggleDirectFilter()" class="rounded border-slate-700 bg-slate-950 text-blue-600 focus:ring-blue-500 w-3.5 h-3.5 cursor-pointer">
+              <label for="directOnly" class="text-[11px] text-slate-400 select-none cursor-pointer">Tylko bezpośrednie połączenia</label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Advanced Weights & Profile Selectors -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Profil Strategii</label>
+          <select id="profileSelect" onchange="runAnalysis()" class="w-full bg-slate-950 border border-slate-700 rounded px-2.5 py-1.5 text-xs text-slate-200">
+            <option value="BALANCED" selected>Zrównoważony (Rekomendowany)</option>
+            <option value="MINIMAL_WALKING">Leniwy pasażer (Minimalny spacer po pociągu)</option>
+            <option value="MINIMAL_TRANSFERS">Najmniej przesiadek (Maksymalne odcinki)</option>
+          </select>
+        </div>
+
+        <div>
+          <div class="flex justify-between text-xs text-slate-400 mb-1">
+            <span>Kara za zmianę wagonu</span>
+            <span id="walkingPenaltyVal" class="text-blue-400 font-semibold">Średnia</span>
+          </div>
+          <input type="range" id="walkingPenalty" min="1" max="3" value="2" onchange="updateSliderLabels()" class="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-blue-600">
+        </div>
+
+        <div>
+          <div class="flex justify-between text-xs text-slate-400 mb-1">
+            <span>Priorytet spokoju do końca trasy</span>
+            <span id="finalBonusVal" class="text-emerald-400 font-semibold">Maksymalny</span>
+          </div>
+          <input type="range" id="finalBonus" min="1" max="3" value="3" onchange="updateSliderLabels()" class="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-emerald-500">
+        </div>
+      </div>
+
+      <!-- Checkboxes and Action Button -->
+      <div class="flex flex-wrap items-center justify-between pt-3 border-t border-slate-800 gap-4">
+        <div class="flex items-center space-x-6">
+          <label class="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer">
+            <input type="checkbox" id="prefCloseCarriages" checked class="rounded border-slate-700 bg-slate-950 text-blue-600 focus:ring-blue-500 h-4 w-4" />
+            <span>Unikaj dalekich spacerów między wagonami</span>
+          </label>
+          <label class="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer">
+            <input type="checkbox" id="prefWindow" class="rounded border-slate-700 bg-slate-950 text-blue-600 focus:ring-blue-500 h-4 w-4" />
+            <span>Preferuj miejsce przy oknie</span>
+          </label>
+        </div>
+
+        <button id="analyzeBtn" onclick="runAnalysis()" class="bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-semibold text-sm px-6 py-2 rounded-lg shadow-lg shadow-blue-600/30 transition-all flex items-center gap-2">
+          <span>🔍</span>
+          <span>Analizuj miejsca w pociągu</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- 2. Pasek Postępu Na Żywo (Progress Bar) -->
+    <div id="progressSection" class="hidden bg-slate-900 border border-slate-800 rounded-xl p-4 shadow space-y-2">
+      <div class="flex justify-between items-center text-xs font-medium">
+        <span id="progressMessage" class="text-blue-400">Pobieranie rozkładu jazdy...</span>
+        <span id="progressPercent" class="text-slate-400">0%</span>
+      </div>
+      <div class="w-full bg-slate-950 h-2.5 rounded-full overflow-hidden border border-slate-800">
+        <div id="progressBar" class="bg-gradient-to-r from-blue-600 to-cyan-400 h-full w-0 transition-all duration-300"></div>
+      </div>
+    </div>
+
+    <!-- Error message alert -->
+    <div id="errorAlert" class="hidden bg-red-950/50 border border-red-800 text-red-300 p-4 rounded-xl text-sm flex items-start gap-3">
+      <span class="text-lg">⚠️</span>
+      <div id="errorMessage">Wystąpił błąd podczas analizy.</div>
+    </div>
+
+    <!-- 3. Sekcja Rekomendowanych Strategii (Top 3 Karty) -->
+    <section>
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+          <span>🏆</span> Rekomendowane Strategie Podróży (Top 3)
+        </h2>
+        <span class="text-xs text-slate-500">Kliknij kartę, aby podświetlić jej przebieg na osi Gantta</span>
+      </div>
+
+      <div id="strategiesContainer" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <!-- Rendered dynamically -->
+      </div>
+    </section>
+
+    <!-- 4. Własny Wariant Użytkownika (Interactive Custom Route Builder) -->
+    <section id="customRouteSection" class="hidden bg-purple-950/20 border border-purple-800/40 rounded-xl p-4 shadow flex items-center justify-between flex-wrap gap-4">
+      <div class="flex items-center gap-3">
+        <div class="w-8 h-8 rounded-lg bg-purple-600/30 border border-purple-500/40 flex items-center justify-center text-purple-300 font-bold">
+          ✍️
+        </div>
+        <div>
+          <h3 class="text-xs font-bold text-purple-200">Twój Własny Wybór Miejsc (Tryb Interaktywny)</h3>
+          <p id="customRouteStats" class="text-xs text-purple-300/80">Klikaj komórki na poniższej tabeli, aby ułożyć własną kombinację foteli!</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <button onclick="resetCustomRoute()" class="text-xs px-3 py-1.5 rounded bg-purple-900/40 hover:bg-purple-900/60 border border-purple-700/50 text-purple-200 transition-colors">
+          Resetuj do strategii #1
+        </button>
+      </div>
+    </section>
+
+    <!-- 5. Interaktywna Tablica Miejsc (Gantt Chart / Heatmapa) -->
+    <section class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl space-y-4">
+      <div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-3">
+        <div>
+          <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+            <span>📊</span> Tablica Dostępności Miejsc (Wykres Gantta)
+          </h2>
+          <p class="text-xs text-slate-500">Kliknij dowolną zieloną komórkę, aby ręcznie wybrać to miejsce na danym odcinku!</p>
+        </div>
+
+        <!-- Filters -->
+        <div class="flex items-center gap-3 text-xs">
+          <label class="text-slate-400">Filtr wagonu:</label>
+          <select id="carriageFilter" onchange="renderMatrix()" class="bg-slate-950 border border-slate-700 rounded px-2.5 py-1 text-slate-200">
+            <option value="ALL">Wszystkie wagony</option>
+          </select>
+          <label class="flex items-center space-x-1.5 text-slate-300 cursor-pointer ml-2">
+            <input type="checkbox" id="filterOnlySelected" onchange="renderMatrix()" class="rounded border-slate-700 bg-slate-950 text-blue-600 h-3.5 w-3.5" />
+            <span>Tylko wybrane miejsca</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Legend -->
+      <div class="flex flex-wrap items-center gap-5 text-xs text-slate-400">
+        <div class="flex items-center gap-1.5">
+          <span class="w-3.5 h-3.5 rounded bg-emerald-600/80 border border-emerald-500 inline-block"></span>
+          <span>Wolne</span>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <span class="w-3.5 h-3.5 rounded bg-red-900/60 border border-red-700 inline-block"></span>
+          <span>Zajęte</span>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <span class="w-3.5 h-3.5 rounded bg-blue-900 border-2 border-amber-400 shadow-sm shadow-amber-400/50 inline-block"></span>
+          <span>Wybrana ścieżka algorytmu</span>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <span class="w-3.5 h-3.5 rounded bg-purple-900 border-2 border-purple-400 shadow-sm shadow-purple-400/50 inline-block"></span>
+          <span>Twój ręczny wybór</span>
+        </div>
+      </div>
+
+      <!-- Matrix Table Scrollable Container -->
+      <div class="overflow-x-auto scrollbar-thin rounded-lg border border-slate-800">
+        <table id="ganttTable" class="w-full text-center border-collapse text-xs">
+          <!-- Dynamically populated -->
+        </table>
+      </div>
+    </section>
+
+    <!-- 6. Podgląd Wybranego Wagonu (CarriageMiniMap) -->
+    <section id="miniMapSection" class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl space-y-3">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+        <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+          <span>🪑</span> Podgląd Układu Wagonu (Carriage MiniMap)
+        </h3>
+        <span id="miniMapCarriageLabel" class="text-xs text-blue-400 font-bold">Wagon 8 &bull; Klasa 2</span>
+      </div>
+      <div id="miniMapContainer" class="bg-slate-950 p-4 rounded-lg border border-slate-800 flex items-center justify-center">
+        <!-- Rendered dynamically -->
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="border-t border-slate-800 text-center py-4 text-xs text-slate-500">
+    PKP Seat Optimizer &bull; Algorytm DAG / Programowanie Dynamiczne &bull; MVP Complete &bull; Siedzisz.pl
+  </footer>
+
+  <script>
+    let currentAnalysisData = null;
+    let selectedStrategyIndex = 0;
+    let customPath = {}; // mapping segIdx -> seat_uid
+    let activeMiniMapCarriage = null;
+    let searchDebounceTimer = null;
+
+    async function handleStationSearch(inputId, suggestionsId) {
+      const query = document.getElementById(inputId).value.trim();
+      const box = document.getElementById(suggestionsId);
+      if (query.length < 2) {
+        box.classList.add('hidden');
+        return;
+      }
+      clearTimeout(searchDebounceTimer);
+      searchDebounceTimer = setTimeout(async () => {
+        try {
+          const res = await fetch(`/api/stations/search?q=${encodeURIComponent(query)}`);
+          if (!res.ok) return;
+          const stations = await res.json();
+          if (!stations.length) {
+            box.classList.add('hidden');
+            return;
+          }
+          box.innerHTML = '';
+          stations.forEach(s => {
+            const item = document.createElement('div');
+            item.className = 'px-3 py-2 hover:bg-blue-600/30 cursor-pointer flex justify-between items-center transition-colors text-slate-200';
+            item.innerHTML = `<span class="font-medium">${s.name}</span><span class="text-[10px] text-slate-500 font-mono">EVA: ${s.eva_code}</span>`;
+            item.onclick = () => {
+              document.getElementById(inputId).value = s.name;
+              box.classList.add('hidden');
+              loadAvailableTrains();
+            };
+            box.appendChild(item);
+          });
+          box.classList.remove('hidden');
+        } catch(e) {}
+      }, 200);
+    }
+
+    window.allFetchedTrains = [];
+    window.selectedTrainDepTime = null;
+
+    function toggleDirectFilter() {
+      if (window.allFetchedTrains && window.allFetchedTrains.length > 0) {
+        renderTrainSelect();
+      } else {
+        loadAvailableTrains();
+      }
+    }
+
+    function renderTrainSelect() {
+      const select = document.getElementById('trainSelect');
+      const directOnly = document.getElementById('directOnly') ? document.getElementById('directOnly').checked : false;
+      const trains = directOnly
+        ? (window.allFetchedTrains || []).filter(t => t.changes === 0)
+        : (window.allFetchedTrains || []);
+
+      const countText = trains.length > 0 ? `znaleziono ${trains.length}` : 'brak połączeń';
+      select.innerHTML = `<option value="">-- Wybierz pociąg (${countText}) --</option>`;
+
+      trains.forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = t.train_number;
+        opt.dataset.dep = t.departure;
+        opt.dataset.arr = t.arrival;
+        opt.dataset.changes = t.changes;
+        const transferInfo = t.changes > 0 ? ` [Przesiadki: ${t.changes}]` : ' [Bezpośredni]';
+        opt.textContent = `${t.departure} → ${t.arrival} | ${t.train_number} (${t.duration})${transferInfo}`;
+        select.appendChild(opt);
+      });
+
+      if (trains.length > 0) {
+        select.selectedIndex = 1;
+        onTrainSelected();
+      }
+    }
+
+    async function loadAvailableTrains() {
+      const fromSt = document.getElementById('fromStation').value.trim();
+      const toSt = document.getElementById('toStation').value.trim();
+      const date = document.getElementById('travelDate').value;
+      const select = document.getElementById('trainSelect');
+      if (!fromSt || !toSt) return;
+
+      select.innerHTML = '<option value="">⏳ Wyszukiwanie wszystkich pociągów PKP (cały dzień)...</option>';
+      try {
+        const url = `/api/v1/trains?from_station=${encodeURIComponent(fromSt)}&to_station=${encodeURIComponent(toSt)}&date=${encodeURIComponent(date)}&direct_only=false`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('Błąd API');
+        const trains = await res.json();
+        window.allFetchedTrains = trains || [];
+        renderTrainSelect();
+      } catch (e) {
+        select.innerHTML = '<option value="">Nie udało się pobrać (wpisz numer ręcznie)</option>';
+      }
+    }
+
+    function onTrainSelected() {
+      const select = document.getElementById('trainSelect');
+      if (select.value && select.selectedIndex >= 0) {
+        const opt = select.options[select.selectedIndex];
+        document.getElementById('trainNo').value = select.value;
+        window.selectedTrainDepTime = opt.dataset ? opt.dataset.dep : null;
+        document.getElementById('modeSelect').value = 'live';
+      }
+    }
+
+    // Hide suggestions when clicking outside
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('#fromStation') && !e.target.closest('#fromSuggestions')) {
+        document.getElementById('fromSuggestions')?.classList.add('hidden');
+      }
+      if (!e.target.closest('#toStation') && !e.target.closest('#toSuggestions')) {
+        document.getElementById('toSuggestions')?.classList.add('hidden');
+      }
+    });
+
+    function updateSliderLabels() {
+      const walk = document.getElementById('walkingPenalty').value;
+      const walkText = walk == '1' ? 'Niska' : walk == '2' ? 'Średnia' : 'Wysoka';
+      document.getElementById('walkingPenaltyVal').innerText = walkText;
+
+      const finalVal = document.getElementById('finalBonus').value;
+      const finalText = finalVal == '1' ? 'Niski' : finalVal == '2' ? 'Standardowy' : 'Maksymalny';
+      document.getElementById('finalBonusVal').innerText = finalText;
+    }
+
+    async function runAnalysis() {
+      const mode = document.getElementById('modeSelect').value;
+      const fromStation = document.getElementById('fromStation').value;
+      const toStation = document.getElementById('toStation').value;
+      const trainNo = document.getElementById('trainNo').value;
+      const travelDate = document.getElementById('travelDate').value;
+      const preferWindow = document.getElementById('prefWindow').checked;
+
+      const progressSection = document.getElementById('progressSection');
+      const progressBar = document.getElementById('progressBar');
+      const progressMessage = document.getElementById('progressMessage');
+      const progressPercent = document.getElementById('progressPercent');
+      const errorAlert = document.getElementById('errorAlert');
+
+      errorAlert.classList.add('hidden');
+      progressSection.classList.remove('hidden');
+      progressBar.style.width = '15%';
+      progressMessage.innerText = 'Nawiązywanie połączenia...';
+      progressPercent.innerText = '15%';
+
+      try {
+        let p = 20;
+        const interval = setInterval(() => {
+          if (p < 85) {
+            p += 20;
+            progressBar.style.width = p + '%';
+            progressPercent.innerText = p + '%';
+            progressMessage.innerText = 'Przeszukiwanie grafu DAG i dobór optymalnych wagonów...';
+          }
+        }, 120);
+
+        const response = await fetch('/api/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            from_station: fromStation,
+            to_station: toStation,
+            date: travelDate,
+            train_no: trainNo,
+            dep_time: window.selectedTrainDepTime,
+            mode: mode,
+            prefer_window: preferWindow,
+          })
+        });
+
+        clearInterval(interval);
+
+        if (!response.ok) {
+          const errData = await response.json();
+          throw new Error(errData.detail || 'Błąd połączenia z serwerem.');
+        }
+
+        const data = await response.json();
+        currentAnalysisData = data;
+        selectedStrategyIndex = 0;
+        customPath = {};
+
+        progressBar.style.width = '100%';
+        progressPercent.innerText = '100%';
+        progressMessage.innerText = 'Optymalizacja zakończona!';
+
+        setTimeout(() => {
+          progressSection.classList.add('hidden');
+        }, 500);
+
+        renderCarriageFilter(data.seat_matrix);
+        renderStrategies(data.strategies);
+        renderMatrix();
+        renderMiniMap();
+
+      } catch (err) {
+        progressSection.classList.add('hidden');
+        errorAlert.classList.remove('hidden');
+        document.getElementById('errorMessage').innerText = err.message;
+      }
+    }
+
+    function renderCarriageFilter(seatMatrix) {
+      const select = document.getElementById('carriageFilter');
+      const carriages = [...new Set(seatMatrix.map(s => s.carriage_no))].sort((a,b) => a-b);
+      select.innerHTML = '<option value="ALL">Wszystkie wagony</option>';
+      carriages.forEach(c => {
+        select.innerHTML += `<option value="${c}">Wagon ${c}</option>`;
+      });
+    }
+
+    function renderStrategies(strategies) {
+      const container = document.getElementById('strategiesContainer');
+      container.innerHTML = '';
+
+      if (!strategies || strategies.length === 0) {
+        container.innerHTML = '<div class="col-span-3 text-center text-slate-500 py-6">Brak dostępnych strategii.</div>';
+        return;
+      }
+
+      strategies.forEach((strat, idx) => {
+        const isSelected = idx === selectedStrategyIndex && Object.keys(customPath).length === 0;
+        const cardBorder = isSelected ? 'border-amber-400 ring-2 ring-amber-400/40' : 'border-slate-800 hover:border-slate-700';
+
+        let stepsHtml = '';
+        strat.steps.forEach(step => {
+          if (step.is_standing) {
+            stepsHtml += `
+              <div class="text-xs flex items-center gap-2 text-red-400 bg-red-950/40 p-2 rounded border border-red-900/50 my-1">
+                <span>🚶</span>
+                <div>
+                  <strong>${step.from_station_name} → ${step.to_station_name}</strong>: KORYTARZ (${step.duration_min} min)
+                  ${step.transfer_Instruction ? `<div class="text-[10px] text-slate-400 italic">${step.transfer_Instruction}</div>` : ''}
+                </div>
+              </div>`;
+          } else {
+            stepsHtml += `
+              <div class="text-xs flex items-center gap-2 text-emerald-300 bg-emerald-950/30 p-2 rounded border border-emerald-900/50 my-1">
+                <span>💺</span>
+                <div>
+                  <strong>${step.from_station_name} → ${step.to_station_name}</strong>: Wagon ${step.carriage_no}, m. ${step.seat_no} (${step.duration_min} min)
+                  ${step.transfer_Instruction ? `<div class="text-[10px] text-amber-300/80 italic">↳ ${step.transfer_Instruction}</div>` : ''}
+                </div>
+              </div>`;
+          }
+        });
+
+        const card = document.createElement('div');
+        card.className = `bg-slate-900 border ${cardBorder} rounded-xl p-4 cursor-pointer transition-all shadow-lg`;
+        card.onclick = () => {
+          selectedStrategyIndex = idx;
+          customPath = {};
+          document.getElementById('customRouteSection').classList.add('hidden');
+          renderStrategies(currentAnalysisData.strategies);
+          renderMatrix();
+          renderMiniMap();
+        };
+
+        card.innerHTML = `
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-bold px-2 py-0.5 rounded ${isSelected ? 'bg-amber-400 text-slate-950' : 'bg-slate-800 text-slate-300'}">
+              #${strat.rank} ${isSelected ? '✓ WYBRANA' : ''}
+            </span>
+            <span class="text-xs text-slate-400">${strat.total_score} pkt</span>
+          </div>
+          <h3 class="text-sm font-bold text-white mb-1">${strat.title}</h3>
+          <div class="text-xs text-slate-400 flex items-center gap-3 mb-3">
+            <span>🔄 Przesiadki: <strong>${strat.transfers_count}</strong></span>
+            <span>🚶 Stanie: <strong>${strat.total_standing_min} min</strong></span>
+          </div>
+          <div class="space-y-1">
+            ${stepsHtml}
+          </div>
+        `;
+        container.appendChild(card);
+      });
+    }
+
+    function onCellClick(seatUid, segIdx, isFree) {
+      if (isFree !== 1) return; // Cannot pick occupied seat
+
+      customPath[segIdx] = seatUid;
+      document.getElementById('customRouteSection').classList.remove('hidden');
+
+      // Update custom stats
+      const segCount = currentAnalysisData.segments.length;
+      const pickedCount = Object.keys(customPath).length;
+      let transfers = 0;
+      let lastSeat = null;
+
+      for (let i = 0; i < segCount; i++) {
+        const s = customPath[i];
+        if (s && lastSeat && s !== lastSeat) {
+          transfers++;
+        }
+        if (s) lastSeat = s;
+      }
+
+      document.getElementById('customRouteStats').innerHTML =
+        `Wybrano: <strong>${pickedCount}/${segCount}</strong> odcinków &bull; Liczba przesiadek: <strong>${transfers}</strong> &bull; Klikaj kolejne komórki, aby modyfikować trasę!`;
+
+      renderMatrix();
+      renderMiniMap(seatUid.split('_')[0]);
+    }
+
+    function resetCustomRoute() {
+      customPath = {};
+      document.getElementById('customRouteSection').classList.add('hidden');
+      renderStrategies(currentAnalysisData.strategies);
+      renderMatrix();
+      renderMiniMap();
+    }
+
+    function renderMatrix() {
+      if (!currentAnalysisData) return;
+
+      const table = document.getElementById('ganttTable');
+      const carriageFilter = document.getElementById('carriageFilter').value;
+      const filterOnlySelected = document.getElementById('filterOnlySelected').checked;
+      const { stations, segments, seat_matrix, strategies } = currentAnalysisData;
+
+      const activeStrategy = strategies[selectedStrategyIndex];
+      const selectedCells = new Set();
+      const selectedSeatUids = new Set();
+
+      if (activeStrategy) {
+        activeStrategy.steps.forEach(step => {
+          if (!step.is_standing) {
+            selectedSeatUids.add(step.seat_uid);
+            for (let i = step.from_station_idx; i < step.to_station_idx; i++) {
+              selectedCells.add(`${step.seat_uid}_${i}`);
+            }
+          }
+        });
+      }
+
+      // Filter seats
+      let filteredSeats = seat_matrix;
+      if (carriageFilter !== 'ALL') {
+        filteredSeats = filteredSeats.filter(s => String(s.carriage_no) === carriageFilter);
+      }
+      if (filterOnlySelected) {
+        filteredSeats = filteredSeats.filter(s => selectedSeatUids.has(s.seat_uid) || Object.values(customPath).includes(s.seat_uid));
+      }
+
+      // Header row
+      let headerHtml = '<thead><tr class="bg-slate-950 text-slate-300">';
+      headerHtml += '<th class="p-2.5 border border-slate-800 text-left font-semibold">Miejsce / Wagon</th>';
+      segments.forEach(seg => {
+        headerHtml += `<th class="p-2.5 border border-slate-800 font-semibold">${seg.from_station} → ${seg.to_station}<div class="text-[10px] text-slate-500 font-normal">${seg.duration_min} min</div></th>`;
+      });
+      headerHtml += '</tr></thead>';
+
+      // Rows
+      let bodyHtml = '<tbody class="divide-y divide-slate-800">';
+      filteredSeats.forEach(seat => {
+        bodyHtml += `<tr class="hover:bg-slate-800/40 transition-colors">`;
+        bodyHtml += `<td class="p-2.5 border border-slate-800 font-medium text-left bg-slate-900/80 text-slate-200 cursor-pointer" onclick="renderMiniMap('${seat.carriage_no}', '${seat.seat_no}')">
+          <div class="flex items-center justify-between">
+            <span>Wagon ${seat.carriage_no}, m. ${seat.seat_no}</span>
+            <span class="text-[10px] text-slate-500">🔍 podgląd</span>
+          </div>
+        </td>`;
+
+        seat.availability.forEach((isFree, segIdx) => {
+          const isAlgorithmSelected = selectedCells.has(`${seat.seat_uid}_${segIdx}`);
+          const isCustomSelected = customPath[segIdx] === seat.seat_uid;
+
+          let cellClass = '';
+          let cellText = '';
+
+          if (isCustomSelected) {
+            cellClass = 'cell-custom cursor-pointer';
+            cellText = 'WYBRANE (TY)';
+          } else if (isAlgorithmSelected && Object.keys(customPath).length === 0) {
+            cellClass = 'cell-selected cursor-pointer';
+            cellText = 'WYBRANE';
+          } else if (isFree === 1) {
+            cellClass = 'bg-emerald-950/60 text-emerald-400 border border-emerald-900/60 font-medium hover:bg-emerald-900/80 cursor-pointer';
+            cellText = 'WOLNE';
+          } else {
+            cellClass = 'bg-red-950/40 text-red-500/80 border border-red-900/40 cursor-not-allowed';
+            cellText = 'ZAJĘTE';
+          }
+
+          bodyHtml += `<td class="p-2.5 border border-slate-800 ${cellClass} transition-all" onclick="onCellClick('${seat.seat_uid}', ${segIdx}, ${isFree})">${cellText}</td>`;
+        });
+        bodyHtml += '</tr>';
+      });
+      bodyHtml += '</tbody>';
+
+      table.innerHTML = headerHtml + bodyHtml;
+    }
+
+    function renderMiniMap(carriageNo = null, seatNo = null) {
+      if (!currentAnalysisData) return;
+      const container = document.getElementById('miniMapContainer');
+      const label = document.getElementById('miniMapCarriageLabel');
+
+      const cNo = carriageNo || (currentAnalysisData.seat_matrix[0] ? currentAnalysisData.seat_matrix[0].carriage_no : 8);
+      label.innerText = `Wagon ${cNo} • Klasa 2 • Bezprzedziałowy`;
+
+      let seatsHtml = '';
+      const seatsInCarriage = currentAnalysisData.seat_matrix.filter(s => String(s.carriage_no) === String(cNo));
+
+      seatsHtml += '<div class="w-full max-w-2xl bg-slate-900 border-2 border-slate-700 rounded-2xl p-4 flex flex-col gap-3 relative shadow-inner">';
+      seatsHtml += '<div class="absolute -top-3 left-6 bg-slate-800 text-[10px] px-2 py-0.5 rounded text-slate-400 font-mono">OKNO (LEWA STRONA)</div>';
+
+      seatsHtml += '<div class="grid grid-cols-8 gap-2 py-2">';
+      for (let s = 11; s <= 58; s += (s % 2 === 0 ? 9 : 1)) {
+        const isTarget = seatNo && String(seatNo) === String(s);
+        const exists = seatsInCarriage.some(x => String(x.seat_no) === String(s));
+        const bg = isTarget ? 'bg-amber-400 text-slate-950 font-bold ring-2 ring-amber-300' :
+                   exists ? 'bg-blue-600/60 text-white border border-blue-400/50' : 'bg-slate-800/60 text-slate-500 border border-slate-700';
+
+        seatsHtml += `<div class="h-10 rounded-lg flex items-center justify-center text-xs ${bg} transition-all">m. ${s}</div>`;
+      }
+      seatsHtml += '</div>';
+
+      seatsHtml += '<div class="h-3 border-t border-b border-dashed border-slate-700 flex items-center justify-center text-[9px] text-slate-500 tracking-widest uppercase">Korytarz / Przejście</div>';
+
+      seatsHtml += '<div class="grid grid-cols-8 gap-2 py-2">';
+      for (let s = 12; s <= 59; s += (s % 2 === 0 ? 1 : 9)) {
+        const isTarget = seatNo && String(seatNo) === String(s);
+        const exists = seatsInCarriage.some(x => String(x.seat_no) === String(s));
+        const bg = isTarget ? 'bg-amber-400 text-slate-950 font-bold ring-2 ring-amber-300' :
+                   exists ? 'bg-blue-600/60 text-white border border-blue-400/50' : 'bg-slate-800/60 text-slate-500 border border-slate-700';
+
+        seatsHtml += `<div class="h-10 rounded-lg flex items-center justify-center text-xs ${bg} transition-all">m. ${s}</div>`;
+      }
+      seatsHtml += '</div>';
+
+      seatsHtml += '<div class="absolute -bottom-3 left-6 bg-slate-800 text-[10px] px-2 py-0.5 rounded text-slate-400 font-mono">OKNO (PRAWA STRONA)</div>';
+      seatsHtml += '</div>';
+
+      container.innerHTML = seatsHtml;
+    }
+
+    // Auto-run simulation and load trains on page load
+    window.addEventListener('DOMContentLoaded', () => {
+      loadAvailableTrains();
+      runAnalysis();
+    });
+  </script>
+</body>
+</html>

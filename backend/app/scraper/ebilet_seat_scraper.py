@@ -40,7 +40,7 @@ from backend.app.models.domain import (
     FullTrainAvailabilityMap,
 )
 from backend.app.engine.availability_parser import format_availability_map
-from backend.app.scraper.schedule_scraper import resolve_real_route
+from backend.app.scraper.schedule_scraper import resolve_real_route, get_station_info
 from backend.app.scraper.route_resolver import filter_and_merge_stops
 from backend.app.scraper.ic_client import GraphicReservationUnavailableError
 
@@ -332,50 +332,57 @@ class EbiletSeatScraper:
             except Exception:
                 pass
 
+    def build_direct_search_url(
+        self,
+        from_station: str,
+        to_station: str,
+        date_str: str,
+        departure_time: str,
+        direct_only: bool = True,
+    ) -> str:
+        """
+        Buduje bezpośredni adres URL wyszukiwania połączeń w e-IC 2.0 (Krok 2)
+        na podstawie identyfikatorów EVA stacji, omijając wszelkie formularze i przyciski 'Dalej'.
+        Wzorzec z kanonicznego linku w 2-e-IC2 - Internetowa rezerwacja miejsc.html.
+        """
+        _, from_eva = get_station_info(from_station)
+        _, to_eva = get_station_info(to_station)
+
+        clean_date = date_str.strip()
+        if "." in clean_date:
+            parts = clean_date.split(".")
+            if len(parts) == 3 and len(parts[2]) == 4:
+                clean_date = f"{parts[2]}-{parts[1]}-{parts[0]}"
+
+        clean_time = departure_time.strip() if departure_time else "12:00"
+        polbez = "1" if direct_only else "0"
+
+        return (
+            f"https://ebilet.intercity.pl/wyszukiwanie?"
+            f"dwyj={clean_date}&swyj={from_eva}&sprzy={to_eva}&"
+            f"time={clean_time}&przy=0&sprzez=&ticket100=1010&ticket50=&polbez={polbez}"
+        )
+
     async def submit_search_form(self, page: Page) -> None:
         """
-        Submits connection search form on e-IC 2.0 or intercity.pl (Tasks V3-13 to V3-16).
-        Checks is_enabled() and prevents submission when stations are not validated.
+        Pomocnicza metoda wysyłania formularza jeśli strona znajduje się na intercity.pl lub e-IC 2.0.
         """
-        confirm_btn_selectors = [
-            "button[data-testid='ConfirmButton']",
-            "button[type='submit'][aria-label='Dalej']",
+        search_btns = [
             "button[name='search']",
             "button[type='submit']:has-text('Wyszukaj')",
-            "button[type='submit']:has-text('Dalej')",
+            "#searchTrainForm button[type='submit']",
+            "button[data-testid='ConfirmButton']",
             "button[type='submit']",
         ]
-
-        confirm_btn = None
-        for sel in confirm_btn_selectors:
+        for sel in search_btns:
             btn = page.locator(sel).first
             try:
-                if await btn.is_visible(timeout=1000):
-                    confirm_btn = btn
-                    break
+                if await btn.is_visible(timeout=800):
+                    await btn.click()
+                    logger.info(f"[SEARCH] Kliknięto przycisk wyszukiwania: {sel}")
+                    return
             except Exception:
                 pass
-
-        if not confirm_btn:
-            raise GraphicReservationUnavailableError("Nie znaleziono przycisku wyszukiwania połączeń.")
-
-        # Check disabled state (Tasks V3-14 & V3-15)
-        is_enabled = await confirm_btn.is_enabled()
-        if not is_enabled:
-            for _ in range(6):
-                await asyncio.sleep(0.5)
-                if await confirm_btn.is_enabled():
-                    is_enabled = True
-                    break
-
-        if not is_enabled:
-            snap_png, _ = await self.save_debug_snapshot(page, "err_search_form_disabled")
-            raise GraphicReservationUnavailableError(
-                f"Przycisk 'Dalej' (ConfirmButton) pozostał nieaktywny – stacja początkowa lub końcowa nie została zatwierdzona z listy podpowiedzi. Zapisano {snap_png.name}"
-            )
-
-        await confirm_btn.click()
-        logger.info("[SEARCH] Kliknięto przycisk wyszukiwania połączeń.")
 
     async def search_segment_on_intercity(
         self,
@@ -389,8 +396,10 @@ class EbiletSeatScraper:
         progress_cb: Optional[Callable[[int, str], None]] = None,
     ) -> Dict[str, List[str]]:
         """
-        Executes full 6-step search and seat extraction on ebilet.intercity.pl / intercity.pl.
-        Strictly enforces Class 2, handles Cookiebot and Comboboxes, and never blindly falls back.
+        Realizuje odczyt miejsc ze schematu wagonów na trasie from_station -> to_station.
+        Otwiera bezpośrednio listę połączeń (Krok 2), rozwija pociąg ('Kup bilet'),
+        wybiera klasę 2 (Krok 3), klika 'Wybierz miejsce' (Krok 4), odczytuje wolne zielone miejsca
+        ze wszystkich wagonów 2. klasy (Kroki 5 & 6) i zamyka modal ('Zamknij').
         """
         def report(pct: int, msg: str):
             logger.info(f"[{pct}%] {msg}")
@@ -408,9 +417,7 @@ class EbiletSeatScraper:
             if "application/json" in ct and "intercity.pl" in url.lower():
                 try:
                     data = await response.json()
-                    # Log network call per Task V3-04
                     log_network_api_call(url, response.status, data)
-                    # If it relates to schema, seats, or wagons, save for parsing
                     if any(k in url.lower() for k in ["seat", "schemat", "wagon", "carriage", "uklad", "places"]):
                         captured_network_json.append(data)
                         logger.debug(f"[NETWORK] Intercepted seatmap JSON from: {url}")
@@ -420,64 +427,23 @@ class EbiletSeatScraper:
         page.on("response", on_response)
 
         try:
-            # 1. Navigate or return to ebilet search form
-            report(15, f"Przygotowywanie wyszukiwania dla trasy {from_station} -> {to_station}...")
-            cur_url = page.url or ""
-            is_already_on_eic2 = "ebilet.intercity.pl" in cur_url
+            # Krok 1 & 2: Otwarcie bezpośredniego adresu wyszukiwania połączeń w e-IC 2.0
+            report(20, f"Otwieranie listy połączeń dla trasy {from_station} -> {to_station}...")
+            direct_url = self.build_direct_search_url(from_station, to_station, date_str, departure_time)
+            logger.info(f"[DIRECT URL] Nawigacja bezpośrednia do listy połączeń: {direct_url}")
 
-            if is_already_on_eic2:
-                logger.info("[SESSION] Wykorzystanie aktywnej sesji e-IC 2.0 bez pełnego przeładowywania.")
-                # Close any open modal dialog
-                try:
-                    await page.keyboard.press("Escape")
-                    close_btn = page.locator("button[aria-label='Zamknij'], button:has-text('Zamknij')").first
-                    if await close_btn.is_visible(timeout=400):
-                        await close_btn.click()
-                except Exception:
-                    pass
+            await page.goto(direct_url, wait_until="domcontentloaded", timeout=25000)
+            await asyncio.sleep(0.5)
+            await self.close_cookie_banners(page)
 
-                # Return to search form via progress bar / ZMIEŃ button
-                st_from_cnt = await page.locator("#stationFrom").count()
-                if st_from_cnt == 0 or not await page.locator("#stationFrom").is_visible():
-                    nav_search_btns = [
-                        page.locator("button.ProgressBar_interactive__69NOB:has-text('Wyszukiwarka')").first,
-                        page.locator("button:has-text('Wyszukiwarka')").first,
-                        page.locator("button:has-text('ZMIEŃ')").first,
-                    ]
-                    for n_btn in nav_search_btns:
-                        if await n_btn.is_visible(timeout=800):
-                            await n_btn.click()
-                            await asyncio.sleep(0.5)
-                            break
-            else:
-                search_url = "https://ebilet.intercity.pl/"
-                await page.goto(search_url, wait_until="domcontentloaded", timeout=25000)
-                await asyncio.sleep(0.5)
-                await self.close_cookie_banners(page)
-
-            # 2. Input from_station with combobox
-            report(25, f"Wprowadzanie stacji początkowej: {from_station}...")
-            from_input_sel = "#stationFrom" if await page.locator("#stationFrom").count() > 0 else "#stname-0"
-            await self.fill_station_combobox(page, from_input_sel, from_station)
-
-            # 3. Input to_station with combobox
-            report(35, f"Wprowadzanie stacji końcowej: {to_station}...")
-            to_input_sel = "#stationTo" if await page.locator("#stationTo").count() > 0 else "#stname-1"
-            await self.fill_station_combobox(page, to_input_sel, to_station)
-
-            # 4. Set travel date & departure time
-            report(45, f"Ustawianie godziny odjazdu: {departure_time}...")
-            clean_dep_time = departure_time.strip() if departure_time else "12:00"
-            await self.set_travel_date_and_time(page, date_str, clean_dep_time)
-
-            # 5. Submit search form (ConfirmButton)
-            report(55, "Wyszukiwanie listy połączeń...")
-            await self.submit_search_form(page)
-
-            # Wait for search results
+            # Oczekiwanie na kafelki pociągów na liście połączeń (Krok 2)
             try:
-                await page.wait_for_load_state("networkidle", timeout=6000)
+                await page.wait_for_selector(
+                    "li[class*='TripPropositionDesktop'], .connection-row, tr.connection, ul[class*='YourTrip']",
+                    timeout=10000,
+                )
             except Exception:
+                pass
                 pass
 
             # Step 2: Connection list (Tasks V3-17 to V3-20)

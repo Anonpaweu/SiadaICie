@@ -4,7 +4,7 @@ Domain models for PKP Intercity Seat Optimizer ("Siedzisz.pl").
 Represents stations, segments, seats, carriages, train topology, and journey legs.
 """
 from enum import Enum
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 
 
@@ -89,6 +89,30 @@ class TravelLeg(BaseModel):
     duration_minutes: int
     transfer_instruction_after: Optional[str] = None
     explanation: Optional[str] = None
+
+
+class RouteSegment(BaseModel):
+    seg_idx: int
+    from_station: Any
+    to_station: Any
+    duration_min: int
+    departure_time: str = ""
+    arrival_time: str = ""
+    train_number: str = ""
+
+
+class SegmentAvailabilityMap(BaseModel):
+    segment_index: int
+    from_station: str
+    to_station: str
+    departure_time: str = ""
+    carriages: Dict[str, List[str]] = Field(default_factory=dict)
+
+
+class FullTrainAvailabilityMap(BaseModel):
+    train_number: str = ""
+    travel_date: str = ""
+    segments: List[SegmentAvailabilityMap] = Field(default_factory=list)
 
 
 class OptimizationProfile(str, Enum):

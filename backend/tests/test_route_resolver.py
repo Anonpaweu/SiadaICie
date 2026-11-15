@@ -34,7 +34,7 @@ class TestWarsawHubMerging:
             _make_stop(4, "Gdańsk Główny", 320, 320),
         ]
 
-        filtered = filter_and_merge_stops(raw_stops)
+        filtered = filter_and_merge_stops(raw_stops, merge_short_segments=True)
         names = [s.name for s in filtered]
 
         # Kraków and Gdańsk must always be present (start/end)
@@ -61,7 +61,7 @@ class TestTriCitiesEndMerging:
             _make_stop(6, "Gdynia Główna", 322, 322),
         ]
 
-        filtered = filter_and_merge_stops(raw_stops)
+        filtered = filter_and_merge_stops(raw_stops, merge_short_segments=True)
         names = [s.name for s in filtered]
 
         # Start must be preserved
@@ -113,3 +113,32 @@ class TestBuildRouteSegments:
         # Verify continuity: each segment's to_station == next segment's from_station
         for i in range(len(segments) - 1):
             assert segments[i].to_station.name == segments[i + 1].from_station.name
+
+
+class TestKeepShortSegments:
+    """Task 049: 6-minute segment Częstochowa 15:40 -> Częstochowa Stradom 15:46 is kept by default."""
+
+    def test_czestochowa_stradom_not_dropped(self):
+        raw_stops = [
+            _make_stop(0, "Koluszki", 0, 0),
+            _make_stop(1, "Radomsko", 50, 52),
+            _make_stop(2, "Częstochowa", 78, 80),
+            _make_stop(3, "Częstochowa Stradom", 86, 88),  # 6 min travel from dep of Częstochowa
+            _make_stop(4, "Lubliniec", 120, 120),
+        ]
+        # By default merge_short_segments=False
+        filtered = filter_and_merge_stops(raw_stops)
+        names = [s.name for s in filtered]
+        assert "Częstochowa" in names
+        assert "Częstochowa Stradom" in names
+        assert len(names) == 5
+
+        segments = build_route_segments(filtered)
+        assert len(segments) == 4
+        # Check segment 2 is Częstochowa -> Częstochowa Stradom (duration 6 min)
+        seg2 = segments[2]
+        from_name = getattr(seg2.from_station, 'name', seg2.from_station_name)
+        to_name = getattr(seg2.to_station, 'name', seg2.to_station_name)
+        assert "Częstochowa" in from_name and "Stradom" not in from_name
+        assert "Stradom" in to_name
+        assert seg2.duration_min == 6

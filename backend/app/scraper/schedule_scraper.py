@@ -15,6 +15,7 @@ from datetime import datetime
 from html import unescape
 from typing import List, Optional, Dict, Tuple
 import httpx
+from pydantic import BaseModel
 
 from backend.app.db.database import get_connection, init_db
 from backend.app.scraper.route_resolver import (
@@ -403,37 +404,39 @@ def find_ti_url_for_train(
     return None
 
 
-def fetch_live_train_route_stops(
-    from_station: str,
-    to_station: str,
-    train_no: str,
-    travel_date: str,
-    dep_time: Optional[str] = None,
-) -> List[StationStop]:
+class RouteStop(BaseModel):
+    station_name: str
+    eva_code: str
+    arrival_time: Optional[str] = None
+    departure_time: Optional[str] = None
+    duration_from_start_min: int = 0
+    seq: int = 0
+
+
+class TrainRouteExtractor:
     """
-    Scrapes the exact sequence of intermediate stops for a train from /pl/sq and /pl/ti.
-    Slices the stops between from_station and to_station, correctly accumulating minutes
-    across midnight crossings.
+    Extracts complete train route, intermediate stations, EVA codes, and exact arrival/departure times
+    from official timetable portals (rozklad-pkp.pl / Portal Pasażera / HAFAS).
     """
-    from_name, from_eva = get_station_info(from_station)
-    to_name, to_eva = get_station_info(to_station)
 
-    date_formatted = travel_date
-    if "-" in travel_date:
-        parts = travel_date.split("-")
-        if len(parts) == 3 and len(parts[0]) == 4:
-            date_formatted = f"{parts[2]}.{parts[1]}.{parts[0]}"
+    def __init__(self, timeout: int = 12):
+        self.timeout = timeout
 
-    ti_url = find_ti_url_for_train(from_eva, from_name, train_no, date_formatted, dep_time=dep_time)
-    if not ti_url:
-        return []
-
-    try:
-        r_ti = httpx.get(ti_url, headers=DEFAULT_HEADERS, follow_redirects=True, timeout=12)
-        if r_ti.status_code != 200:
-            return []
-
-        rows = re.findall(r'<tr[^>]*>.*?</tr>', r_ti.text, re.DOTALL)
+    @staticmethod
+    def parse_stops_from_ti_html(
+        html_text: str,
+        from_station: str,
+        to_station: str,
+        from_eva: str = "",
+        to_eva: str = "",
+    ) -> List[RouteStop]:
+        """
+        Parses HTML from /pl/ti (or traininfo.exe), extracts station names, EVA codes from href (input=51...),
+        arrival and departure times, slices between from_station and to_station,
+        and computes cumulative duration in minutes.
+        """
+        from backend.app.db.seed_stations import upsert_station
+        rows = re.findall(r'<tr[^>]*>.*?</tr>', html_text, re.DOTALL)
         raw_stops = []
 
         for r_row in rows:
@@ -445,6 +448,7 @@ def fetch_live_train_route_stops(
                 arr_m = re.search(r'\b(\d{1,2}:\d{2})\b', re.sub(r'<[^>]+>', '', tds[2]))
                 dep_m = re.search(r'\b(\d{1,2}:\d{2})\b', re.sub(r'<[^>]+>', '', tds[3]))
 
+                # Task 042 & 048: Extract EVA from href or attribute
                 eva_m = re.findall(r'(?:input|station_evaId)=(\d{7})', tds[1])
                 eva = eva_m[0] if eva_m else ""
 
@@ -457,9 +461,15 @@ def fetch_live_train_route_stops(
                     if not arr_str:
                         arr_str = dep_str
 
+                    # Task 043: Auto-upsert into SQLite stations table
+                    if eva:
+                        upsert_station(stn_name, eva)
+
                     raw_stops.append({
                         "name": stn_name,
                         "eva": eva,
+                        "arr_str": arr_str,
+                        "dep_str": dep_str,
                         "m_arr": time_to_minutes(arr_str),
                         "m_dep": time_to_minutes(dep_str),
                     })
@@ -467,7 +477,7 @@ def fetch_live_train_route_stops(
         if not raw_stops:
             return []
 
-        # Calculate cumulative minutes monotonic across midnight crossings
+        # Monotonic time across midnight
         cum_stops = []
         day_offset = 0
         prev_dep = None
@@ -479,25 +489,25 @@ def fetch_live_train_route_stops(
             cum_stops.append({
                 "name": s["name"],
                 "eva_code": s["eva"],
+                "arrival_time": s["arr_str"],
+                "departure_time": s["dep_str"],
                 "arr_min": s["m_arr"] + day_offset,
                 "dep_min": s["m_dep"] + day_offset,
             })
 
-        # Find slice between from_station and to_station
+        # Slice from_station to to_station
         from_idx = None
         to_idx = None
 
         for i, s in enumerate(cum_stops):
             s_name = s["name"].lower()
             s_eva = s["eva_code"]
-
             if from_idx is None:
-                if (from_eva and from_eva == s_eva) or (from_name.lower() in s_name) or (from_station.lower() in s_name):
+                if (from_eva and from_eva == s_eva) or (from_station.lower() in s_name):
                     from_idx = i
                     continue
-
             if from_idx is not None and to_idx is None:
-                if (to_eva and to_eva == s_eva) or (to_name.lower() in s_name) or (to_station.lower() in s_name):
+                if (to_eva and to_eva == s_eva) or (to_station.lower() in s_name):
                     to_idx = i
                     break
 
@@ -506,26 +516,95 @@ def fetch_live_train_route_stops(
         else:
             sliced = cum_stops
 
-        # Re-zero arrival / departure minutes to start of user journey
         start_min = sliced[0]["dep_min"]
-        station_stops = []
+        route_stops: List[RouteStop] = []
         for seq, s in enumerate(sliced):
-            arr_adj = max(0, s["arr_min"] - start_min)
-            dep_adj = max(arr_adj, s["dep_min"] - start_min)
-            station_stops.append(
-                StationStop(
+            dur = max(0, s["arr_min"] - start_min)
+            route_stops.append(
+                RouteStop(
                     seq=seq,
+                    station_name=s["name"],
                     eva_code=s["eva_code"] or f"5100{seq:03d}",
-                    name=s["name"],
-                    arrival_min=arr_adj,
-                    departure_min=dep_adj,
+                    arrival_time=s["arrival_time"],
+                    departure_time=s["departure_time"],
+                    duration_from_start_min=dur,
                 )
             )
 
-        return station_stops
-    except Exception as e:
-        logger.warning(f"Error extracting live train stops: {e}")
+        return route_stops
+
+    def get_train_route_by_number_or_relation(
+        self,
+        from_station: str,
+        to_station: str,
+        date_str: str,
+        time_str: str = "00:00",
+        train_number: Optional[str] = None,
+    ) -> List[RouteStop]:
+        from_name, from_eva = get_station_info(from_station)
+        to_name, to_eva = get_station_info(to_station)
+
+        date_formatted = date_str
+        if "-" in date_str:
+            parts = date_str.split("-")
+            if len(parts) == 3 and len(parts[0]) == 4:
+                date_formatted = f"{parts[2]}.{parts[1]}.{parts[0]}"
+
+        t_no = train_number or ""
+        ti_url = find_ti_url_for_train(from_eva, from_name, t_no, date_formatted, dep_time=time_str)
+        if not ti_url:
+            return []
+
+        try:
+            r = httpx.get(ti_url, headers=DEFAULT_HEADERS, timeout=self.timeout, follow_redirects=True)
+            if r.status_code != 200:
+                return []
+            stops = self.parse_stops_from_ti_html(r.text, from_station, to_station, from_eva, to_eva)
+
+            # Task 047: Log route
+            if stops:
+                route_str = " -> ".join(f"{s.seq + 1}. {s.station_name} ({s.departure_time or s.arrival_time})" for s in stops)
+                logger.info(f"[ROUTE] Pociąg {train_number or ''}: {route_str}")
+
+            return stops
+        except Exception as e:
+            logger.warning(f"Error fetching train route details: {e}")
+            return []
+
+
+def fetch_live_train_route_stops(
+    from_station: str,
+    to_station: str,
+    train_no: str,
+    travel_date: str,
+    dep_time: Optional[str] = None,
+) -> List[StationStop]:
+    """
+    Scrapes the exact sequence of intermediate stops for a train from /pl/sq and /pl/ti.
+    Slices the stops between from_station and to_station, correctly accumulating minutes
+    across midnight crossings.
+    """
+    extractor = TrainRouteExtractor()
+    route_stops = extractor.get_train_route_by_number_or_relation(
+        from_station, to_station, travel_date, time_str=dep_time or "00:00", train_number=train_no
+    )
+    if not route_stops:
         return []
+
+    station_stops = []
+    for s in route_stops:
+        station_stops.append(
+            StationStop(
+                seq=s.seq,
+                eva_code=s.eva_code,
+                name=s.station_name,
+                arrival_min=s.duration_from_start_min,
+                departure_min=s.duration_from_start_min,
+                arrival_time=s.arrival_time or "",
+                departure_time=s.departure_time or "",
+            )
+        )
+    return station_stops
 
 
 def resolve_real_route(

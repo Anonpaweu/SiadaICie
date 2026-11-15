@@ -1,0 +1,40 @@
+Koluszki - Piotrków 14:45
+W5 m82
+W7 m35/m31/m25/m33
+W6 m15/m53
+W3 m84/m87/m91
+W8 m22/m11/m14/m12
+W4 m76
+
+Piotrków - Radomsko 15:12
+W3 m91
+W4 m76
+W5 m82/m88/m74/m65/m32/m33
+W6 m15/m53
+W7 m35/m31/m25/m33
+W8 m22/m11/m14/m12
+
+Radomsko - Częstochowa 15:40
+W3 m84/m91
+W4 m76
+W5 m82/m88/m74/m65/m32/m33
+W6 m15/m53
+W7 m35/m31/m25/m33
+W8 m22/m11/m14/m12
+
+Częstochowa - Częstochowa Stradom 16:03
+W3 m84/m87/m91
+W4 m76
+W5 m82/m88/m74/m65/m32/m33
+W6 m15/m53
+W7 m35/m31/m25/m33
+W8 m22/m11/m14/m12
+
+Częstochowa Stradom - Lubliniec 16:11
+W3 m84/m87/m91
+W5 m88/m83/m81
+W8 m88/m86/m84/m82
+
+Lubliniec - Opole Główne 16:39
+W3 m84/m87/m91
+W8 m88/m86/m84/m82

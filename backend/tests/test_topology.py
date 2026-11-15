@@ -41,3 +41,19 @@ def test_disconnected_ezt_units():
     dist = calculate_physical_distance(s1, s2, topology)
     assert dist == 600.0  # Massive penalty requiring walking via station platform
 
+
+def test_pkp_compartment_numbering():
+    """
+    Task 030: Checks that seats 81, 82, 83, 88 belong to compartment 8,
+    and seat 106 belongs to compartment 10.
+    """
+    from backend.app.engine.topology import get_compartment
+
+    for s in ["81", "82", "83", "88", 81, 82, 83, 88]:
+        assert get_compartment(s) == 8, f"Seat {s} should be in compartment 8"
+
+    assert get_compartment("106") == 10
+    assert get_compartment(106) == 10
+    assert get_compartment("15") == 1
+    assert get_compartment("53") == 5
+

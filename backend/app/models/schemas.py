@@ -24,6 +24,11 @@ class StepResponse(BaseModel):
     duration_min: int
     is_standing: bool = False
     transfer_Instruction: Optional[str] = None
+    compartment: Optional[int] = None
+    alternative_seats_in_same_carriage: List[str] = []
+
+
+SeatBlockSchema = StepResponse
 
 
 class StrategyResponse(BaseModel):
@@ -34,6 +39,11 @@ class StrategyResponse(BaseModel):
     total_standing_min: int
     carriages_used: List[int]
     steps: List[StepResponse]
+    purchase_instructions: List[str] = []
+    tickets_to_buy: List[str] = []
+
+
+RouteRecommendationSchema = StrategyResponse
 
 
 class SeatAvailability(BaseModel):
@@ -48,6 +58,41 @@ class AnalyzeResponse(BaseModel):
     segments: List[dict]
     strategies: List[StrategyResponse]
     seat_matrix: List[SeatAvailability]
+    raw_availability_report: Optional[str] = None
+    purchase_instructions: List[str] = []
+
+
+OptimizationResponse = AnalyzeResponse
+
+
+class ManualMapRequest(BaseModel):
+    raw_text: str
+    prefer_window: bool = False
+
+
+class LiveOptimizeRequest(BaseModel):
+    from_station: str
+    to_station: str
+    date: str
+    time: Optional[str] = "12:00"
+    train_number: Optional[str] = "IC 3520"
+    headless: bool = True
+    prefer_window: bool = False
+
+
+class TrainStopItem(BaseModel):
+    seq: int
+    name: str
+    arrival_time: str = ""
+    departure_time: str = ""
+    eva_code: str = ""
+
+
+class TrainRouteResponse(BaseModel):
+    train_number: str
+    travel_date: str
+    stops: List[TrainStopItem]
+    formatted_route: str
 
 
 class HealthResponse(BaseModel):

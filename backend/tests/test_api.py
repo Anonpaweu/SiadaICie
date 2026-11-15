@@ -1,4 +1,5 @@
 """Tests for the FastAPI endpoints."""
+from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
@@ -103,6 +104,20 @@ class TestAnalyzeEndpoint:
 
     def test_analyze_live_mode_real_route(self):
         """Test POST /api/analyze in live mode resolves real route with actual stations and timing."""
+        from backend.app.db.database import set_cached_item
+        from backend.app.scraper.schedule_scraper import resolve_real_route
+        from backend.app.scraper.route_resolver import filter_and_merge_stops
+
+        stops = filter_and_merge_stops(resolve_real_route("Warszawa Centralna", "Gdańsk Główny", "2026-11-15", "IC 3520"))
+        seats_payload = {
+            f"{c}_{s}": 1 for c in (6, 7, 8) for s in ("11", "12", "15", "16", "21")
+        }
+        for i in range(len(stops) - 1):
+            set_cached_item(
+                f"seatmap_IC 3520_2026-11-15_{stops[i].name}_{stops[i+1].name}_c2",
+                {"seats": seats_payload}
+            )
+
         response = client.post(
             "/api/analyze",
             json={
@@ -140,3 +155,87 @@ class TestAnalyzeEndpoint:
             assert "seat_no" in seat
             assert "availability" in seat
             assert len(seat["availability"]) == 6  # 6 segments for 7 stations
+
+
+class TestOptimizeFromText:
+    """Tests for POST /api/v1/optimize-from-text endpoint (Tasks 084, 085)."""
+
+    def test_optimize_from_text_koluszki_opole(self):
+        fixture_path = Path(__file__).parent / "fixtures" / "koluszki_opole.txt"
+        assert fixture_path.exists(), "koluszki_opole.txt fixture must exist"
+        raw_text = fixture_path.read_text(encoding="utf-8")
+
+        response = client.post(
+            "/api/v1/optimize-from-text",
+            json={"raw_text": raw_text},
+        )
+        assert response.status_code == 200
+        data = response.json()
+
+        # Verify 6 segments and 7 stations
+        assert len(data["segments"]) == 6
+        assert len(data["stations"]) == 7
+        assert data["stations"][0] == "Koluszki"
+        assert data["stations"][-1] == "Opole Główne"
+
+        # Verify strategies
+        assert len(data["strategies"]) >= 1
+        best = data["strategies"][0]
+        assert best["transfers_count"] in (0, 1)
+        assert len(best["steps"]) >= 1
+
+        # Check purchase instructions (Task 085)
+        assert len(best["purchase_instructions"]) >= 1
+        assert len(data["purchase_instructions"]) >= 1
+        assert any("Wagon" in instr for instr in data["purchase_instructions"])
+
+    def test_optimize_from_text_empty_input(self):
+        response = client.post(
+            "/api/v1/optimize-from-text",
+            json={"raw_text": ""},
+        )
+        assert response.status_code == 400
+
+
+class TestTrainRouteEndpoint:
+    """Tests for GET /api/v1/train-route endpoint (Task 079)."""
+
+    def test_get_train_route_success(self):
+        response = client.get(
+            "/api/v1/train-route",
+            params={
+                "from_station": "Koluszki",
+                "to_station": "Opole Główne",
+                "date": "2026-11-15",
+                "train_number": "IC 16104",
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["train_number"] == "IC 16104"
+        assert len(data["stops"]) >= 2
+        assert "Koluszki" in data["formatted_route"]
+
+
+class TestErrorHandlingScraper:
+    """Tests for 502 Bad Gateway error handling when scraper is blocked (Task 086)."""
+
+    def test_live_scraper_returns_502_when_blocked(self, monkeypatch):
+        from backend.app.scraper.ebilet_seat_scraper import LiveTrainScanner, GraphicReservationUnavailableError
+
+        async def mock_scan_failure(*args, **kwargs):
+            raise GraphicReservationUnavailableError("Brak możliwości wyboru miejsca ze schematu na odcinku Koluszki -> Piotrków")
+
+        monkeypatch.setattr(LiveTrainScanner, "scan_full_train", mock_scan_failure)
+
+        response = client.post(
+            "/api/v1/optimize",
+            json={
+                "from_station": "Koluszki",
+                "to_station": "Opole Główne",
+                "date": "2026-11-15",
+                "train_number": "IC 16104",
+            },
+        )
+        assert response.status_code == 502
+        assert "Brak możliwości wyboru miejsca" in response.json()["detail"]

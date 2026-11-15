@@ -57,7 +57,7 @@
       <div>
         <h1 class="text-xl font-extrabold tracking-tight text-white flex items-center gap-2">
           PKP Seat Optimizer
-          <span class="text-xs font-semibold px-2 py-0.5 rounded bg-blue-500/20 text-blue-400 border border-blue-500/30">Pro &bull; v1.2</span>
+          <span class="text-xs font-semibold px-2 py-0.5 rounded bg-blue-500/20 text-blue-400 border border-blue-500/30">Pro &bull; v2.0 Live</span>
         </h1>
         <p class="text-xs text-slate-400">Autonomiczny optymalizator miejsc siedzących w pociągach PKP Intercity</p>
       </div>
@@ -65,7 +65,7 @@
     <div class="flex items-center gap-4 text-xs">
       <div id="wsIndicator" class="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-3 py-1.5 rounded-full">
         <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-        WebSocket &bull; Silnik DAG / DP aktywny
+        Playwright Scraper + Silnik DAG / DP aktywny
       </div>
     </div>
   </header>
@@ -73,98 +73,74 @@
   <!-- Main Container -->
   <main class="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
 
-    <!-- 1. Panel Sterowania -->
-    <section class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl space-y-4">
+    <!-- Mode Switcher Tabs (Task 089) -->
+    <div class="flex border-b border-slate-800 space-x-2">
+      <button id="tabLiveBtn" onclick="switchTab('live')" class="px-5 py-3 text-sm font-semibold rounded-t-lg border-b-2 border-blue-500 bg-slate-900 text-blue-400 flex items-center gap-2 transition-all">
+        <span>🌐</span>
+        <span>Tryb 1: Skanuj pociąg automatycznie (Live PKP IC)</span>
+      </button>
+      <button id="tabTextBtn" onclick="switchTab('text')" class="px-5 py-3 text-sm font-semibold rounded-t-lg border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/60 flex items-center gap-2 transition-all">
+        <span>📝</span>
+        <span>Tryb 2: Wklej / Edytuj rozpiskę miejsc (w3 m54/m56)</span>
+      </button>
+    </div>
+
+    <!-- PANEL TRYBU 1: Live PKP IC -->
+    <section id="panelModeLive" class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl space-y-4">
       <div class="flex items-center justify-between border-b border-slate-800 pb-3">
         <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-          <span>⚙️</span> Parametry Podróży i Preferencje
+          <span>⚙️</span> Skanowanie Na Żywo z PKP Intercity
         </h2>
-        <span class="text-xs text-slate-500">Wybierz scenariusz symulacyjny lub odpytaj API na żywo</span>
+        <span class="text-xs text-slate-500">Wyszukaj pociąg, pobierz przystanki i przeskanuj wolne wagony</span>
       </div>
 
       <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <!-- Mode selection -->
-        <div>
-          <label class="block text-xs font-medium text-slate-300 mb-1.5">Tryb / Scenariusz</label>
-          <select id="modeSelect" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 text-slate-200">
-            <option value="mock_classic">Scenariusz 1: Blok B-C (Wagon 10)</option>
-            <option value="mock_overlap" selected>Scenariusz 2: Zakładka (Wagony 8 → 6 → 7)</option>
-            <option value="mock_standing">Scenariusz 3: Stanie na korytarzu (C-D)</option>
-            <option value="live">Tryb Live (ebilet.intercity.pl)</option>
-          </select>
-        </div>
-
         <!-- From Station -->
         <div class="relative">
           <label class="block text-xs font-medium text-slate-300 mb-1.5">Stacja początkowa (A)</label>
-          <input type="text" id="fromStation" value="Warszawa Centralna" autocomplete="off" oninput="handleStationSearch('fromStation', 'fromSuggestions')" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 text-slate-200" />
+          <input type="text" id="fromStation" value="Koluszki" autocomplete="off" oninput="handleStationSearch('fromStation', 'fromSuggestions')" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 text-slate-200" />
           <div id="fromSuggestions" class="hidden absolute left-0 right-0 top-full mt-1 bg-slate-900 border border-slate-700 rounded-lg shadow-2xl z-50 max-h-56 overflow-y-auto divide-y divide-slate-800 text-xs"></div>
         </div>
 
         <!-- To Station -->
         <div class="relative">
-          <label class="block text-xs font-medium text-slate-300 mb-1.5">Stacja docelowa (G)</label>
-          <input type="text" id="toStation" value="Gdańsk Główny" autocomplete="off" oninput="handleStationSearch('toStation', 'toSuggestions')" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 text-slate-200" />
+          <label class="block text-xs font-medium text-slate-300 mb-1.5">Stacja docelowa (B)</label>
+          <input type="text" id="toStation" value="Opole Główne" autocomplete="off" oninput="handleStationSearch('toStation', 'toSuggestions')" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 text-slate-200" />
           <div id="toSuggestions" class="hidden absolute left-0 right-0 top-full mt-1 bg-slate-900 border border-slate-700 rounded-lg shadow-2xl z-50 max-h-56 overflow-y-auto divide-y divide-slate-800 text-xs"></div>
         </div>
 
-        <!-- Train No & Date -->
-        <div class="grid grid-cols-2 gap-2">
-          <div>
-            <div class="flex justify-between items-center mb-1">
-              <label class="block text-xs font-medium text-slate-300">Pociąg</label>
-              <button type="button" onclick="loadAvailableTrains()" class="text-[10px] text-blue-400 hover:text-blue-300 underline font-medium">🔍 Szukaj pociągów</button>
-            </div>
-            <select id="trainSelect" onchange="onTrainSelected()" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-200 mb-1">
-              <option value="">-- Wybierz z rozkładu PKP --</option>
-            </select>
-            <input type="text" id="trainNo" value="IC 1510" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500 text-slate-200" placeholder="np. IC 1510" />
-          </div>
-          <div>
-            <label class="block text-xs font-medium text-slate-300 mb-1.5">Data podróży</label>
-            <input type="date" id="travelDate" value="2026-10-29" onchange="loadAvailableTrains()" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 text-slate-200" />
-            <div class="flex items-center gap-2 mt-2">
-              <input type="checkbox" id="directOnly" onchange="toggleDirectFilter()" class="rounded border-slate-700 bg-slate-950 text-blue-600 focus:ring-blue-500 w-3.5 h-3.5 cursor-pointer">
-              <label for="directOnly" class="text-[11px] text-slate-400 select-none cursor-pointer">Tylko bezpośrednie połączenia</label>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Advanced Weights & Profile Selectors -->
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+        <!-- Train No (Task 090) -->
         <div>
-          <label class="block text-xs font-medium text-slate-400 mb-1">Profil Strategii</label>
-          <select id="profileSelect" onchange="runAnalysis()" class="w-full bg-slate-950 border border-slate-700 rounded px-2.5 py-1.5 text-xs text-slate-200">
-            <option value="BALANCED" selected>Zrównoważony (Rekomendowany)</option>
-            <option value="MINIMAL_WALKING">Leniwy pasażer (Minimalny spacer po pociągu)</option>
-            <option value="MINIMAL_TRANSFERS">Najmniej przesiadek (Maksymalne odcinki)</option>
+          <div class="flex justify-between items-center mb-1.5">
+            <label class="block text-xs font-medium text-slate-300">Numer pociągu (opcjonalnie)</label>
+            <button type="button" onclick="loadAvailableTrains()" class="text-[10px] text-blue-400 hover:text-blue-300 underline font-medium">🔍 Szukaj pociągów</button>
+          </div>
+          <select id="trainSelect" onchange="onTrainSelected()" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-200 mb-1.5">
+            <option value="">-- Wybierz z rozkładu PKP --</option>
           </select>
+          <input type="text" id="trainNo" value="IC 16104" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500 text-slate-200" placeholder="np. IC 16104" />
         </div>
 
+        <!-- Date & Time -->
         <div>
-          <div class="flex justify-between text-xs text-slate-400 mb-1">
-            <span>Kara za zmianę wagonu</span>
-            <span id="walkingPenaltyVal" class="text-blue-400 font-semibold">Średnia</span>
+          <label class="block text-xs font-medium text-slate-300 mb-1.5">Data i Godzina odjazdu</label>
+          <div class="grid grid-cols-2 gap-2">
+            <input type="date" id="travelDate" value="2026-11-15" onchange="loadAvailableTrains()" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-xs focus:outline-none focus:border-blue-500 text-slate-200" />
+            <input type="time" id="travelTime" value="14:45" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-xs focus:outline-none focus:border-blue-500 text-slate-200" />
           </div>
-          <input type="range" id="walkingPenalty" min="1" max="3" value="2" onchange="updateSliderLabels()" class="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-blue-600">
-        </div>
-
-        <div>
-          <div class="flex justify-between text-xs text-slate-400 mb-1">
-            <span>Priorytet spokoju do końca trasy</span>
-            <span id="finalBonusVal" class="text-emerald-400 font-semibold">Maksymalny</span>
+          <div class="flex items-center gap-2 mt-2">
+            <input type="checkbox" id="directOnly" onchange="toggleDirectFilter()" class="rounded border-slate-700 bg-slate-950 text-blue-600 focus:ring-blue-500 w-3.5 h-3.5 cursor-pointer">
+            <label for="directOnly" class="text-[11px] text-slate-400 select-none cursor-pointer">Tylko pociągi bezpośrednie</label>
           </div>
-          <input type="range" id="finalBonus" min="1" max="3" value="3" onchange="updateSliderLabels()" class="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-emerald-500">
         </div>
       </div>
 
-      <!-- Checkboxes and Action Button -->
+      <!-- Controls & Checkboxes (Task 090, 091) -->
       <div class="flex flex-wrap items-center justify-between pt-3 border-t border-slate-800 gap-4">
         <div class="flex items-center space-x-6">
-          <label class="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer">
-            <input type="checkbox" id="prefCloseCarriages" checked class="rounded border-slate-700 bg-slate-950 text-blue-600 focus:ring-blue-500 h-4 w-4" />
-            <span>Unikaj dalekich spacerów między wagonami</span>
+          <label class="flex items-center space-x-2 text-xs text-amber-300 font-semibold cursor-pointer">
+            <input type="checkbox" id="showBrowserCheckbox" class="rounded border-amber-600 bg-slate-950 text-amber-500 focus:ring-amber-500 h-4 w-4" />
+            <span>👁️ Pokaż okno przeglądarki podczas skanowania (podgląd na żywo)</span>
           </label>
           <label class="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer">
             <input type="checkbox" id="prefWindow" class="rounded border-slate-700 bg-slate-950 text-blue-600 focus:ring-blue-500 h-4 w-4" />
@@ -172,14 +148,63 @@
           </label>
         </div>
 
-        <button id="analyzeBtn" onclick="runAnalysis()" class="bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-semibold text-sm px-6 py-2 rounded-lg shadow-lg shadow-blue-600/30 transition-all flex items-center gap-2">
-          <span>🔍</span>
-          <span>Analizuj miejsca w pociągu</span>
+        <!-- 2-step buttons (Task 091) -->
+        <div class="flex items-center gap-3">
+          <button id="btnFetchRoute" onclick="fetchTrainRoute()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-semibold text-xs px-4 py-2.5 rounded-lg transition-all flex items-center gap-1.5 shadow">
+            <span>🗺️</span>
+            <span>1. Pobierz trasę i przystanki pociągu</span>
+          </button>
+          <button id="btnScanSeats" onclick="runLiveScan()" class="bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-semibold text-xs px-5 py-2.5 rounded-lg shadow-lg shadow-blue-600/30 transition-all flex items-center gap-2">
+            <span>🔍</span>
+            <span>2. Skanuj wolne miejsca we wszystkich wagonach i optymalizuj</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Route stops preview card (from Step 1) -->
+      <div id="routePreviewCard" class="hidden bg-slate-950/80 border border-blue-900/40 rounded-lg p-3 text-xs space-y-2">
+        <div class="flex justify-between items-center text-blue-400 font-semibold">
+          <span id="routePreviewTitle">Wykryta trasa pociągu</span>
+          <span id="routePreviewCount" class="text-slate-400 font-normal"></span>
+        </div>
+        <div id="routeStopsList" class="flex flex-wrap gap-2 text-slate-300 font-mono text-[11px]"></div>
+      </div>
+    </section>
+
+    <!-- PANEL TRYBU 2: Wklej / Edytuj rozpiskę miejsc (Task 092) -->
+    <section id="panelModeText" class="hidden bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl space-y-4">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div>
+          <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+            <span>📝</span> Rozpiska Wolnych Miejsc (Format: wX mY/mZ)
+          </h2>
+          <p class="text-xs text-slate-500">Wklej raport miejsc dla kolejnych odcinków lub załaduj wzorcowy przykład</p>
+        </div>
+        <div class="flex items-center gap-3">
+          <button onclick="loadFixtureKoluszkiOpole()" class="bg-slate-800 hover:bg-slate-700 text-amber-400 border border-amber-500/30 text-xs px-3.5 py-1.5 rounded-lg transition-colors font-semibold flex items-center gap-1.5">
+            <span>⭐</span>
+            <span>Załaduj przykład: Koluszki -> Opole</span>
+          </button>
+        </div>
+      </div>
+
+      <div>
+        <textarea id="rawMapInput" rows="11" class="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-blue-500 leading-relaxed scrollbar-thin" placeholder="Wklej rozpiskę np.:&#10;Koluszki - Piotrków 14:45&#10;W5 m82&#10;W3 m84/m87/m91&#10;&#10;Piotrków - Radomsko 15:12&#10;W3 m91&#10;W5 m82/m88"></textarea>
+      </div>
+
+      <div class="flex items-center justify-between pt-2 border-t border-slate-800">
+        <label class="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer">
+          <input type="checkbox" id="prefWindowText" class="rounded border-slate-700 bg-slate-950 text-blue-600 focus:ring-blue-500 h-4 w-4" />
+          <span>Preferuj miejsce przy oknie</span>
+        </label>
+        <button onclick="runTextOptimization()" class="bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-semibold text-xs px-6 py-2.5 rounded-lg shadow-lg shadow-emerald-600/30 transition-all flex items-center gap-2">
+          <span>⚡</span>
+          <span>Oblicz najlepszą trasę</span>
         </button>
       </div>
     </section>
 
-    <!-- 2. Pasek Postępu Na Żywo (Progress Bar) -->
+    <!-- Pasek Postępu Na Żywo (Progress Bar) -->
     <div id="progressSection" class="hidden bg-slate-900 border border-slate-800 rounded-xl p-4 shadow space-y-2">
       <div class="flex justify-between items-center text-xs font-medium">
         <span id="progressMessage" class="text-blue-400">Pobieranie rozkładu jazdy...</span>
@@ -191,12 +216,36 @@
     </div>
 
     <!-- Error message alert -->
-    <div id="errorAlert" class="hidden bg-red-950/50 border border-red-800 text-red-300 p-4 rounded-xl text-sm flex items-start gap-3">
+    <div id="errorAlert" class="hidden bg-red-950/60 border border-red-800 text-red-300 p-4 rounded-xl text-sm flex items-start gap-3">
       <span class="text-lg">⚠️</span>
-      <div id="errorMessage">Wystąpił błąd podczas analizy.</div>
+      <div id="errorMessage" class="flex-1 leading-relaxed">Wystąpił błąd podczas analizy.</div>
     </div>
 
-    <!-- 3. Sekcja Rekomendowanych Strategii (Top 3 Karty) -->
+    <!-- 4. Plan Zakupu Biletów i Przesiadek (Task 094) -->
+    <section id="purchasePlanSection" class="hidden bg-gradient-to-br from-slate-900 to-slate-900/90 border-2 border-amber-500/50 rounded-xl p-5 shadow-2xl space-y-3">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div class="flex items-center gap-3">
+          <div class="w-9 h-9 rounded-lg bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 text-xl font-bold">
+            🛒
+          </div>
+          <div>
+            <h2 class="text-sm font-extrabold uppercase tracking-wide text-amber-400">
+              Plan Zakupu Biletów i Przesiadek
+            </h2>
+            <p class="text-xs text-slate-400">Gotowa instrukcja zakupu biletów krok po kroku gwarantująca miejsce siedzące</p>
+          </div>
+        </div>
+        <span id="ticketsCountBadge" class="text-xs font-bold px-3 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+          Liczba biletów: 2
+        </span>
+      </div>
+
+      <div id="purchaseInstructionsList" class="space-y-2.5 pt-1">
+        <!-- Rendered dynamically -->
+      </div>
+    </section>
+
+    <!-- 5. Sekcja Rekomendowanych Strategii (Top 3 Karty) -->
     <section>
       <div class="flex items-center justify-between mb-3">
         <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-2">
@@ -210,44 +259,25 @@
       </div>
     </section>
 
-    <!-- 4. Własny Wariant Użytkownika (Interactive Custom Route Builder) -->
-    <section id="customRouteSection" class="hidden bg-purple-950/20 border border-purple-800/40 rounded-xl p-4 shadow flex items-center justify-between flex-wrap gap-4">
-      <div class="flex items-center gap-3">
-        <div class="w-8 h-8 rounded-lg bg-purple-600/30 border border-purple-500/40 flex items-center justify-center text-purple-300 font-bold">
-          ✍️
-        </div>
-        <div>
-          <h3 class="text-xs font-bold text-purple-200">Twój Własny Wybór Miejsc (Tryb Interaktywny)</h3>
-          <p id="customRouteStats" class="text-xs text-purple-300/80">Klikaj komórki na poniższej tabeli, aby ułożyć własną kombinację foteli!</p>
-        </div>
-      </div>
-      <div class="flex items-center gap-2">
-        <button onclick="resetCustomRoute()" class="text-xs px-3 py-1.5 rounded bg-purple-900/40 hover:bg-purple-900/60 border border-purple-700/50 text-purple-200 transition-colors">
-          Resetuj do strategii #1
-        </button>
-      </div>
-    </section>
-
-    <!-- 5. Interaktywna Tablica Miejsc (Gantt Chart / Heatmapa) -->
+    <!-- 6. Interaktywna Tablica Miejsc (Gantt Chart / Heatmapa) (Tasks 095, 096) -->
     <section class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl space-y-4">
       <div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-3">
         <div>
           <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-2">
             <span>📊</span> Tablica Dostępności Miejsc (Wykres Gantta)
           </h2>
-          <p class="text-xs text-slate-500">Kliknij dowolną zieloną komórkę, aby ręcznie wybrać to miejsce na danym odcinku!</p>
+          <p class="text-xs text-slate-500">Pogrupowana wagonami z uwzględnieniem numerów przedziałów i dokładnych godzin odjazdu</p>
         </div>
 
-        <!-- Filters -->
+        <!-- Filters (Task 096) -->
         <div class="flex items-center gap-3 text-xs">
           <label class="text-slate-400">Filtr wagonu:</label>
           <select id="carriageFilter" onchange="renderMatrix()" class="bg-slate-950 border border-slate-700 rounded px-2.5 py-1 text-slate-200">
             <option value="ALL">Wszystkie wagony</option>
           </select>
-          <label class="flex items-center space-x-1.5 text-slate-300 cursor-pointer ml-2">
-            <input type="checkbox" id="filterOnlySelected" onchange="renderMatrix()" class="rounded border-slate-700 bg-slate-950 text-blue-600 h-3.5 w-3.5" />
-            <span>Tylko wybrane miejsca</span>
-          </label>
+          <button id="toggleFilterSelectedBtn" onclick="toggleFilterSelected()" class="px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 transition-colors">
+            Pokaż tylko miejsca wchodzące w skład rekomendacji
+          </button>
         </div>
       </div>
 
@@ -279,32 +309,83 @@
       </div>
     </section>
 
-    <!-- 6. Podgląd Wybranego Wagonu (CarriageMiniMap) -->
-    <section id="miniMapSection" class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl space-y-3">
-      <div class="flex items-center justify-between border-b border-slate-800 pb-2">
-        <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-          <span>🪑</span> Podgląd Układu Wagonu (Carriage MiniMap)
-        </h3>
-        <span id="miniMapCarriageLabel" class="text-xs text-blue-400 font-bold">Wagon 8 &bull; Klasa 2</span>
-      </div>
-      <div id="miniMapContainer" class="bg-slate-950 p-4 rounded-lg border border-slate-800 flex items-center justify-center">
-        <!-- Rendered dynamically -->
-      </div>
-    </section>
-
   </main>
 
   <!-- Footer -->
   <footer class="border-t border-slate-800 text-center py-4 text-xs text-slate-500">
-    PKP Seat Optimizer &bull; Algorytm DAG / Programowanie Dynamiczne &bull; MVP Complete &bull; Siedzisz.pl
+    PKP Seat Optimizer &bull; Algorytm DAG / Programowanie Dynamiczne &bull; Siedzisz.pl
   </footer>
 
   <script>
     let currentAnalysisData = null;
     let selectedStrategyIndex = 0;
-    let customPath = {}; // mapping segIdx -> seat_uid
-    let activeMiniMapCarriage = null;
+    let customPath = {};
     let searchDebounceTimer = null;
+    let filterOnlyRecommended = false;
+
+    const SAMPLE_KOLUSZKI_OPOLE = `Koluszki - Piotrków 14:45
+W5 m82
+W7 m35/m31/m25/m33
+W6 m15/m53
+W3 m84/m87/m91
+W8 m22/m11/m14/m12
+W4 m76
+
+Piotrków - Radomsko 15:12
+W3 m91
+W4 m76
+W5 m82/m88/m74/m65/m32/m33
+W6 m15/m53
+W7 m35/m31/m25/m33
+W8 m22/m11/m14/m12
+
+Radomsko - Częstochowa 15:40
+W3 m84/m91
+W4 m76
+W5 m82/m88/m74/m65/m32/m33
+W6 m15/m53
+W7 m35/m31/m25/m33
+W8 m22/m11/m14/m12
+
+Częstochowa - Częstochowa Stradom 16:03
+W3 m84/m87/m91
+W4 m76
+W5 m82/m88/m74/m65/m32/m33
+W6 m15/m53
+W7 m35/m31/m25/m33
+W8 m22/m11/m14/m12
+
+Częstochowa Stradom - Lubliniec 16:11
+W3 m84/m87/m91
+W5 m88/m83/m81
+W8 m88/m86/m84/m82
+
+Lubliniec - Opole Główne 16:39
+W3 m84/m87/m91
+W8 m88/m86/m84/m82`;
+
+    function switchTab(mode) {
+      const tabLive = document.getElementById('tabLiveBtn');
+      const tabText = document.getElementById('tabTextBtn');
+      const panelLive = document.getElementById('panelModeLive');
+      const panelText = document.getElementById('panelModeText');
+
+      if (mode === 'live') {
+        tabLive.className = 'px-5 py-3 text-sm font-semibold rounded-t-lg border-b-2 border-blue-500 bg-slate-900 text-blue-400 flex items-center gap-2 transition-all';
+        tabText.className = 'px-5 py-3 text-sm font-semibold rounded-t-lg border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/60 flex items-center gap-2 transition-all';
+        panelLive.classList.remove('hidden');
+        panelText.classList.add('hidden');
+      } else {
+        tabText.className = 'px-5 py-3 text-sm font-semibold rounded-t-lg border-b-2 border-emerald-500 bg-slate-900 text-emerald-400 flex items-center gap-2 transition-all';
+        tabLive.className = 'px-5 py-3 text-sm font-semibold rounded-t-lg border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/60 flex items-center gap-2 transition-all';
+        panelText.classList.remove('hidden');
+        panelLive.classList.add('hidden');
+      }
+    }
+
+    function loadFixtureKoluszkiOpole() {
+      document.getElementById('rawMapInput').value = SAMPLE_KOLUSZKI_OPOLE;
+    }
 
     async function handleStationSearch(inputId, suggestionsId) {
       const query = document.getElementById(inputId).value.trim();
@@ -344,11 +425,7 @@
     window.selectedTrainDepTime = null;
 
     function toggleDirectFilter() {
-      if (window.allFetchedTrains && window.allFetchedTrains.length > 0) {
-        renderTrainSelect();
-      } else {
-        loadAvailableTrains();
-      }
+      renderTrainSelect();
     }
 
     function renderTrainSelect() {
@@ -385,7 +462,7 @@
       const select = document.getElementById('trainSelect');
       if (!fromSt || !toSt) return;
 
-      select.innerHTML = '<option value="">⏳ Wyszukiwanie wszystkich pociągów PKP (cały dzień)...</option>';
+      select.innerHTML = '<option value="">⏳ Wyszukiwanie pociągów...</option>';
       try {
         const url = `/api/v1/trains?from_station=${encodeURIComponent(fromSt)}&to_station=${encodeURIComponent(toSt)}&date=${encodeURIComponent(date)}&direct_only=false`;
         const res = await fetch(url);
@@ -403,37 +480,62 @@
       if (select.value && select.selectedIndex >= 0) {
         const opt = select.options[select.selectedIndex];
         document.getElementById('trainNo').value = select.value;
-        window.selectedTrainDepTime = opt.dataset ? opt.dataset.dep : null;
-        document.getElementById('modeSelect').value = 'live';
+        if (opt.dataset && opt.dataset.dep) {
+          document.getElementById('travelTime').value = opt.dataset.dep;
+        }
       }
     }
 
-    // Hide suggestions when clicking outside
-    document.addEventListener('click', (e) => {
-      if (!e.target.closest('#fromStation') && !e.target.closest('#fromSuggestions')) {
-        document.getElementById('fromSuggestions')?.classList.add('hidden');
-      }
-      if (!e.target.closest('#toStation') && !e.target.closest('#toSuggestions')) {
-        document.getElementById('toSuggestions')?.classList.add('hidden');
-      }
-    });
+    async function fetchTrainRoute() {
+      const fromSt = document.getElementById('fromStation').value.trim();
+      const toSt = document.getElementById('toStation').value.trim();
+      const date = document.getElementById('travelDate').value;
+      const trainNo = document.getElementById('trainNo').value.trim();
+      const depTime = document.getElementById('travelTime').value.trim();
 
-    function updateSliderLabels() {
-      const walk = document.getElementById('walkingPenalty').value;
-      const walkText = walk == '1' ? 'Niska' : walk == '2' ? 'Średnia' : 'Wysoka';
-      document.getElementById('walkingPenaltyVal').innerText = walkText;
+      const card = document.getElementById('routePreviewCard');
+      const title = document.getElementById('routePreviewTitle');
+      const count = document.getElementById('routePreviewCount');
+      const list = document.getElementById('routeStopsList');
+      const errorAlert = document.getElementById('errorAlert');
 
-      const finalVal = document.getElementById('finalBonus').value;
-      const finalText = finalVal == '1' ? 'Niski' : finalVal == '2' ? 'Standardowy' : 'Maksymalny';
-      document.getElementById('finalBonusVal').innerText = finalText;
+      errorAlert.classList.add('hidden');
+      card.classList.remove('hidden');
+      list.innerHTML = '<span class="text-slate-400">Pobieranie rozkładu stacji...</span>';
+
+      try {
+        const url = `/api/v1/train-route?from_station=${encodeURIComponent(fromSt)}&to_station=${encodeURIComponent(toSt)}&date=${encodeURIComponent(date)}&train_number=${encodeURIComponent(trainNo)}&dep_time=${encodeURIComponent(depTime)}`;
+        const res = await fetch(url);
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.detail || 'Błąd pobierania trasy');
+        }
+        const data = await res.json();
+        title.innerText = `Trasa pociągu ${data.train_number} (${data.travel_date})`;
+        count.innerText = `Liczba przystanków: ${data.stops.length}`;
+        list.innerHTML = '';
+
+        data.stops.forEach((st, idx) => {
+          const badge = document.createElement('div');
+          badge.className = 'px-2 py-1 bg-slate-900 border border-slate-700 rounded text-slate-200 flex items-center gap-1.5';
+          const time = st.departure_time || st.arrival_time || '--:--';
+          badge.innerHTML = `<span class="text-blue-400 font-bold">${idx + 1}.</span> <strong>${st.name}</strong> <span class="text-amber-400">(${time})</span>`;
+          list.appendChild(badge);
+        });
+      } catch (err) {
+        card.classList.add('hidden');
+        errorAlert.classList.remove('hidden');
+        document.getElementById('errorMessage').innerText = err.message;
+      }
     }
 
-    async function runAnalysis() {
-      const mode = document.getElementById('modeSelect').value;
-      const fromStation = document.getElementById('fromStation').value;
-      const toStation = document.getElementById('toStation').value;
-      const trainNo = document.getElementById('trainNo').value;
-      const travelDate = document.getElementById('travelDate').value;
+    async function runLiveScan() {
+      const fromSt = document.getElementById('fromStation').value.trim();
+      const toSt = document.getElementById('toStation').value.trim();
+      const date = document.getElementById('travelDate').value;
+      const trainNo = document.getElementById('trainNo').value.trim();
+      const depTime = document.getElementById('travelTime').value.trim();
+      const showBrowser = document.getElementById('showBrowserCheckbox').checked;
       const preferWindow = document.getElementById('prefWindow').checked;
 
       const progressSection = document.getElementById('progressSection');
@@ -444,65 +546,155 @@
 
       errorAlert.classList.add('hidden');
       progressSection.classList.remove('hidden');
-      progressBar.style.width = '15%';
-      progressMessage.innerText = 'Nawiązywanie połączenia...';
-      progressPercent.innerText = '15%';
+      progressBar.style.width = '20%';
+      progressMessage.innerText = 'Uruchamianie scrapera Playwright...';
+      progressPercent.innerText = '20%';
 
       try {
-        let p = 20;
+        let p = 25;
         const interval = setInterval(() => {
           if (p < 85) {
-            p += 20;
+            p += 15;
             progressBar.style.width = p + '%';
             progressPercent.innerText = p + '%';
-            progressMessage.innerText = 'Przeszukiwanie grafu DAG i dobór optymalnych wagonów...';
+            progressMessage.innerText = `Skanowanie wagonów i zielonych miejsc dla pociągu ${trainNo}...`;
           }
-        }, 120);
+        }, 1200);
 
-        const response = await fetch('/api/analyze', {
+        const res = await fetch('/api/v1/optimize', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            from_station: fromStation,
-            to_station: toStation,
-            date: travelDate,
-            train_no: trainNo,
-            dep_time: window.selectedTrainDepTime,
-            mode: mode,
+            from_station: fromSt,
+            to_station: toSt,
+            date: date,
+            time: depTime,
+            train_number: trainNo,
+            headless: !showBrowser,
             prefer_window: preferWindow,
-          })
+          }),
         });
 
         clearInterval(interval);
 
-        if (!response.ok) {
-          const errData = await response.json();
-          throw new Error(errData.detail || 'Błąd połączenia z serwerem.');
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.detail || 'Błąd podczas skanowania na żywo.');
         }
 
-        const data = await response.json();
-        currentAnalysisData = data;
-        selectedStrategyIndex = 0;
-        customPath = {};
+        const data = await res.json();
+        handleOptimizationSuccess(data);
 
-        progressBar.style.width = '100%';
-        progressPercent.innerText = '100%';
-        progressMessage.innerText = 'Optymalizacja zakończona!';
-
-        setTimeout(() => {
-          progressSection.classList.add('hidden');
-        }, 500);
-
-        renderCarriageFilter(data.seat_matrix);
-        renderStrategies(data.strategies);
-        renderMatrix();
-        renderMiniMap();
+        // Task 093: Auto-fill textarea in Mode 2
+        if (data.raw_availability_report) {
+          document.getElementById('rawMapInput').value = data.raw_availability_report;
+        }
 
       } catch (err) {
         progressSection.classList.add('hidden');
         errorAlert.classList.remove('hidden');
         document.getElementById('errorMessage').innerText = err.message;
       }
+    }
+
+    async function runTextOptimization() {
+      const rawText = document.getElementById('rawMapInput').value;
+      const preferWindow = document.getElementById('prefWindowText').checked;
+      const progressSection = document.getElementById('progressSection');
+      const progressBar = document.getElementById('progressBar');
+      const progressMessage = document.getElementById('progressMessage');
+      const progressPercent = document.getElementById('progressPercent');
+      const errorAlert = document.getElementById('errorAlert');
+
+      errorAlert.classList.add('hidden');
+      progressSection.classList.remove('hidden');
+      progressBar.style.width = '50%';
+      progressMessage.innerText = 'Przeliczanie optymalnego grafu przesiadek...';
+      progressPercent.innerText = '50%';
+
+      try {
+        const res = await fetch('/api/v1/optimize-from-text', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            raw_text: rawText,
+            prefer_window: preferWindow,
+          }),
+        });
+
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.detail || 'Błąd przetwarzania rozpiski.');
+        }
+
+        const data = await res.json();
+        handleOptimizationSuccess(data);
+
+      } catch (err) {
+        progressSection.classList.add('hidden');
+        errorAlert.classList.remove('hidden');
+        document.getElementById('errorMessage').innerText = err.message;
+      }
+    }
+
+    function handleOptimizationSuccess(data) {
+      currentAnalysisData = data;
+      selectedStrategyIndex = 0;
+      customPath = {};
+
+      const progressSection = document.getElementById('progressSection');
+      const progressBar = document.getElementById('progressBar');
+      const progressMessage = document.getElementById('progressMessage');
+      const progressPercent = document.getElementById('progressPercent');
+
+      progressBar.style.width = '100%';
+      progressPercent.innerText = '100%';
+      progressMessage.innerText = 'Gotowe!';
+
+      setTimeout(() => {
+        progressSection.classList.add('hidden');
+      }, 400);
+
+      renderPurchaseInstructions(data);
+      renderCarriageFilter(data.seat_matrix);
+      renderStrategies(data.strategies);
+      renderMatrix();
+    }
+
+    // Task 094: Render Purchase Instructions Box
+    function renderPurchaseInstructions(data) {
+      const section = document.getElementById('purchasePlanSection');
+      const list = document.getElementById('purchaseInstructionsList');
+      const countBadge = document.getElementById('ticketsCountBadge');
+
+      const instructions = data.purchase_instructions || [];
+      if (!instructions.length && data.strategies && data.strategies.length > 0) {
+        instructions.push(...(data.strategies[0].purchase_instructions || []));
+      }
+
+      if (!instructions.length) {
+        section.classList.add('hidden');
+        return;
+      }
+
+      countBadge.innerText = `Liczba biletów do kupienia: ${instructions.length}`;
+      list.innerHTML = '';
+
+      instructions.forEach((instr, idx) => {
+        const item = document.createElement('div');
+        item.className = 'bg-slate-950/90 border border-amber-500/30 rounded-lg p-3 text-xs text-slate-200 flex items-start gap-3 shadow';
+        item.innerHTML = `
+          <div class="w-6 h-6 rounded-full bg-amber-500/20 text-amber-400 font-bold flex items-center justify-center text-xs flex-shrink-0 mt-0.5">
+            ${idx + 1}
+          </div>
+          <div class="flex-1 leading-relaxed">
+            <span class="font-medium text-amber-200">${instr}</span>
+          </div>
+        `;
+        list.appendChild(item);
+      });
+
+      section.classList.remove('hidden');
     }
 
     function renderCarriageFilter(seatMatrix) {
@@ -512,6 +704,19 @@
       carriages.forEach(c => {
         select.innerHTML += `<option value="${c}">Wagon ${c}</option>`;
       });
+    }
+
+    function toggleFilterSelected() {
+      filterOnlyRecommended = !filterOnlyRecommended;
+      const btn = document.getElementById('toggleFilterSelectedBtn');
+      if (filterOnlyRecommended) {
+        btn.innerText = 'Pokaż wszystkie wolne miejsca w pociągu';
+        btn.className = 'px-3 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white font-semibold transition-colors';
+      } else {
+        btn.innerText = 'Pokaż tylko miejsca wchodzące w skład rekomendacji';
+        btn.className = 'px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 transition-colors';
+      }
+      renderMatrix();
     }
 
     function renderStrategies(strategies) {
@@ -524,27 +729,32 @@
       }
 
       strategies.forEach((strat, idx) => {
-        const isSelected = idx === selectedStrategyIndex && Object.keys(customPath).length === 0;
+        const isSelected = idx === selectedStrategyIndex;
         const cardBorder = isSelected ? 'border-amber-400 ring-2 ring-amber-400/40' : 'border-slate-800 hover:border-slate-700';
 
         let stepsHtml = '';
         strat.steps.forEach(step => {
+          const compStr = step.compartment ? ` (Przedział ${step.compartment})` : '';
+          const altsStr = (step.alternative_seats_in_same_carriage && step.alternative_seats_in_same_carriage.length)
+            ? `<div class="text-[10px] text-cyan-400/80 mt-0.5">↳ Inne wolne w tym wagonie: ${step.alternative_seats_in_same_carriage.map(m => 'm' + m).join(', ')}</div>`
+            : '';
+
           if (step.is_standing) {
             stepsHtml += `
               <div class="text-xs flex items-center gap-2 text-red-400 bg-red-950/40 p-2 rounded border border-red-900/50 my-1">
                 <span>🚶</span>
                 <div>
                   <strong>${step.from_station_name} → ${step.to_station_name}</strong>: KORYTARZ (${step.duration_min} min)
-                  ${step.transfer_Instruction ? `<div class="text-[10px] text-slate-400 italic">${step.transfer_Instruction}</div>` : ''}
                 </div>
               </div>`;
           } else {
             stepsHtml += `
               <div class="text-xs flex items-center gap-2 text-emerald-300 bg-emerald-950/30 p-2 rounded border border-emerald-900/50 my-1">
                 <span>💺</span>
-                <div>
-                  <strong>${step.from_station_name} → ${step.to_station_name}</strong>: Wagon ${step.carriage_no}, m. ${step.seat_no} (${step.duration_min} min)
+                <div class="flex-1">
+                  <strong>${step.from_station_name} → ${step.to_station_name}</strong>: Wagon ${step.carriage_no}, m. ${step.seat_no}${compStr} (${step.duration_min} min)
                   ${step.transfer_Instruction ? `<div class="text-[10px] text-amber-300/80 italic">↳ ${step.transfer_Instruction}</div>` : ''}
+                  ${altsStr}
                 </div>
               </div>`;
           }
@@ -554,11 +764,9 @@
         card.className = `bg-slate-900 border ${cardBorder} rounded-xl p-4 cursor-pointer transition-all shadow-lg`;
         card.onclick = () => {
           selectedStrategyIndex = idx;
-          customPath = {};
-          document.getElementById('customRouteSection').classList.add('hidden');
           renderStrategies(currentAnalysisData.strategies);
           renderMatrix();
-          renderMiniMap();
+          renderPurchaseInstructions(currentAnalysisData);
         };
 
         card.innerHTML = `
@@ -581,48 +789,13 @@
       });
     }
 
-    function onCellClick(seatUid, segIdx, isFree) {
-      if (isFree !== 1) return; // Cannot pick occupied seat
-
-      customPath[segIdx] = seatUid;
-      document.getElementById('customRouteSection').classList.remove('hidden');
-
-      // Update custom stats
-      const segCount = currentAnalysisData.segments.length;
-      const pickedCount = Object.keys(customPath).length;
-      let transfers = 0;
-      let lastSeat = null;
-
-      for (let i = 0; i < segCount; i++) {
-        const s = customPath[i];
-        if (s && lastSeat && s !== lastSeat) {
-          transfers++;
-        }
-        if (s) lastSeat = s;
-      }
-
-      document.getElementById('customRouteStats').innerHTML =
-        `Wybrano: <strong>${pickedCount}/${segCount}</strong> odcinków &bull; Liczba przesiadek: <strong>${transfers}</strong> &bull; Klikaj kolejne komórki, aby modyfikować trasę!`;
-
-      renderMatrix();
-      renderMiniMap(seatUid.split('_')[0]);
-    }
-
-    function resetCustomRoute() {
-      customPath = {};
-      document.getElementById('customRouteSection').classList.add('hidden');
-      renderStrategies(currentAnalysisData.strategies);
-      renderMatrix();
-      renderMiniMap();
-    }
-
+    // Task 095: Gantt Matrix with departure times, carriage grouping, and compartment numbers
     function renderMatrix() {
       if (!currentAnalysisData) return;
 
       const table = document.getElementById('ganttTable');
       const carriageFilter = document.getElementById('carriageFilter').value;
-      const filterOnlySelected = document.getElementById('filterOnlySelected').checked;
-      const { stations, segments, seat_matrix, strategies } = currentAnalysisData;
+      const { segments, seat_matrix, strategies } = currentAnalysisData;
 
       const activeStrategy = strategies[selectedStrategyIndex];
       const selectedCells = new Set();
@@ -644,51 +817,68 @@
       if (carriageFilter !== 'ALL') {
         filteredSeats = filteredSeats.filter(s => String(s.carriage_no) === carriageFilter);
       }
-      if (filterOnlySelected) {
-        filteredSeats = filteredSeats.filter(s => selectedSeatUids.has(s.seat_uid) || Object.values(customPath).includes(s.seat_uid));
+      if (filterOnlyRecommended) {
+        filteredSeats = filteredSeats.filter(s => selectedSeatUids.has(s.seat_uid));
       }
 
-      // Header row
+      // Sort seats by carriage_no, then seat_no numerically
+      filteredSeats.sort((a, b) => {
+        if (a.carriage_no !== b.carriage_no) return a.carriage_no - b.carriage_no;
+        return parseInt(a.seat_no) - parseInt(b.seat_no);
+      });
+
+      // Header row with station names AND departure times (Task 095)
       let headerHtml = '<thead><tr class="bg-slate-950 text-slate-300">';
-      headerHtml += '<th class="p-2.5 border border-slate-800 text-left font-semibold">Miejsce / Wagon</th>';
+      headerHtml += '<th class="p-2.5 border border-slate-800 text-left font-semibold">Miejsce / Wagon (Przedział)</th>';
       segments.forEach(seg => {
-        headerHtml += `<th class="p-2.5 border border-slate-800 font-semibold">${seg.from_station} → ${seg.to_station}<div class="text-[10px] text-slate-500 font-normal">${seg.duration_min} min</div></th>`;
+        const depTimeStr = seg.departure_time ? ` (${seg.departure_time})` : '';
+        headerHtml += `<th class="p-2.5 border border-slate-800 font-semibold">${seg.from_station} → ${seg.to_station}<div class="text-[10px] text-amber-400 font-mono">${depTimeStr} &bull; ${seg.duration_min} min</div></th>`;
       });
       headerHtml += '</tr></thead>';
 
-      // Rows
+      // Rows grouped by carriage (Task 095)
       let bodyHtml = '<tbody class="divide-y divide-slate-800">';
+      let lastCarriage = null;
+
       filteredSeats.forEach(seat => {
+        // Carriage divider header
+        if (seat.carriage_no !== lastCarriage) {
+          lastCarriage = seat.carriage_no;
+          bodyHtml += `<tr class="bg-blue-950/40 text-blue-300 font-bold text-left">
+            <td colspan="${segments.length + 1}" class="px-3 py-1.5 border border-slate-800 text-xs">
+              🚆 WAGON ${seat.carriage_no}
+            </td>
+          </tr>`;
+        }
+
+        const seatInt = parseInt(seat.seat_no);
+        const compartment = !isNaN(seatInt) && seatInt >= 10 ? Math.floor(seatInt / 10) : 1;
+
         bodyHtml += `<tr class="hover:bg-slate-800/40 transition-colors">`;
-        bodyHtml += `<td class="p-2.5 border border-slate-800 font-medium text-left bg-slate-900/80 text-slate-200 cursor-pointer" onclick="renderMiniMap('${seat.carriage_no}', '${seat.seat_no}')">
+        bodyHtml += `<td class="p-2.5 border border-slate-800 font-medium text-left bg-slate-900/80 text-slate-200">
           <div class="flex items-center justify-between">
-            <span>Wagon ${seat.carriage_no}, m. ${seat.seat_no}</span>
-            <span class="text-[10px] text-slate-500">🔍 podgląd</span>
+            <span>W${seat.carriage_no} / Miejsce <strong>${seat.seat_no}</strong></span>
+            <span class="text-[10px] text-slate-400 font-mono">Przedział ${compartment}</span>
           </div>
         </td>`;
 
         seat.availability.forEach((isFree, segIdx) => {
           const isAlgorithmSelected = selectedCells.has(`${seat.seat_uid}_${segIdx}`);
-          const isCustomSelected = customPath[segIdx] === seat.seat_uid;
-
           let cellClass = '';
           let cellText = '';
 
-          if (isCustomSelected) {
-            cellClass = 'cell-custom cursor-pointer';
-            cellText = 'WYBRANE (TY)';
-          } else if (isAlgorithmSelected && Object.keys(customPath).length === 0) {
-            cellClass = 'cell-selected cursor-pointer';
+          if (isAlgorithmSelected) {
+            cellClass = 'cell-selected';
             cellText = 'WYBRANE';
           } else if (isFree === 1) {
-            cellClass = 'bg-emerald-950/60 text-emerald-400 border border-emerald-900/60 font-medium hover:bg-emerald-900/80 cursor-pointer';
+            cellClass = 'bg-emerald-950/60 text-emerald-400 border border-emerald-900/60 font-medium';
             cellText = 'WOLNE';
           } else {
-            cellClass = 'bg-red-950/40 text-red-500/80 border border-red-900/40 cursor-not-allowed';
+            cellClass = 'bg-red-950/40 text-red-500/80 border border-red-900/40';
             cellText = 'ZAJĘTE';
           }
 
-          bodyHtml += `<td class="p-2.5 border border-slate-800 ${cellClass} transition-all" onclick="onCellClick('${seat.seat_uid}', ${segIdx}, ${isFree})">${cellText}</td>`;
+          bodyHtml += `<td class="p-2.5 border border-slate-800 ${cellClass} transition-all">${cellText}</td>`;
         });
         bodyHtml += '</tr>';
       });
@@ -697,54 +887,10 @@
       table.innerHTML = headerHtml + bodyHtml;
     }
 
-    function renderMiniMap(carriageNo = null, seatNo = null) {
-      if (!currentAnalysisData) return;
-      const container = document.getElementById('miniMapContainer');
-      const label = document.getElementById('miniMapCarriageLabel');
-
-      const cNo = carriageNo || (currentAnalysisData.seat_matrix[0] ? currentAnalysisData.seat_matrix[0].carriage_no : 8);
-      label.innerText = `Wagon ${cNo} • Klasa 2 • Bezprzedziałowy`;
-
-      let seatsHtml = '';
-      const seatsInCarriage = currentAnalysisData.seat_matrix.filter(s => String(s.carriage_no) === String(cNo));
-
-      seatsHtml += '<div class="w-full max-w-2xl bg-slate-900 border-2 border-slate-700 rounded-2xl p-4 flex flex-col gap-3 relative shadow-inner">';
-      seatsHtml += '<div class="absolute -top-3 left-6 bg-slate-800 text-[10px] px-2 py-0.5 rounded text-slate-400 font-mono">OKNO (LEWA STRONA)</div>';
-
-      seatsHtml += '<div class="grid grid-cols-8 gap-2 py-2">';
-      for (let s = 11; s <= 58; s += (s % 2 === 0 ? 9 : 1)) {
-        const isTarget = seatNo && String(seatNo) === String(s);
-        const exists = seatsInCarriage.some(x => String(x.seat_no) === String(s));
-        const bg = isTarget ? 'bg-amber-400 text-slate-950 font-bold ring-2 ring-amber-300' :
-                   exists ? 'bg-blue-600/60 text-white border border-blue-400/50' : 'bg-slate-800/60 text-slate-500 border border-slate-700';
-
-        seatsHtml += `<div class="h-10 rounded-lg flex items-center justify-center text-xs ${bg} transition-all">m. ${s}</div>`;
-      }
-      seatsHtml += '</div>';
-
-      seatsHtml += '<div class="h-3 border-t border-b border-dashed border-slate-700 flex items-center justify-center text-[9px] text-slate-500 tracking-widest uppercase">Korytarz / Przejście</div>';
-
-      seatsHtml += '<div class="grid grid-cols-8 gap-2 py-2">';
-      for (let s = 12; s <= 59; s += (s % 2 === 0 ? 1 : 9)) {
-        const isTarget = seatNo && String(seatNo) === String(s);
-        const exists = seatsInCarriage.some(x => String(x.seat_no) === String(s));
-        const bg = isTarget ? 'bg-amber-400 text-slate-950 font-bold ring-2 ring-amber-300' :
-                   exists ? 'bg-blue-600/60 text-white border border-blue-400/50' : 'bg-slate-800/60 text-slate-500 border border-slate-700';
-
-        seatsHtml += `<div class="h-10 rounded-lg flex items-center justify-center text-xs ${bg} transition-all">m. ${s}</div>`;
-      }
-      seatsHtml += '</div>';
-
-      seatsHtml += '<div class="absolute -bottom-3 left-6 bg-slate-800 text-[10px] px-2 py-0.5 rounded text-slate-400 font-mono">OKNO (PRAWA STRONA)</div>';
-      seatsHtml += '</div>';
-
-      container.innerHTML = seatsHtml;
-    }
-
-    // Auto-run simulation and load trains on page load
+    // Auto-run example on page load
     window.addEventListener('DOMContentLoaded', () => {
-      loadAvailableTrains();
-      runAnalysis();
+      loadFixtureKoluszkiOpole();
+      runTextOptimization();
     });
   </script>
 </body>

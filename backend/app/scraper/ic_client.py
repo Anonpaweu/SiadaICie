@@ -16,7 +16,12 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from playwright.async_api import async_playwright, Page, Response
 
-from backend.app.db.database import get_cached_item, set_cached_item
+from backend.app.db.database import (
+    get_cached_item,
+    set_cached_item,
+    get_segment_cached_item,
+    set_segment_cached_item,
+)
 from backend.app.optimizer.solver import SeatMeta
 from backend.app.scraper.route_resolver import (
     StationStop,
@@ -105,54 +110,63 @@ class PKPIntercityScraper:
             {"carriage": 9, "seats": ["11", "15", "21", "25", "31", "35", "41", "45", "51", "55", "61", "65"]},
         ]
 
-        # Seed pseudo-random generator with train_no + date for deterministic consistency
-        seed_val = hash(f"{train_no}_{travel_date}") & 0xFFFFFFFF
-        rng = random.Random(seed_val)
+        # Collect segment seat maps from cache or live extraction
+        segment_maps: List[Dict[str, int]] = []
+        for i in range(num_segments):
+            from_stn = stops[i].name
+            to_stn = stops[i + 1].name
+            cache_key = f"seatmap_{train_no}_{travel_date}_{from_stn}_{to_stn}_c2"
+            cached = get_cached_item(cache_key, ttl_seconds=self.ttl_seconds)
+            if not cached:
+                cached = get_cached_item(f"seatmap_{train_no}_{travel_date}_{from_stn}_{to_stn}", ttl_seconds=self.ttl_seconds)
+            if not cached:
+                cached = get_segment_cached_item(cache_key, ttl_seconds=self.ttl_seconds)
 
-        for c_info in carriages_config:
-            c_no = c_info["carriage"]
-            for s_no in c_info["seats"]:
-                seat_uid = f"{c_no}_{s_no}"
-                seat_int = int(s_no)
+            if cached and isinstance(cached, dict):
+                if "seats" in cached and cached["seats"]:
+                    segment_maps.append(cached["seats"])
+                elif "raw_seatmap" in cached:
+                    segment_maps.append(self._parse_seatmap_json(cached["raw_seatmap"]))
+                elif any(isinstance(v, list) for v in cached.values()):
+                    smap = {}
+                    for c_no, s_list in cached.items():
+                        for s_no in s_list:
+                            smap[f"{c_no}_{s_no}"] = 1
+                    segment_maps.append(smap)
+                else:
+                    segment_maps.append({})
+            else:
+                segment_maps.append({})
 
-                # Determine window / aisle by PKP standard UIC numbering (ends in 1, 5, 2, 6 usually window)
+        all_seat_uids = set()
+        for smap in segment_maps:
+            all_seat_uids.update(smap.keys())
+
+        # If real segment maps are present, build directly from real data
+        if all_seat_uids:
+            for seat_uid in sorted(all_seat_uids):
+                parts = seat_uid.split("_")
+                c_no = int(parts[0]) if parts[0].isdigit() else 1
+                s_no = parts[1] if len(parts) > 1 else "1"
+                s_int = int(s_no) if s_no.isdigit() else 1
                 pos = "WINDOW" if s_no[-1] in ("1", "5", "2", "6") else "AISLE"
-
+                compartment = s_int // 10 if s_int >= 10 else 1
                 seats_meta[seat_uid] = SeatMeta(
                     seat_uid=seat_uid,
                     carriage_no=c_no,
                     seat_no=s_no,
-                    compartment_no=seat_int // 10 or 1,
+                    compartment_no=compartment,
                     position=pos,
                 )
+                availability_matrix[seat_uid] = [
+                    segment_maps[seg_idx].get(seat_uid, 0) for seg_idx in range(num_segments)
+                ]
+            return availability_matrix, seats_meta
 
-                # Generate realistic continuous booking windows for this seat
-                # Pattern: some seats are free on first half, some on second half, some have a middle gap
-                pattern_type = rng.choice(["first_half", "second_half", "middle_blocked", "almost_full", "sparse"])
-                vector = [1] * num_segments
-
-                if pattern_type == "first_half":
-                    # Free up to some station, then booked
-                    split = rng.randint(max(1, num_segments // 2), num_segments - 1)
-                    vector = [1 if i < split else 0 for i in range(num_segments)]
-                elif pattern_type == "second_half":
-                    # Booked initially, free from some intermediate station to destination
-                    split = rng.randint(1, max(1, num_segments // 2))
-                    vector = [0 if i < split else 1 for i in range(num_segments)]
-                elif pattern_type == "middle_blocked":
-                    # Free at beginning, blocked on popular bottleneck segment, free afterwards
-                    blocked_idx = min(num_segments - 1, max(1, num_segments // 2))
-                    vector = [0 if i == blocked_idx else 1 for i in range(num_segments)]
-                elif pattern_type == "almost_full":
-                    # Free on 100% of the route
-                    vector = [1] * num_segments
-                else:
-                    # Random availability
-                    vector = [1 if rng.random() > 0.4 else 0 for _ in range(num_segments)]
-
-                availability_matrix[seat_uid] = vector
-
-        return availability_matrix, seats_meta
+        # When no seatmaps are available (e.g. offline or unreserved train)
+        raise GraphicReservationUnavailableError(
+            f"Brak danych rezerwacji graficznej dla pociągu {train_no} na trasie {stops[0].name} -> {stops[-1].name}."
+        )
 
     async def _playwright_extract_segment_map(
         self,

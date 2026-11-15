@@ -135,3 +135,52 @@ def test_resolve_real_route_koluszki_zakopane():
     assert stops[-1].arrival_min > 300
 
 
+def test_train_route_extractor_parses_eva_and_times():
+    """
+    Task 048: Verifies TrainRouteExtractor extracts station EVA code directly from href
+    and exact departure/arrival times in HH:MM format.
+    """
+    from backend.app.scraper.schedule_scraper import TrainRouteExtractor
+
+    sample_html = """
+    <table>
+      <tr>
+        <td></td>
+        <td><a href="/pl/sq?input=5100024&boardType=dep">Koluszki</a></td>
+        <td>00:33</td>
+        <td>00:35</td>
+      </tr>
+      <tr>
+        <td></td>
+        <td><a href="/pl/sq?input=5100190&boardType=dep">Piotrków Trybunalski</a></td>
+        <td>00:57</td>
+        <td>00:59</td>
+      </tr>
+      <tr>
+        <td></td>
+        <td><a href="/pl/sq?input=5100088&boardType=dep">Radomsko</a></td>
+        <td>01:25</td>
+        <td>01:27</td>
+      </tr>
+    </table>
+    """
+    extractor = TrainRouteExtractor()
+    stops = extractor.parse_stops_from_ti_html(
+        sample_html, from_station="Koluszki", to_station="Radomsko", from_eva="5100024", to_eva="5100088"
+    )
+
+    assert len(stops) == 3
+    assert stops[0].station_name == "Koluszki"
+    assert stops[0].eva_code == "5100024"
+    assert stops[0].departure_time == "00:35"
+
+    assert stops[1].station_name == "Piotrków Trybunalski"
+    assert stops[1].eva_code == "5100190"
+    assert stops[1].departure_time == "00:59"
+    assert stops[1].arrival_time == "00:57"
+
+    assert stops[2].station_name == "Radomsko"
+    assert stops[2].eva_code == "5100088"
+    assert stops[2].departure_time == "01:27"
+
+

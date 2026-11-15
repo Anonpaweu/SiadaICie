@@ -42,6 +42,8 @@ class PathStep(BaseModel):
     duration_min: int
     is_standing: bool = False
     transfer_Instruction: Optional[str] = None
+    compartment: Optional[int] = None
+    alternative_seats_in_same_carriage: List[str] = []
 
 
 class OptimizationStrategy(BaseModel):
@@ -52,12 +54,14 @@ class OptimizationStrategy(BaseModel):
     total_standing_min: int
     carriages_used: List[int]
     steps: List[PathStep]
+    tickets_to_buy: List[str] = []
+    purchase_instructions: List[str] = []
 
 
 class OptimizerConfig(BaseModel):
     w_duration: float = 1000.0
     w_final_bonus: float = 250.0
-    p_base_transfer: float = 120.0
+    p_base_transfer: float = 1000.0  # W_TICKET = 1000.0
     p_standing_per_min: float = 25.0
     prefer_window: bool = False
     w_wars_crossing_penalty: float = 80.0
@@ -74,7 +78,11 @@ def calculate_transfer_penalty(
 ) -> float:
     """
     Oblicza koszt fizycznej przesiadki z miejsca A na miejsce B.
-    Silnie premiuje ten sam przedział / ten sam wagon i nakłada karę kwadratową za dalekie spacery.
+    Baza: W_TICKET = 1000.0 za każdą przesiadkę.
+    Odległość fizyczna:
+    - ten sam wagon i ten sam przedział: +15 pkt
+    - ten sam wagon, inny przedział: +40 pkt
+    - inny wagon: +100 * (delta_w ** 2)
     """
     if is_standing_b or seat_a.seat_uid == "STANDING" or seat_b.seat_uid == "STANDING":
         return config.p_base_transfer + 100.0
@@ -89,7 +97,6 @@ def calculate_transfer_penalty(
     for disc_1, disc_2 in config.disconnected_carriages:
         low, high = min(disc_1, disc_2), max(disc_1, disc_2)
         if min(c_a, c_b) <= low and max(c_a, c_b) >= high:
-            # Wymaga wyjścia na peron na stacji pośredniej! Bardzo wysoka kara.
             return config.p_base_transfer + 600.0
 
     # Przypadek 1: Ten sam wagon
@@ -99,14 +106,13 @@ def calculate_transfer_penalty(
             and seat_b.compartment_no is not None
             and seat_a.compartment_no == seat_b.compartment_no
         ):
-            dist_penalty = 15.0  # Ten sam przedział / rząd - wystarczy się przesiąść obok
+            dist_penalty = 15.0  # Ten sam przedział / rząd
         else:
-            comp_diff = abs((seat_a.compartment_no or 1) - (seat_b.compartment_no or 5))
-            dist_penalty = 35.0 + 2.0 * comp_diff
+            dist_penalty = 40.0  # Inny przedział w tym samym wagonie
         return config.p_base_transfer + dist_penalty
 
-    # Przypadek 2: Zmiana wagonu (nieliniowa kara kwadratowa)
-    dist_penalty = 60.0 * delta_c + 25.0 * (delta_c ** 2)
+    # Przypadek 2: Zmiana wagonu (nieliniowa kara kwadratowa 100 * delta^2)
+    dist_penalty = 100.0 * (delta_c ** 2)
 
     # Dodatkowa kara za przechodzenie przez wagon gastronomiczny WARS
     if config.wars_carriage_no is not None:
@@ -325,6 +331,21 @@ def solve_top_strategies(
                 else:
                     instruction = f"Na stacji {st_name} przejdź z wagonu {prev_b.seat.carriage_no} (m. {prev_b.seat.seat_no}) do wagonu {b.seat.carriage_no} na miejsce {b.seat.seat_no}."
 
+            # Find alternative seats in same carriage on exact same segment
+            alt_seats = []
+            if not b.is_standing:
+                for o_uid, o_vec in availability_matrix.items():
+                    if o_uid != b.seat.seat_uid:
+                        o_meta = seats_meta.get(o_uid)
+                        if o_meta and o_meta.carriage_no == b.seat.carriage_no:
+                            if all(o_vec[k] == 1 for k in range(b.start_seg, b.end_seg)):
+                                alt_seats.append(o_meta.seat_no)
+
+            comp_no = b.seat.compartment_no
+            if comp_no is None and b.seat.seat_no.isdigit():
+                s_int = int(b.seat.seat_no)
+                comp_no = s_int // 10 if s_int >= 10 else 1
+
             steps.append(
                 PathStep(
                     seat_uid=b.seat.seat_uid,
@@ -337,6 +358,8 @@ def solve_top_strategies(
                     duration_min=b.duration_min,
                     is_standing=b.is_standing,
                     transfer_Instruction=instruction,
+                    compartment=comp_no,
+                    alternative_seats_in_same_carriage=sorted(alt_seats, key=lambda x: int(x) if x.isdigit() else 99),
                 )
             )
 
@@ -356,6 +379,25 @@ def solve_top_strategies(
         else:
             title = f"Optymalna kombinacja ({transfers_count} przesiadka/i)"
 
+        # Generate tickets_to_buy and purchase_instructions
+        tickets_to_buy: List[str] = []
+        purchase_instructions: List[str] = []
+        ticket_nr = 1
+        for idx, s in enumerate(steps):
+            if not s.is_standing:
+                tickets_to_buy.append(
+                    f"Bilet {ticket_nr}: {s.from_station_name} -> {s.to_station_name} (Wagon {s.carriage_no}, Miejsce {s.seat_no})"
+                )
+                instr = f"Krok {ticket_nr}: Kup bilet na odcinek {s.from_station_name} -> {s.to_station_name}: wybierz Wagon {s.carriage_no}, Miejsce {s.seat_no}"
+                if s.alternative_seats_in_same_carriage:
+                    instr += f" (lub inne wolne w tym wagonie: {', '.join('m' + x for x in s.alternative_seats_in_same_carriage[:3])})"
+                purchase_instructions.append(instr)
+                ticket_nr += 1
+            else:
+                purchase_instructions.append(
+                    f"Odcinek {s.from_station_name} -> {s.to_station_name}: brak miejsc siedzących – przejście na korytarz ({s.duration_min} min)"
+                )
+
         strategies.append(
             OptimizationStrategy(
                 rank=rank,
@@ -365,6 +407,8 @@ def solve_top_strategies(
                 total_standing_min=standing_min,
                 carriages_used=carriages_used,
                 steps=steps,
+                tickets_to_buy=tickets_to_buy,
+                purchase_instructions=purchase_instructions,
             )
         )
 

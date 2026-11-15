@@ -6,9 +6,11 @@ Implements mathematical penalty/reward formulas from architecture documentation:
 - TransferPenalty with quadratic carriage distance and physical obstacles
 - 3 distinct optimization profiles (Balanced, Minimal Walking, Minimal Transfers)
 """
-from typing import Optional
+from typing import Optional, Any
 from backend.app.models.domain import Seat, TrainTopology, OptimizationProfile
-from backend.app.engine.topology import calculate_physical_distance
+from backend.app.engine.topology import calculate_physical_distance, calculate_distance_penalty, get_compartment
+
+W_TICKET: float = 1000.0
 
 
 class ScorerConfig:

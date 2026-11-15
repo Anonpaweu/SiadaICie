@@ -113,6 +113,40 @@ def seed_stations_table(db_path: str = None):
         conn.close()
 
 
+def normalize_polish_name(s: str) -> str:
+    """Removes Polish diacritics and converts to lowercase for search indexing."""
+    trans = str.maketrans("ąćęłńóśźżĄĆĘŁŃÓŚŹŻ", "acelnoszzACELNOSZZ")
+    return s.translate(trans).strip().lower()
+
+
+def upsert_station(name: str, eva_code: str, db_path: str = None):
+    """
+    Inserts or updates a station into SQLite stations table.
+    Task 043: Enables auto-discovery of newly encountered stations during scraping.
+    """
+    if not name or not eva_code:
+        return
+    norm = normalize_polish_name(name)
+    conn = get_connection(db_path)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO stations (eva_code, name, normalized_name, is_main_hub)
+            VALUES (?, ?, ?, 0)
+            ON CONFLICT(eva_code) DO UPDATE SET
+                name = excluded.name,
+                normalized_name = excluded.normalized_name
+            """,
+            (eva_code, name, norm),
+        )
+        conn.commit()
+    except Exception:
+        pass
+    finally:
+        conn.close()
+
+
 if __name__ == "__main__":
     count = seed_stations_table()
     print(f"Zakończono seedowanie bazy stacji ({count} rekordów).")

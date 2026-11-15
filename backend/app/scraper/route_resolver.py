@@ -4,7 +4,7 @@ Route resolver and node merger for PKP Intercity Seat Optimizer.
 Handles metropolitan station merging (e.g. Warszawa Zachodnia/Centralna/Wschodnia)
 and builds route segments from filtered stop lists.
 """
-from typing import List, Optional
+from typing import List, Optional, Any
 from pydantic import BaseModel
 
 
@@ -14,15 +14,26 @@ class StationStop(BaseModel):
     name: str
     arrival_min: int        # Minuta od początku trasy użytkownika (Stacja A = 0)
     departure_min: int      # Minuta odjazdu od początku trasy użytkownika
+    arrival_time: str = ""   # e.g. "15:11"
+    departure_time: str = "" # e.g. "15:12"
     metropolitan_group: Optional[str] = None
     is_main_hub: bool = False
 
 
+RouteStop = StationStop
+
+
 class RouteSegment(BaseModel):
     seg_idx: int
-    from_station: StationStop
-    to_station: StationStop
+    from_station: Any
+    to_station: Any
     duration_min: int
+    from_station_name: str = ""
+    to_station_name: str = ""
+    departure_time: str = ""
+    arrival_time: str = ""
+    duration_minutes: int = 0
+    train_number: str = ""
 
 
 # Słownik znanych węzłów aglomeracyjnych w Polsce
@@ -53,13 +64,36 @@ def enrich_stops_with_hubs(stops: List[StationStop]) -> List[StationStop]:
     return stops
 
 
-def filter_and_merge_stops(raw_stops: List[StationStop], min_segment_minutes: int = 8) -> List[StationStop]:
+class NodeMerger:
     """
-    Redukuje przystanki wewnątrz tej samej aglomeracji, jeśli czas przejazdu między nimi
-    jest bardzo krótki (< min_segment_minutes), zachowując zawsze pierwszą i ostatnią stację
-    całej podróży użytkownika oraz główne węzły (is_main_hub).
+    Manages intermediate station stop filtering and metropolitan hub collapsing.
+    Default mode: merge_short_segments=False (does NOT drop stops like Częstochowa -> Częstochowa Stradom).
     """
-    if len(raw_stops) <= 2:
+    def __init__(self, min_segment_minutes: int = 8, merge_short_segments: bool = False):
+        self.min_segment_minutes = min_segment_minutes
+        self.merge_short_segments = merge_short_segments
+
+    def merge_stops(self, raw_stops: List[StationStop]) -> List[StationStop]:
+        return filter_and_merge_stops(
+            raw_stops,
+            min_segment_minutes=self.min_segment_minutes,
+            merge_short_segments=self.merge_short_segments,
+        )
+
+
+def filter_and_merge_stops(
+    raw_stops: List[StationStop],
+    min_segment_minutes: int = 8,
+    merge_short_segments: bool = False,
+) -> List[StationStop]:
+    """
+    Redukuje przystanki wewnątrz tej samej aglomeracji tylko wtedy, gdy merge_short_segments=True.
+    Domyślnie merge_short_segments=False - NIE USUWA żadnych stacji pośrednich,
+    na których zatrzymuje się pociąg (np. Częstochowa -> Częstochowa Stradom 6 min).
+    """
+    if not merge_short_segments or len(raw_stops) <= 2:
+        for idx, stop in enumerate(raw_stops):
+            stop.seq = idx
         return raw_stops
 
     raw_stops = enrich_stops_with_hubs(raw_stops)
@@ -78,11 +112,8 @@ def filter_and_merge_stops(raw_stops: List[StationStop], min_segment_minutes: in
 
         # Jeśli to ta sama aglomeracja i czas przejazdu jest krótki:
         if same_metro and duration_from_prev < min_segment_minutes:
-            # Jeśli bieżąca stacja jest głównym hubem (np. Warszawa Centralna po Zachodniej),
-            # a poprzednia nie była stacją startową całej podróży (index 0), zamień je:
             if current.is_main_hub and len(filtered) > 1:
                 filtered[-1] = current
-            # W przeciwnym razie pomiń ten drobny przystanek pośredni
             continue
 
         filtered.append(current)
@@ -96,31 +127,42 @@ def filter_and_merge_stops(raw_stops: List[StationStop], min_segment_minutes: in
             and final_stop.metropolitan_group == last_added.metropolitan_group
         )
         if same_metro_end and (final_stop.arrival_min - last_added.departure_min) < min_segment_minutes:
-            # Usuń przedostatni przystanek podmiejski tuż przed stacją docelową
             filtered.pop()
 
-    filtered.append(final_stop)  # Zawsze zachowaj stację końcową G
+    filtered.append(final_stop)
 
-    # Przenumeruj indeksy sekwencyjne (0, 1, 2, ...)
     for idx, stop in enumerate(filtered):
         stop.seq = idx
 
     return filtered
 
 
-def build_route_segments(stops: List[StationStop]) -> List[RouteSegment]:
+def build_route_segments(stops: List[StationStop], train_number: str = "") -> List[RouteSegment]:
     """Zamienia przefiltrowaną listę N stacji na N-1 odcinków elementarnych."""
     segments: List[RouteSegment] = []
     for i in range(len(stops) - 1):
         s_from = stops[i]
         s_to = stops[i + 1]
         duration = max(1, s_to.arrival_min - s_from.departure_min)
+        from_name = getattr(s_from, 'name', str(s_from))
+        to_name = getattr(s_to, 'name', str(s_to))
+        dep_time = getattr(s_from, 'departure_time', '')
+        arr_time = getattr(s_to, 'arrival_time', '')
         segments.append(
             RouteSegment(
                 seg_idx=i,
                 from_station=s_from,
                 to_station=s_to,
                 duration_min=duration,
+                from_station_name=from_name,
+                to_station_name=to_name,
+                departure_time=dep_time,
+                arrival_time=arr_time,
+                duration_minutes=duration,
+                train_number=train_number,
             )
         )
     return segments
+
+
+build_segments = build_route_segments

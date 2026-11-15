@@ -7,8 +7,43 @@ Models physical train layout:
 - Dining car (WARS) crossing penalties
 - Disconnected multiple-unit trains (EZT unit separation)
 """
-from typing import Optional
+from typing import Optional, Any
 from backend.app.models.domain import Seat, TrainTopology, Carriage
+
+
+def get_compartment(seat_num: Any) -> int:
+    """
+    Computes PKP compartment number from seat number.
+    In PKP carriages, two-digit numbers (e.g. 15, 53, 82, 84):
+    tens digit is the compartment number (e.g. 81..88 -> compartment 8).
+    For seats >= 100 (e.g. 106), first two digits (10) are the compartment number.
+    """
+    try:
+        s_int = int(str(seat_num).strip())
+        if s_int >= 10:
+            return s_int // 10
+        return 1
+    except Exception:
+        return 1
+
+
+def calculate_distance_penalty(seat_a: Any, seat_b: Any) -> float:
+    """
+    Physical distance penalty between two seats:
+    - Same carriage and compartment: 15.0
+    - Same carriage, different compartment: 40.0
+    - Different carriage: 100.0 * (delta_w ** 2)
+    """
+    c_a = getattr(seat_a, 'carriage_no', getattr(seat_a, 'carriage_number', 0))
+    c_b = getattr(seat_b, 'carriage_no', getattr(seat_b, 'carriage_number', 0))
+    comp_a = getattr(seat_a, 'compartment_no', getattr(seat_a, 'compartment_id', None))
+    comp_b = getattr(seat_b, 'compartment_no', getattr(seat_b, 'compartment_id', None))
+    delta_c = abs(c_a - c_b)
+    if delta_c == 0:
+        if comp_a is not None and comp_b is not None and comp_a == comp_b:
+            return 15.0
+        return 40.0
+    return 100.0 * (delta_c ** 2)
 
 
 def calculate_physical_distance(

@@ -20,3 +20,9 @@ CREATE TABLE IF NOT EXISTS cached_seatmaps (
     data_json TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS segment_cache (
+    cache_key TEXT PRIMARY KEY,
+    data_json TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

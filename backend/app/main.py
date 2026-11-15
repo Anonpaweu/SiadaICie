@@ -8,7 +8,7 @@ Endpoints:
 - GET /api/analyze/stream — SSE progress events
 """
 import asyncio
-from typing import List
+from typing import List, Optional
 
 from fastapi import FastAPI, Query, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,6 +23,11 @@ from backend.app.models.schemas import (
     SeatAvailability,
     StationSearchResult,
     StrategyResponse,
+    OptimizationResponse,
+    ManualMapRequest,
+    LiveOptimizeRequest,
+    TrainRouteResponse,
+    TrainStopItem,
 )
 from backend.app.optimizer.solver import solve_top_strategies, OptimizerConfig
 from backend.app.db.database import get_connection, init_db
@@ -31,11 +36,20 @@ from backend.app.scraper.mock_provider import (
     scenario_overlapping_windows_and_proximity,
     scenario_standing_corridor_fallback,
 )
-from backend.app.scraper.route_resolver import build_route_segments
+from backend.app.scraper.route_resolver import build_route_segments, filter_and_merge_stops
 from backend.app.scraper.ic_client import PKPIntercityScraper, GraphicReservationUnavailableError
 from backend.app.scraper.schedule_scraper import (
     fetch_live_train_connections,
     resolve_real_route,
+)
+from backend.app.scraper.ebilet_seat_scraper import (
+    EbiletSeatScraper,
+    LiveTrainScanner,
+)
+from backend.app.engine.availability_parser import (
+    parse_availability_text,
+    format_availability_map,
+    availability_map_to_matrix,
 )
 from fastapi import HTTPException
 
@@ -137,7 +151,7 @@ async def analyze(request: AnalyzeRequest):
             avail, meta = await scraper.generate_live_seat_matrix(request.train_no, request.date, stops)
         except Exception as e:
             raise HTTPException(
-                status_code=500,
+                status_code=502,
                 detail=f"Błąd analizy trasy PKP Intercity: {str(e)}",
             )
     else:
@@ -158,7 +172,7 @@ async def analyze(request: AnalyzeRequest):
             "seg_idx": i,
             "from_station": station_names[i],
             "to_station": station_names[i + 1],
-            "duration_min": segment_durations[i],
+            "duration_min": segment_durations[i] if i < len(segment_durations) else 30,
         })
 
     # Build seat matrix
@@ -184,15 +198,240 @@ async def analyze(request: AnalyzeRequest):
             total_standing_min=s.total_standing_min,
             carriages_used=s.carriages_used,
             steps=[step.model_dump() for step in s.steps],
+            purchase_instructions=s.purchase_instructions,
+            tickets_to_buy=s.tickets_to_buy,
         )
         for s in strategies
     ]
+    top_purchase_instructions = strategy_responses[0].purchase_instructions if strategy_responses else []
 
     return AnalyzeResponse(
         stations=station_names,
         segments=segments_info,
         strategies=strategy_responses,
         seat_matrix=seat_matrix,
+        purchase_instructions=top_purchase_instructions,
+    )
+
+
+@app.post("/api/v1/optimize-from-text", response_model=OptimizationResponse)
+async def optimize_from_text(request: ManualMapRequest):
+    """
+    Parses plain text report of seats (format: 'Piotrków - Radomsko 15:12\\nW5 m82\\n...')
+    and calculates optimal seating and transfer strategy.
+    """
+    if not request.raw_text or not request.raw_text.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Pole raw_text nie może być puste. Wklej rozpiskę wolnych miejsc.",
+        )
+
+    try:
+        avail_map = parse_availability_text(request.raw_text)
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Błąd parsowania tekstu dostępności: {str(e)}",
+        )
+
+    if not avail_map.segments:
+        raise HTTPException(
+            status_code=400,
+            detail="Nie znaleziono poprawnych odcinków w podanym tekście. Wzorzec nagłówka: 'Stacja A - Stacja B 14:45'.",
+        )
+
+    avail, meta, station_names, segment_durations = availability_map_to_matrix(avail_map)
+    if not avail:
+        raise HTTPException(
+            status_code=400,
+            detail="Nie znaleziono żadnych wolnych miejsc w podanej rozpisce.",
+        )
+
+    config = OptimizerConfig(prefer_window=request.prefer_window)
+    strategies = solve_top_strategies(avail, meta, station_names, segment_durations, config=config)
+
+    segments_info = []
+    for i in range(len(station_names) - 1):
+        segments_info.append({
+            "seg_idx": i,
+            "from_station": station_names[i],
+            "to_station": station_names[i + 1],
+            "duration_min": segment_durations[i] if i < len(segment_durations) else 30,
+        })
+
+    seat_matrix = []
+    for seat_uid, availability in avail.items():
+        seat_info = meta[seat_uid]
+        seat_matrix.append(
+            SeatAvailability(
+                seat_uid=seat_uid,
+                carriage_no=seat_info.carriage_no,
+                seat_no=seat_info.seat_no,
+                availability=availability,
+            )
+        )
+
+    strategy_responses = [
+        StrategyResponse(
+            rank=s.rank,
+            title=s.title,
+            total_score=s.total_score,
+            transfers_count=s.transfers_count,
+            total_standing_min=s.total_standing_min,
+            carriages_used=s.carriages_used,
+            steps=[step.model_dump() for step in s.steps],
+            purchase_instructions=s.purchase_instructions,
+            tickets_to_buy=s.tickets_to_buy,
+        )
+        for s in strategies
+    ]
+    top_purchase_instructions = strategy_responses[0].purchase_instructions if strategy_responses else []
+
+    return OptimizationResponse(
+        stations=station_names,
+        segments=segments_info,
+        strategies=strategy_responses,
+        seat_matrix=seat_matrix,
+        raw_availability_report=request.raw_text,
+        purchase_instructions=top_purchase_instructions,
+    )
+
+
+@app.post("/api/v1/optimize", response_model=OptimizationResponse)
+async def optimize_live(request: LiveOptimizeRequest):
+    """
+    Live optimization mode:
+    Scrapes real-time seat availability segment-by-segment using Playwright
+    and calculates optimal seating and transfer strategy.
+    """
+    scanner = LiveTrainScanner(headless=request.headless)
+    try:
+        avail_map = await scanner.scan_full_train(
+            from_station=request.from_station,
+            to_station=request.to_station,
+            travel_date=request.date,
+            train_number=request.train_number or "IC 3520",
+            departure_time=request.time,
+        )
+    except GraphicReservationUnavailableError as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Brak możliwości wyboru miejsca ze schematu na trasie {request.from_station} -> {request.to_station}: {str(e)}",
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Błąd połączenia ze stroną PKP Intercity podczas skanowania odcinka: {str(e)}",
+        )
+
+    avail, meta, station_names, segment_durations = availability_map_to_matrix(avail_map)
+    if not avail:
+        raise HTTPException(
+            status_code=502,
+            detail="System PKP Intercity nie udostępnił wolnych miejsc dla wybranego pociągu (brak miejsc ze schematu).",
+        )
+
+    config = OptimizerConfig(prefer_window=request.prefer_window)
+    strategies = solve_top_strategies(avail, meta, station_names, segment_durations, config=config)
+    formatted_report = format_availability_map(avail_map)
+
+    segments_info = []
+    for i in range(len(station_names) - 1):
+        segments_info.append({
+            "seg_idx": i,
+            "from_station": station_names[i],
+            "to_station": station_names[i + 1],
+            "duration_min": segment_durations[i] if i < len(segment_durations) else 30,
+        })
+
+    seat_matrix = []
+    for seat_uid, availability in avail.items():
+        seat_info = meta[seat_uid]
+        seat_matrix.append(
+            SeatAvailability(
+                seat_uid=seat_uid,
+                carriage_no=seat_info.carriage_no,
+                seat_no=seat_info.seat_no,
+                availability=availability,
+            )
+        )
+
+    strategy_responses = [
+        StrategyResponse(
+            rank=s.rank,
+            title=s.title,
+            total_score=s.total_score,
+            transfers_count=s.transfers_count,
+            total_standing_min=s.total_standing_min,
+            carriages_used=s.carriages_used,
+            steps=[step.model_dump() for step in s.steps],
+            purchase_instructions=s.purchase_instructions,
+            tickets_to_buy=s.tickets_to_buy,
+        )
+        for s in strategies
+    ]
+    top_purchase_instructions = strategy_responses[0].purchase_instructions if strategy_responses else []
+
+    return OptimizationResponse(
+        stations=station_names,
+        segments=segments_info,
+        strategies=strategy_responses,
+        seat_matrix=seat_matrix,
+        raw_availability_report=formatted_report,
+        purchase_instructions=top_purchase_instructions,
+    )
+
+
+@app.get("/api/v1/train-route", response_model=TrainRouteResponse)
+async def get_train_route(
+    from_station: str = Query(...),
+    to_station: str = Query(...),
+    date: str = Query(...),
+    train_number: str = Query("IC 3520"),
+    dep_time: Optional[str] = Query(None),
+):
+    """
+    Returns the real sequence of intermediate stations and arrival/departure times
+    for the selected train journey.
+    """
+    try:
+        stops = resolve_real_route(
+            from_station=from_station,
+            to_station=to_station,
+            travel_date=date,
+            train_number=train_number,
+            dep_time=dep_time,
+        )
+        stops = filter_and_merge_stops(stops, merge_short_segments=False)
+    except Exception as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Nie udało się pobrać trasy dla pociągu {train_number}: {str(e)}",
+        )
+
+    route_desc = " -> ".join(
+        [
+            f"{idx + 1}. {s.name} ({s.departure_time or s.arrival_time or '??:??'})"
+            for idx, s in enumerate(stops)
+        ]
+    )
+
+    stops_items = [
+        TrainStopItem(
+            seq=s.seq,
+            name=s.name,
+            arrival_time=s.arrival_time or "",
+            departure_time=s.departure_time or "",
+            eva_code=s.eva_code,
+        )
+        for s in stops
+    ]
+
+    return TrainRouteResponse(
+        train_number=train_number,
+        travel_date=date,
+        stops=stops_items,
+        formatted_route=route_desc,
     )
 
 

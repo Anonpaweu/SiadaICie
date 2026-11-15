@@ -8,6 +8,7 @@ Endpoints:
 - GET /api/analyze/stream — SSE progress events
 """
 import asyncio
+import re
 from typing import List, Optional
 
 from fastapi import FastAPI, Query, HTTPException, WebSocket, WebSocketDisconnect
@@ -93,6 +94,44 @@ SCENARIO_LOADERS = {
 }
 
 
+class ScanStatusTracker:
+    def __init__(self):
+        self.progress: int = 0
+        self.message: str = ""
+        self.logs: List[str] = []
+        self.is_running: bool = False
+        self.last_error: Optional[str] = None
+
+    def reset(self):
+        self.progress = 0
+        self.message = "Inicjalizacja skanowania..."
+        self.logs = []
+        self.is_running = True
+        self.last_error = None
+
+    def update(self, msg: str):
+        self.logs.append(msg)
+        match = re.search(r"\[(\d+)%\]", msg)
+        if match:
+            self.progress = int(match.group(1))
+            self.message = msg
+        else:
+            self.message = msg
+
+    def complete(self):
+        self.progress = 100
+        self.message = "Zakończono pomyślnie!"
+        self.is_running = False
+
+    def error(self, err: str):
+        self.is_running = False
+        self.last_error = err
+        self.logs.append(f"[BŁĄD] {err}")
+
+
+global_scan_tracker = ScanStatusTracker()
+
+
 @app.get("/api/health", response_model=HealthResponse)
 async def health_check():
     """Health check endpoint."""
@@ -136,7 +175,8 @@ async def search_stations(q: str = Query(..., min_length=1)):
 async def analyze(request: AnalyzeRequest):
     """Run seat optimization for the given parameters."""
     if request.mode == "live":
-        scraper = PKPIntercityScraper(headless=True)
+        is_headless = not request.show_browser if request.show_browser is not None else (request.headless if request.headless is not None else True)
+        scraper = PKPIntercityScraper(headless=is_headless)
         try:
             stops = await scraper.fetch_train_stops(
                 request.from_station,
@@ -297,6 +337,18 @@ async def optimize_from_text(request: ManualMapRequest):
     )
 
 
+@app.get("/api/v1/scan-status")
+async def get_scan_status():
+    """Returns current live train scan progress and log entries."""
+    return {
+        "is_running": global_scan_tracker.is_running,
+        "progress": global_scan_tracker.progress,
+        "message": global_scan_tracker.message,
+        "logs": global_scan_tracker.logs[-25:],
+        "error": global_scan_tracker.last_error,
+    }
+
+
 @app.post("/api/v1/optimize", response_model=OptimizationResponse)
 async def optimize_live(request: LiveOptimizeRequest):
     """
@@ -304,7 +356,14 @@ async def optimize_live(request: LiveOptimizeRequest):
     Scrapes real-time seat availability segment-by-segment using Playwright
     and calculates optimal seating and transfer strategy.
     """
-    scanner = LiveTrainScanner(headless=request.headless)
+    global_scan_tracker.reset()
+    is_headless = not request.show_browser if request.show_browser is not None else (request.headless if request.headless is not None else True)
+
+    scanner = LiveTrainScanner(
+        headless=is_headless,
+        show_browser=request.show_browser,
+        on_progress=lambda m: global_scan_tracker.update(m),
+    )
     try:
         avail_map = await scanner.scan_full_train(
             from_station=request.from_station,
@@ -314,23 +373,30 @@ async def optimize_live(request: LiveOptimizeRequest):
             departure_time=request.time,
         )
     except GraphicReservationUnavailableError as e:
+        err_msg = f"Brak możliwości wyboru miejsca ze schematu na trasie {request.from_station} -> {request.to_station}: {str(e)}"
+        global_scan_tracker.error(err_msg)
         raise HTTPException(
             status_code=502,
-            detail=f"Brak możliwości wyboru miejsca ze schematu na trasie {request.from_station} -> {request.to_station}: {str(e)}",
+            detail=f"{err_msg}. Zapisano zrzut diagnostyczny do logs/debug_snapshots/error_85_percent.png.",
         )
     except Exception as e:
+        err_msg = f"Błąd połączenia ze stroną PKP Intercity podczas skanowania odcinka: {str(e)}"
+        global_scan_tracker.error(err_msg)
         raise HTTPException(
             status_code=502,
-            detail=f"Błąd połączenia ze stroną PKP Intercity podczas skanowania odcinka: {str(e)}",
+            detail=f"{err_msg}. Zapisano zrzut diagnostyczny do logs/debug_snapshots/error_85_percent.png.",
         )
 
     avail, meta, station_names, segment_durations = availability_map_to_matrix(avail_map)
     if not avail:
+        err_msg = "System PKP Intercity nie udostępnił wolnych miejsc dla wybranego pociągu (brak miejsc ze schematu)."
+        global_scan_tracker.error(err_msg)
         raise HTTPException(
             status_code=502,
-            detail="System PKP Intercity nie udostępnił wolnych miejsc dla wybranego pociągu (brak miejsc ze schematu).",
+            detail=f"{err_msg} Zapisano zrzut diagnostyczny do logs/debug_snapshots/error_85_percent.png.",
         )
 
+    global_scan_tracker.complete()
     config = OptimizerConfig(prefer_window=request.prefer_window)
     strategies = solve_top_strategies(avail, meta, station_names, segment_durations, config=config)
     formatted_report = format_availability_map(avail_map)

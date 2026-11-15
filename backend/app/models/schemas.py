@@ -11,6 +11,8 @@ class AnalyzeRequest(BaseModel):
     dep_time: Optional[str] = None
     mode: str = "mock_classic"  # "mock_classic", "mock_overlap", "mock_standing", "live"
     prefer_window: bool = False
+    headless: Optional[bool] = None
+    show_browser: Optional[bool] = None
 
 
 class StepResponse(BaseModel):
@@ -77,6 +79,7 @@ class LiveOptimizeRequest(BaseModel):
     time: Optional[str] = "12:00"
     train_number: Optional[str] = "IC 3520"
     headless: bool = True
+    show_browser: Optional[bool] = None
     prefer_window: bool = False
 
 

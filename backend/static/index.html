@@ -204,19 +204,23 @@
       </div>
     </section>
 
-    <!-- Pasek Postępu Na Żywo (Progress Bar) -->
-    <div id="progressSection" class="hidden bg-slate-900 border border-slate-800 rounded-xl p-4 shadow space-y-2">
+    <!-- Pasek Postępu Na Żywo (Progress Bar & Live Scraper Console) -->
+    <div id="progressSection" class="hidden bg-slate-900 border border-slate-800 rounded-xl p-4 shadow space-y-3">
       <div class="flex justify-between items-center text-xs font-medium">
-        <span id="progressMessage" class="text-blue-400">Pobieranie rozkładu jazdy...</span>
-        <span id="progressPercent" class="text-slate-400">0%</span>
+        <span id="progressMessage" class="text-blue-400 font-semibold">Pobieranie rozkładu jazdy...</span>
+        <span id="progressPercent" class="text-slate-400 font-mono">0%</span>
       </div>
       <div class="w-full bg-slate-950 h-2.5 rounded-full overflow-hidden border border-slate-800">
         <div id="progressBar" class="bg-gradient-to-r from-blue-600 to-cyan-400 h-full w-0 transition-all duration-300"></div>
       </div>
+      <!-- Live Scraper Terminal Log -->
+      <div id="liveScraperConsole" class="mt-2 bg-slate-950/90 rounded-lg p-3 border border-slate-800 text-[11px] font-mono text-slate-300 max-h-36 overflow-y-auto space-y-1 scrollbar-thin">
+        <div class="text-slate-500 italic">[Konsola scrapera gotowa na uruchomienie zadania...]</div>
+      </div>
     </div>
 
     <!-- Error message alert -->
-    <div id="errorAlert" class="hidden bg-red-950/60 border border-red-800 text-red-300 p-4 rounded-xl text-sm flex items-start gap-3">
+    <div id="errorAlert" class="hidden bg-red-950/70 border border-red-800 text-red-300 p-4 rounded-xl text-sm flex items-start gap-3">
       <span class="text-lg">⚠️</span>
       <div id="errorMessage" class="flex-1 leading-relaxed">Wystąpił błąd podczas analizy.</div>
     </div>
@@ -322,6 +326,15 @@
     let customPath = {};
     let searchDebounceTimer = null;
     let filterOnlyRecommended = false;
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
 
     const SAMPLE_KOLUSZKI_OPOLE = `Koluszki - Piotrków 14:45
 W5 m82
@@ -542,24 +555,56 @@ W8 m88/m86/m84/m82`;
       const progressBar = document.getElementById('progressBar');
       const progressMessage = document.getElementById('progressMessage');
       const progressPercent = document.getElementById('progressPercent');
+      const liveConsole = document.getElementById('liveScraperConsole');
       const errorAlert = document.getElementById('errorAlert');
 
       errorAlert.classList.add('hidden');
       progressSection.classList.remove('hidden');
-      progressBar.style.width = '20%';
-      progressMessage.innerText = 'Uruchamianie scrapera Playwright...';
-      progressPercent.innerText = '20%';
+      progressBar.style.width = '10%';
+      progressPercent.innerText = '10%';
+      const browserModeText = showBrowser ? 'WIDOCZNY (okno Chromium na pulpicie)' : 'W TLE (headless)';
+      progressMessage.innerText = `Uruchamianie scrapera Playwright (Tryb: ${browserModeText})...`;
+
+      if (liveConsole) {
+        liveConsole.innerHTML = `
+          <div class="text-blue-400 font-bold">[START] Rozpoczynanie zadania skanowania dla pociągu ${escapeHtml(trainNo || 'IC')}</div>
+          <div class="text-amber-300 font-medium">[DEBUG] Uruchomiono przeglądarkę (Tryb widoczny: ${showBrowser ? 'TAK' : 'NIE'})</div>
+          <div class="text-slate-400">Trasa główna: ${escapeHtml(fromSt)} &rarr; ${escapeHtml(toSt)} (Data: ${escapeHtml(date)} ${escapeHtml(depTime)})</div>
+        `;
+      }
+
+      let statusInterval = null;
 
       try {
-        let p = 25;
-        const interval = setInterval(() => {
-          if (p < 85) {
-            p += 15;
-            progressBar.style.width = p + '%';
-            progressPercent.innerText = p + '%';
-            progressMessage.innerText = `Skanowanie wagonów i zielonych miejsc dla pociągu ${trainNo}...`;
+        statusInterval = setInterval(async () => {
+          try {
+            const sRes = await fetch('/api/v1/scan-status');
+            if (sRes.ok) {
+              const sData = await sRes.json();
+              if (sData.progress > 0) {
+                const displayPct = Math.min(sData.progress, 99);
+                progressBar.style.width = displayPct + '%';
+                progressPercent.innerText = displayPct + '%';
+              }
+              if (sData.message) {
+                progressMessage.innerText = sData.message;
+              }
+              if (sData.logs && sData.logs.length > 0 && liveConsole) {
+                liveConsole.innerHTML = sData.logs.map(l => {
+                  let cls = 'text-slate-300';
+                  if (l.includes('[BŁĄD]') || l.includes('Error')) cls = 'text-red-400 font-semibold';
+                  else if (l.includes('[DEBUG]')) cls = 'text-amber-300';
+                  else if (l.includes('[ROUTE]')) cls = 'text-cyan-300';
+                  else if (l.includes('[100%]')) cls = 'text-emerald-400 font-bold';
+                  return `<div class="${cls} leading-tight">${escapeHtml(l)}</div>`;
+                }).join('');
+                liveConsole.scrollTop = liveConsole.scrollHeight;
+              }
+            }
+          } catch (e) {
+            // Non-blocking polling error
           }
-        }, 1200);
+        }, 500);
 
         const res = await fetch('/api/v1/optimize', {
           method: 'POST',
@@ -571,11 +616,12 @@ W8 m88/m86/m84/m82`;
             time: depTime,
             train_number: trainNo,
             headless: !showBrowser,
+            show_browser: showBrowser,
             prefer_window: preferWindow,
           }),
         });
 
-        clearInterval(interval);
+        if (statusInterval) clearInterval(statusInterval);
 
         if (!res.ok) {
           const errData = await res.json();
@@ -591,9 +637,22 @@ W8 m88/m86/m84/m82`;
         }
 
       } catch (err) {
+        if (statusInterval) clearInterval(statusInterval);
         progressSection.classList.add('hidden');
         errorAlert.classList.remove('hidden');
-        document.getElementById('errorMessage').innerText = err.message;
+
+        const isSnapshotError = err.message && (err.message.includes('error_85_percent.png') || err.message.includes('debug_85.html') || err.message.includes('85%'));
+        document.getElementById('errorMessage').innerHTML = `
+          <div class="font-semibold text-red-200 mb-1">${escapeHtml(err.message)}</div>
+          ${isSnapshotError ? `
+            <div class="mt-2 text-xs bg-red-900/60 p-2.5 rounded border border-red-700/80 font-mono text-red-200 flex flex-col gap-1">
+              <div>📸 <strong>Diagnostyka błędu (Fail-Fast):</strong> Zapisano zrzut ekranu strony PKP oraz kod HTML:</div>
+              <div class="text-amber-300 font-bold">&bull; logs/debug_snapshots/error_85_percent.png</div>
+              <div class="text-amber-300 font-bold">&bull; logs/debug_snapshots/debug_85.html</div>
+              <div class="text-slate-300 text-[10px] mt-1">Zajrzyj do powyższego pliku PNG, aby sprawdzić, co dokładnie wyświetliła strona e-IC (np. brak miejsc w Klasie 2, komunikat o ZKA, lub błąd serwera PKP).</div>
+            </div>
+          ` : ''}
+        `;
       }
     }
 
@@ -653,7 +712,7 @@ W8 m88/m86/m84/m82`;
 
       setTimeout(() => {
         progressSection.classList.add('hidden');
-      }, 400);
+      }, 2500);
 
       renderPurchaseInstructions(data);
       renderCarriageFilter(data.seat_matrix);

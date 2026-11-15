@@ -33,3 +33,7 @@ scratch/
 .DS_Store
 Thumbs.db
 
+# Scraper diagnostics and logs
+logs/
+
+

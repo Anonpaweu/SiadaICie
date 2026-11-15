@@ -239,3 +239,62 @@ class TestErrorHandlingScraper:
         )
         assert response.status_code == 502
         assert "Brak możliwości wyboru miejsca" in response.json()["detail"]
+
+    def test_scan_status_endpoint(self):
+        response = client.get("/api/v1/scan-status")
+        assert response.status_code == 200
+        data = response.json()
+        assert "is_running" in data
+        assert "progress" in data
+        assert "logs" in data
+
+    def test_live_scraper_error_includes_snapshot_path(self, monkeypatch):
+        from backend.app.scraper.ebilet_seat_scraper import LiveTrainScanner, GraphicReservationUnavailableError
+
+        async def mock_scan_failure(*args, **kwargs):
+            raise GraphicReservationUnavailableError("BRAK_MIEJSC_KLASA_2: Wyprzedano miejsca w 2. klasie")
+
+        monkeypatch.setattr(LiveTrainScanner, "scan_full_train", mock_scan_failure)
+
+        response = client.post(
+            "/api/v1/optimize",
+            json={
+                "from_station": "Koluszki",
+                "to_station": "Opole Główne",
+                "date": "2026-11-15",
+                "train_number": "IC 16104",
+                "show_browser": True,
+            },
+        )
+        assert response.status_code == 502
+        assert "error_85_percent.png" in response.json()["detail"]
+        assert "BRAK_MIEJSC_KLASA_2" in response.json()["detail"]
+
+    def test_show_browser_passed_to_scanner(self, monkeypatch):
+        from backend.app.scraper.ebilet_seat_scraper import LiveTrainScanner
+        from backend.app.models.domain import FullTrainAvailabilityMap
+
+        captured_args = {}
+
+        def mock_init(self, headless=None, show_browser=None, on_progress=None, ttl_seconds=600):
+            captured_args["headless"] = headless
+            captured_args["show_browser"] = show_browser
+
+        async def mock_scan(*args, **kwargs):
+            return FullTrainAvailabilityMap(train_number="IC 16104", travel_date="2026-11-15", segments=[])
+
+        monkeypatch.setattr(LiveTrainScanner, "__init__", mock_init)
+        monkeypatch.setattr(LiveTrainScanner, "scan_full_train", mock_scan)
+
+        response = client.post(
+            "/api/v1/optimize",
+            json={
+                "from_station": "Koluszki",
+                "to_station": "Opole Główne",
+                "date": "2026-11-15",
+                "train_number": "IC 16104",
+                "show_browser": True,
+            },
+        )
+        assert captured_args.get("show_browser") is True
+        assert captured_args.get("headless") is False

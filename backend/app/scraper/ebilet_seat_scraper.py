@@ -230,6 +230,17 @@ class EbiletSeatScraper:
         target_clean = station_name.strip().lower()
         selected = False
 
+        # Wait up to 2.5s for suggestions dropdown to appear from API
+        for _ in range(5):
+            found_any = False
+            for sel in option_selectors:
+                if await page.locator(sel).count() > 0:
+                    found_any = True
+                    break
+            if found_any:
+                break
+            await asyncio.sleep(0.4)
+
         for sel in option_selectors:
             opts = page.locator(sel)
             cnt = await opts.count()
@@ -366,73 +377,6 @@ class EbiletSeatScraper:
         await confirm_btn.click()
         logger.info("[SEARCH] Kliknięto przycisk wyszukiwania połączeń.")
 
-    async def fill_passenger_details(
-        self,
-        page: Page,
-        first_name: str = "Jan",
-        last_name: str = "Kowalski",
-        email: Optional[str] = "jan.kowalski@example.com",
-    ) -> None:
-        """
-        Krok 5 (Plan V3.5): Fills passenger details form if required before reservation summary.
-        """
-        fn_locs = ["input[name='firstName']", "input[name='imie']", "input[placeholder*='Imię']", "#firstName"]
-        for sel in fn_locs:
-            el = page.locator(sel).first
-            if await el.is_visible(timeout=800):
-                await el.fill(first_name)
-                break
-
-        ln_locs = ["input[name='lastName']", "input[name='nazwisko']", "input[placeholder*='Nazwisko']", "#lastName"]
-        for sel in ln_locs:
-            el = page.locator(sel).first
-            if await el.is_visible(timeout=800):
-                await el.fill(last_name)
-                break
-
-        if email:
-            em_locs = ["input[name='email']", "input[type='email']", "#email"]
-            for sel in em_locs:
-                el = page.locator(sel).first
-                if await el.is_visible(timeout=800):
-                    await el.fill(email)
-                    break
-
-        # Check terms checkboxes
-        chk_locs = ["input[type='checkbox'][name*='terms']", "input[type='checkbox'][name*='zgoda']", "input[type='checkbox']"]
-        for sel in chk_locs:
-            chk = page.locator(sel).first
-            if await chk.is_visible(timeout=500):
-                if not await chk.is_checked():
-                    await chk.check()
-
-    async def parse_booking_summary(self, page: Page) -> Dict[str, Any]:
-        """
-        Krok 6 (Plan V3.5): Parses booking summary table, hold expiration timer, assigned wagon & seat.
-        """
-        summary_info: Dict[str, Any] = {"wagon": None, "seat": None, "hold_timer": None, "price": None}
-        content = await page.content()
-
-        # Match wagon & seat (e.g. Wagon 8, Miejsce 43)
-        w_match = re.search(r'wagon\s*(\d+)', content, re.IGNORECASE)
-        if w_match:
-            summary_info["wagon"] = w_match.group(1)
-
-        s_match = re.search(r'miejsce\s*(\d+)', content, re.IGNORECASE)
-        if s_match:
-            summary_info["seat"] = s_match.group(1)
-
-        t_match = re.search(r'czas\s+na\s+opłacenie[^\d]*(\d{1,2}:\d{2})', content, re.IGNORECASE)
-        if t_match:
-            summary_info["hold_timer"] = t_match.group(1)
-
-        p_match = re.search(r'(\d+[\.,]\d{2})\s*zł', content)
-        if p_match:
-            summary_info["price"] = p_match.group(1)
-
-        logger.info(f"[SUMMARY] Parsed booking hold summary: {summary_info}")
-        return summary_info
-
     async def search_segment_on_intercity(
         self,
         page: Page,
@@ -476,12 +420,40 @@ class EbiletSeatScraper:
         page.on("response", on_response)
 
         try:
-            # 1. Navigate to ebilet search
-            report(15, f"Otwieranie serwisu PKP Intercity dla trasy {from_station} -> {to_station}...")
-            search_url = "https://ebilet.intercity.pl/"
-            await page.goto(search_url, wait_until="domcontentloaded")
-            await asyncio.sleep(0.5)
-            await self.close_cookie_banners(page)
+            # 1. Navigate or return to ebilet search form
+            report(15, f"Przygotowywanie wyszukiwania dla trasy {from_station} -> {to_station}...")
+            cur_url = page.url or ""
+            is_already_on_eic2 = "ebilet.intercity.pl" in cur_url
+
+            if is_already_on_eic2:
+                logger.info("[SESSION] Wykorzystanie aktywnej sesji e-IC 2.0 bez pełnego przeładowywania.")
+                # Close any open modal dialog
+                try:
+                    await page.keyboard.press("Escape")
+                    close_btn = page.locator("button[aria-label='Zamknij'], button:has-text('Zamknij')").first
+                    if await close_btn.is_visible(timeout=400):
+                        await close_btn.click()
+                except Exception:
+                    pass
+
+                # Return to search form via progress bar / ZMIEŃ button
+                st_from_cnt = await page.locator("#stationFrom").count()
+                if st_from_cnt == 0 or not await page.locator("#stationFrom").is_visible():
+                    nav_search_btns = [
+                        page.locator("button.ProgressBar_interactive__69NOB:has-text('Wyszukiwarka')").first,
+                        page.locator("button:has-text('Wyszukiwarka')").first,
+                        page.locator("button:has-text('ZMIEŃ')").first,
+                    ]
+                    for n_btn in nav_search_btns:
+                        if await n_btn.is_visible(timeout=800):
+                            await n_btn.click()
+                            await asyncio.sleep(0.5)
+                            break
+            else:
+                search_url = "https://ebilet.intercity.pl/"
+                await page.goto(search_url, wait_until="domcontentloaded", timeout=25000)
+                await asyncio.sleep(0.5)
+                await self.close_cookie_banners(page)
 
             # 2. Input from_station with combobox
             report(25, f"Wprowadzanie stacji początkowej: {from_station}...")
@@ -781,6 +753,7 @@ class EbiletSeatScraper:
     ) -> Dict[str, List[str]]:
         """
         Extracts available seats across all Class 2 carriages using e-IC 2.0 React DOM and iframe (Tasks V3-27 to V3-30).
+        Handles wagon carousel navigation, horizontal seat scrolling arrows, and closes modal after completion.
         """
         carriages: Dict[str, List[str]] = {}
 
@@ -806,11 +779,18 @@ class EbiletSeatScraper:
                 c_match = re.search(r'\d+', num_txt)
                 c_no = c_match.group(0) if c_match else str(idx + 1)
 
+                # If slide is not visible in carousel viewport, click carousel scroll arrow
+                if not await slide.is_visible():
+                    carousel_next = page.locator("button.carriagesBtnNext, button[aria-label*='w prawo']").first
+                    if await carousel_next.is_visible(timeout=400) and await carousel_next.is_enabled():
+                        await carousel_next.click()
+                        await asyncio.sleep(0.3)
+
                 # Click wagon slide
                 click_target = slide.locator("div[aria-label*='Wybierz wagon numer'], div[class*='Carriage_carriageBox'], div").first
                 try:
                     await click_target.click()
-                    await asyncio.sleep(0.4)
+                    await asyncio.sleep(0.5)
                 except Exception:
                     pass
 
@@ -823,6 +803,18 @@ class EbiletSeatScraper:
                         break
 
                 seats = await self._find_seats_in_iframe(active_frame)
+
+                # Check if wagon view has horizontal arrows for long wagons
+                arrow_next = page.locator("button[class*='SeatsWbnet_seatsBtnNext'], button[aria-label*='Następny wagon']").first
+                if await arrow_next.is_visible(timeout=300) and await arrow_next.is_enabled():
+                    try:
+                        await arrow_next.click()
+                        await asyncio.sleep(0.3)
+                        more_seats = await self._find_seats_in_iframe(active_frame)
+                        seats = sorted(list(set(seats + more_seats)), key=lambda x: int(x))
+                    except Exception:
+                        pass
+
                 if seats:
                     carriages[c_no] = seats
         else:
@@ -831,17 +823,30 @@ class EbiletSeatScraper:
             if seats:
                 carriages["2"] = seats
 
+        # Once all carriages are read, dismiss the modal dialog
+        try:
+            close_btn = page.locator("button[class*='css-nk1pxf']:has-text('Zamknij'), button[aria-label='Zamknij'], button:has-text('Zamknij')").first
+            if await close_btn.is_visible(timeout=500):
+                await close_btn.click()
+                await asyncio.sleep(0.3)
+            else:
+                await page.keyboard.press("Escape")
+                await asyncio.sleep(0.2)
+            logger.info("[MODAL] Zamknięto modal schematu wagonów.")
+        except Exception:
+            pass
+
         return carriages
 
     async def _find_seats_in_iframe(self, container: Union[Page, Frame]) -> List[str]:
         """
-        Parses free seats from the seatmap iframe (g[aria*='Wolne'], rect.place-rect, text.seatNum).
+        Parses free seats from the seatmap iframe (g[aria*='Wolne'], button[aria*='Wolne'], rect.place-rect, text.seatNum).
         """
         free_seats: List[str] = []
 
         try:
             # 1. Primary: SVG <g> groups with aria-label containing 'wolne'
-            g_locs = container.locator("g[aria-label*='Wolne'], g[aria-label*='wolne']")
+            g_locs = container.locator("g[aria-label*='Wolne' i], g[aria-label*='wolne' i]")
             g_cnt = await g_locs.count()
             if g_cnt > 0:
                 for idx in range(g_cnt):
@@ -861,9 +866,23 @@ class EbiletSeatScraper:
         except Exception as e:
             logger.debug(f"[SVG] Error reading seat text: {e}")
 
+        # 2. Secondary: button.seat-overlay-button overlays
+        try:
+            b_locs = container.locator("button.seat-overlay-button[aria-label*='Wolne' i], button[aria-label*='Wolne' i]")
+            b_cnt = await b_locs.count()
+            if b_cnt > 0:
+                for idx in range(b_cnt):
+                    b_elem = b_locs.nth(idx)
+                    aria = (await b_elem.get_attribute("aria-label")) or ""
+                    m = re.search(r'miejsce\s+(\d+)', aria, re.IGNORECASE)
+                    if m and m.group(1).isdigit():
+                        free_seats.append(m.group(1))
+        except Exception as e:
+            logger.debug(f"[BUTTON] Error reading button seat: {e}")
+
         if not free_seats:
             try:
-                # 2. Secondary: fallback selectors
+                # 3. Fallback selectors
                 fallback_locators = [
                     ".seat.available",
                     ".seat.free",

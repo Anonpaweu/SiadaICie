@@ -679,17 +679,25 @@ def resolve_real_route(
         save_cached_route(train_number, travel_date, merged)
         return merged
 
-    # 4. Fallback: Lookup real EVA codes from SQLite stations table
+    # 4. Fallback: Direct segment between origin and destination
     from_name, from_eva = get_station_info(from_station)
     to_name, to_eva = get_station_info(to_station)
 
     raw_stops = [
-        StationStop(seq=0, eva_code=from_eva or "5100065", name=from_name, arrival_min=0, departure_min=0),
-        StationStop(seq=1, eva_code="5100031", name="Kutno", arrival_min=65, departure_min=67),
-        StationStop(seq=2, eva_code="5100027", name="Konin", arrival_min=115, departure_min=117),
-        StationStop(seq=3, eva_code=to_eva or "5100040", name=to_name, arrival_min=175, departure_min=175),
+        StationStop(
+            seq=0,
+            eva_code=from_eva or "",
+            name=from_name,
+            arrival_min=0,
+            departure_min=0,
+            departure_time=dep_time or "12:00",
+        ),
+        StationStop(
+            seq=1,
+            eva_code=to_eva or "",
+            name=to_name,
+            arrival_min=60,
+            departure_min=60,
+        ),
     ]
-
-    merged = filter_and_merge_stops(raw_stops)
-    save_cached_route(train_number, travel_date, merged)
-    return merged
+    return raw_stops

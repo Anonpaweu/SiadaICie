@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PKP Seat Optimizer — "Siedzisz.pl"</title>
+  <title>PKP Intercity — PKP Seat Optimizer (IccBagno)</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -11,12 +11,17 @@
       theme: {
         extend: {
           colors: {
-            brand: {
-              50: '#eff6ff',
-              500: '#3b82f6',
-              600: '#2563eb',
-              700: '#1d4ed8',
-              900: '#1e3a8a',
+            pkp: {
+              navy: '#002a5c',
+              dark: '#060e1a',
+              surface: '#0c1c30',
+              surfaceHover: '#102747',
+              border: '#1a385f',
+              borderLight: '#234b7f',
+              orange: '#f36f21',
+              orangeHover: '#d8580f',
+              orangeActive: '#bf4b08',
+              blue: '#0070ba',
             }
           }
         }
@@ -25,172 +30,201 @@
   </script>
   <style>
     .cell-selected {
-      box-shadow: inset 0 0 0 3px #fbbf24, 0 0 14px rgba(251, 191, 36, 0.45);
-      background-color: #1e3a8a !important;
-      color: #fbbf24 !important;
-      font-weight: bold;
+      box-shadow: inset 0 0 0 2px #f36f21, 0 0 12px rgba(243, 111, 33, 0.4);
+      background-color: #0c2d54 !important;
+      color: #f36f21 !important;
+      font-weight: 700;
     }
     .cell-custom {
-      box-shadow: inset 0 0 0 3px #a855f7, 0 0 14px rgba(168, 85, 247, 0.45);
-      background-color: #581c87 !important;
+      box-shadow: inset 0 0 0 2px #a855f7, 0 0 12px rgba(168, 85, 247, 0.4);
+      background-color: #3b0764 !important;
       color: #f3e8ff !important;
-      font-weight: bold;
+      font-weight: 700;
     }
     .scrollbar-thin::-webkit-scrollbar {
       height: 6px;
       width: 6px;
     }
     .scrollbar-thin::-webkit-scrollbar-thumb {
-      background: #475569;
+      background: #1b3a63;
       border-radius: 4px;
     }
   </style>
 </head>
-<body class="bg-slate-950 text-slate-100 min-h-screen font-sans flex flex-col antialiased">
+<body class="bg-pkp-dark text-slate-100 min-h-screen font-sans flex flex-col antialiased selection:bg-pkp-orange selection:text-white">
 
-  <!-- Header -->
-  <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-50 px-6 py-4 flex items-center justify-between">
-    <div class="flex items-center space-x-3">
-      <div class="w-10 h-10 rounded-lg bg-blue-600 flex items-center justify-center text-xl font-bold shadow-lg shadow-blue-500/20">
-        🚄
+  <!-- Header w stylu oficjalnym PKP Intercity -->
+  <header class="border-b border-pkp-border bg-pkp-navy/95 backdrop-blur sticky top-0 z-50 px-6 py-3.5 shadow-lg">
+    <div class="max-w-7xl mx-auto flex items-center justify-between">
+      <div class="flex items-center space-x-3.5">
+        <!-- Logo PKP IC Monogram -->
+        <div class="h-10 px-3 rounded-lg bg-white/10 border border-white/15 flex items-center justify-center font-black tracking-widest text-lg text-white shadow-inner">
+          <span class="text-white">PKP</span>
+          <span class="text-pkp-orange ml-1">IC</span>
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <h1 class="text-base font-extrabold tracking-wide text-white uppercase">
+              PKP Intercity
+            </h1>
+            <span class="text-[11px] font-semibold px-2 py-0.5 rounded bg-pkp-orange/20 text-pkp-orange border border-pkp-orange/30">
+              Seat Optimizer Pro
+            </span>
+          </div>
+          <p class="text-[11px] text-slate-300">Inteligentny system optymalizacji rezerwacji foteli i przesiadek w pociągach dalekobieżnych</p>
+        </div>
       </div>
-      <div>
-        <h1 class="text-xl font-extrabold tracking-tight text-white flex items-center gap-2">
-          PKP Seat Optimizer
-          <span class="text-xs font-semibold px-2 py-0.5 rounded bg-blue-500/20 text-blue-400 border border-blue-500/30">Pro &bull; v2.0 Live</span>
-        </h1>
-        <p class="text-xs text-slate-400">Autonomiczny optymalizator miejsc siedzących w pociągach PKP Intercity</p>
-      </div>
-    </div>
-    <div class="flex items-center gap-4 text-xs">
-      <div id="wsIndicator" class="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-3 py-1.5 rounded-full">
-        <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-        Playwright Scraper + Silnik DAG / DP aktywny
+      <div class="flex items-center gap-4 text-xs">
+        <div class="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-3 py-1.5 rounded-full font-medium">
+          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+          <span>Silnik e-IC 2.0 aktywny</span>
+        </div>
       </div>
     </div>
   </header>
 
-  <!-- Main Container -->
+  <!-- Główny kontener -->
   <main class="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
 
-    <!-- Mode Switcher Tabs (Task 089) -->
-    <div class="flex border-b border-slate-800 space-x-2">
-      <button id="tabLiveBtn" onclick="switchTab('live')" class="px-5 py-3 text-sm font-semibold rounded-t-lg border-b-2 border-blue-500 bg-slate-900 text-blue-400 flex items-center gap-2 transition-all">
-        <span>🌐</span>
-        <span>Tryb 1: Skanuj pociąg automatycznie (Live PKP IC)</span>
+    <!-- Przełącznik trybów (Nawigacja zakładkowa) -->
+    <div class="flex border-b border-pkp-border space-x-2">
+      <button id="tabLiveBtn" onclick="switchTab('live')" class="px-5 py-3 text-xs font-bold rounded-t-lg border-b-2 border-pkp-orange bg-pkp-surface text-white flex items-center gap-2 transition-all shadow">
+        <svg class="w-4 h-4 text-pkp-orange" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+        </svg>
+        <span>Automatyczne Skanowanie Składu (Live PKP Intercity)</span>
       </button>
-      <button id="tabTextBtn" onclick="switchTab('text')" class="px-5 py-3 text-sm font-semibold rounded-t-lg border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/60 flex items-center gap-2 transition-all">
-        <span>📝</span>
-        <span>Tryb 2: Wklej / Edytuj rozpiskę miejsc (w3 m54/m56)</span>
+      <button id="tabTextBtn" onclick="switchTab('text')" class="px-5 py-3 text-xs font-semibold rounded-t-lg border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:bg-pkp-surface/60 flex items-center gap-2 transition-all">
+        <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+        </svg>
+        <span>Analiza Własnego Zestawienia Miejsc (Edytor)</span>
       </button>
     </div>
 
-    <!-- PANEL TRYBU 1: Live PKP IC -->
-    <section id="panelModeLive" class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl space-y-4">
-      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
-        <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-          <span>⚙️</span> Skanowanie Na Żywo z PKP Intercity
-        </h2>
-        <span class="text-xs text-slate-500">Wyszukaj pociąg, pobierz przystanki i przeskanuj wolne wagony</span>
+    <!-- PANEL TRYBU 1: Skanowanie Składu na Żywo -->
+    <section id="panelModeLive" class="bg-pkp-surface border border-pkp-border rounded-xl p-5 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between border-b border-pkp-border pb-3">
+        <div class="flex items-center gap-2.5">
+          <div class="w-2.5 h-2.5 rounded-sm bg-pkp-orange"></div>
+          <h2 class="text-xs font-extrabold uppercase tracking-wider text-slate-200">
+            Wyszukiwanie Połączenia i Parametry Składu
+          </h2>
+        </div>
+        <span class="text-[11px] text-slate-400">Pobierz rozkład stacji, a następnie przeskanuj wolne wagony Klasy 2</span>
       </div>
 
+      <!-- 4 Kolumny: Stacja A -> Stacja B -> Data i Godzina -> Numer pociągu -->
       <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <!-- 1. Stacja początkowa (A) -->
+
+        <!-- Kolumna 1: Stacja początkowa (A) -->
         <div class="relative">
-          <label class="block text-xs font-medium text-slate-300 mb-1.5">Stacja początkowa (A)</label>
-          <input type="text" id="fromStation" value="" autocomplete="off" placeholder="Wpisz stację odjazdu (np. Warszawa Centralna)..." oninput="handleStationSearch('fromStation', 'fromSuggestions')" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 text-slate-200 placeholder:text-slate-600" />
-          <div id="fromSuggestions" class="hidden absolute left-0 right-0 top-full mt-1 bg-slate-900 border border-slate-700 rounded-lg shadow-2xl z-50 max-h-56 overflow-y-auto divide-y divide-slate-800 text-xs"></div>
+          <label class="block text-xs font-semibold text-slate-300 mb-1.5 flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-blue-400"></span>
+            <span>Stacja wyjazdu (A)</span>
+          </label>
+          <input type="text" id="fromStation" value="" autocomplete="off" placeholder="Wpisz stację odjazdu (np. Warszawa Centralna)..." oninput="handleStationSearch('fromStation', 'fromSuggestions')" class="w-full bg-pkp-dark border border-pkp-borderLight rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-pkp-orange text-slate-100 placeholder:text-slate-500 transition-colors" />
+          <div id="fromSuggestions" class="hidden absolute left-0 right-0 top-full mt-1 bg-pkp-surface border border-pkp-borderLight rounded-lg shadow-2xl z-50 max-h-56 overflow-y-auto divide-y divide-pkp-border text-xs"></div>
         </div>
 
-        <!-- 2. Stacja docelowa (B) -->
+        <!-- Kolumna 2: Stacja docelowa (B) -->
         <div class="relative">
-          <label class="block text-xs font-medium text-slate-300 mb-1.5">Stacja docelowa (B)</label>
-          <input type="text" id="toStation" value="" autocomplete="off" placeholder="Wpisz stację przyjazdu (np. Kraków Główny)..." oninput="handleStationSearch('toStation', 'toSuggestions')" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 text-slate-200 placeholder:text-slate-600" />
-          <div id="toSuggestions" class="hidden absolute left-0 right-0 top-full mt-1 bg-slate-900 border border-slate-700 rounded-lg shadow-2xl z-50 max-h-56 overflow-y-auto divide-y divide-slate-800 text-xs"></div>
+          <label class="block text-xs font-semibold text-slate-300 mb-1.5 flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-pkp-orange"></span>
+            <span>Stacja przyjazdu (B)</span>
+          </label>
+          <input type="text" id="toStation" value="" autocomplete="off" placeholder="Wpisz stację przyjazdu (np. Kraków Główny)..." oninput="handleStationSearch('toStation', 'toSuggestions')" class="w-full bg-pkp-dark border border-pkp-borderLight rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-pkp-orange text-slate-100 placeholder:text-slate-500 transition-colors" />
+          <div id="toSuggestions" class="hidden absolute left-0 right-0 top-full mt-1 bg-pkp-surface border border-pkp-borderLight rounded-lg shadow-2xl z-50 max-h-56 overflow-y-auto divide-y divide-pkp-border text-xs"></div>
         </div>
 
-        <!-- 3. Data i Godzina odjazdu (z miesięcznym kalendarzem i ręcznym wpisem) -->
+        <!-- Kolumna 3: Data i Godzina odjazdu -->
         <div class="relative">
-          <label class="block text-xs font-medium text-slate-300 mb-1.5">Data i Godzina odjazdu</label>
+          <label class="block text-xs font-semibold text-slate-300 mb-1.5">Data i Godzina odjazdu</label>
           <div class="grid grid-cols-2 gap-2">
             <!-- Data z kalendarzem -->
             <div class="relative">
               <input type="text" id="travelDateDisplay" autocomplete="off" placeholder="DD.MM.YYYY" 
-                class="w-full bg-slate-950 border border-slate-700 rounded-lg pl-2 pr-7 py-2 text-xs focus:outline-none focus:border-blue-500 text-slate-200 cursor-pointer font-mono" />
-              <button type="button" id="btnToggleCalendar" class="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-blue-400 text-xs transition-colors" title="Otwórz kalendarz">
-                📅
+                class="w-full bg-pkp-dark border border-pkp-borderLight rounded-lg pl-2.5 pr-8 py-2 text-xs focus:outline-none focus:border-pkp-orange text-slate-100 cursor-pointer font-mono transition-colors" />
+              <button type="button" id="btnToggleCalendar" class="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-pkp-orange text-xs transition-colors" title="Otwórz kalendarz">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
               </button>
               <input type="hidden" id="travelDate" value="" />
             </div>
             <!-- Godzina -->
-            <input type="time" id="travelTime" value="" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-xs focus:outline-none focus:border-blue-500 text-slate-200" />
+            <input type="time" id="travelTime" value="" class="w-full bg-pkp-dark border border-pkp-borderLight rounded-lg px-2.5 py-2 text-xs focus:outline-none focus:border-pkp-orange text-slate-100 transition-colors" />
           </div>
 
           <div class="flex items-center gap-2 mt-2">
-            <input type="checkbox" id="directOnly" checked onchange="toggleDirectFilter()" class="rounded border-slate-700 bg-slate-950 text-blue-600 focus:ring-blue-500 w-3.5 h-3.5 cursor-pointer">
-            <label for="directOnly" class="text-[11px] text-slate-300 select-none cursor-pointer">Tylko pociągi bezpośrednie</label>
+            <input type="checkbox" id="directOnly" checked onchange="toggleDirectFilter()" class="rounded border-pkp-borderLight bg-pkp-dark text-pkp-orange focus:ring-pkp-orange w-3.5 h-3.5 cursor-pointer">
+            <label for="directOnly" class="text-[11px] text-slate-300 select-none cursor-pointer">Tylko połączenia bezpośrednie</label>
           </div>
 
-          <!-- Okienko interaktywnego kalendarza miesięcznego -->
-          <div id="calendarPopup" class="hidden absolute left-0 top-full mt-1 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-50 p-3 w-72 text-xs select-none">
-            <div class="flex items-center justify-between mb-2 pb-2 border-b border-slate-800 text-slate-200">
-              <button type="button" id="calPrevMonth" class="px-2 py-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors font-bold">&lt;</button>
-              <span id="calMonthYearTitle" class="font-semibold text-xs tracking-wide">Listopad 2026</span>
-              <button type="button" id="calNextMonth" class="px-2 py-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors font-bold">&gt;</button>
+          <!-- Okienko kalendarza miesięcznego -->
+          <div id="calendarPopup" class="hidden absolute left-0 top-full mt-1.5 bg-pkp-surface border border-pkp-borderLight rounded-xl shadow-2xl z-50 p-3.5 w-72 text-xs select-none">
+            <div class="flex items-center justify-between mb-2.5 pb-2 border-b border-pkp-border text-slate-200">
+              <button type="button" id="calPrevMonth" class="px-2 py-1 rounded hover:bg-pkp-surfaceHover text-slate-300 hover:text-white transition-colors font-bold">&lt;</button>
+              <span id="calMonthYearTitle" class="font-bold text-xs tracking-wide text-white">Listopad 2026</span>
+              <button type="button" id="calNextMonth" class="px-2 py-1 rounded hover:bg-pkp-surfaceHover text-slate-300 hover:text-white transition-colors font-bold">&gt;</button>
             </div>
-            <div class="grid grid-cols-7 gap-1 text-center font-semibold text-[10px] text-slate-400 mb-1.5">
-              <span>Pn</span><span>Wt</span><span>Śr</span><span>Czw</span><span>Pt</span><span>Sob</span><span class="text-rose-400">Ndz</span>
+            <div class="grid grid-cols-7 gap-1 text-center font-bold text-[10px] text-slate-400 mb-2">
+              <span>Pn</span><span>Wt</span><span>Śr</span><span>Czw</span><span>Pt</span><span>Sob</span><span class="text-pkp-orange">Ndz</span>
             </div>
             <div id="calDaysGrid" class="grid grid-cols-7 gap-1 text-center text-xs"></div>
-            <div class="mt-2.5 pt-2 border-t border-slate-800 flex justify-between items-center text-[10px]">
-              <button type="button" id="calTodayBtn" class="text-blue-400 hover:text-blue-300 font-semibold underline">Dzisiaj</button>
+            <div class="mt-3 pt-2 border-t border-pkp-border flex justify-between items-center text-[10px]">
+              <button type="button" id="calTodayBtn" class="text-pkp-orange hover:text-pkp-orangeHover font-bold underline">Dzisiaj</button>
               <span class="text-slate-500">Format: DD.MM.YYYY</span>
             </div>
           </div>
         </div>
 
-        <!-- 4. Numer pociągu (opcjonalnie z wyszukiwaniem) -->
+        <!-- Kolumna 4: Numer pociągu -->
         <div>
           <div class="flex justify-between items-center mb-1.5">
-            <label class="block text-xs font-medium text-slate-300">Numer pociągu (opcjonalnie)</label>
-            <button type="button" onclick="loadAvailableTrains()" class="text-[10px] text-blue-400 hover:text-blue-300 underline font-medium">🔍 Szukaj pociągów</button>
+            <label class="block text-xs font-semibold text-slate-300">Numer pociągu (opcjonalnie)</label>
+            <button type="button" onclick="loadAvailableTrains()" class="text-[11px] text-pkp-orange hover:text-pkp-orangeHover underline font-semibold transition-colors flex items-center gap-1">
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <span>Szukaj połączeń</span>
+            </button>
           </div>
-          <select id="trainSelect" onchange="onTrainSelected()" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-200 mb-1.5">
-            <option value="">-- Wybierz z rozkładu PKP --</option>
+          <select id="trainSelect" onchange="onTrainSelected()" class="w-full bg-pkp-dark border border-pkp-borderLight rounded-lg px-2.5 py-1.5 text-xs text-slate-200 mb-1.5 focus:outline-none focus:border-pkp-orange transition-colors">
+            <option value="">-- Wybierz pociąg z rozkładu PKP --</option>
           </select>
-          <input type="text" id="trainNo" value="" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500 text-slate-200 placeholder:text-slate-600" placeholder="np. IC 1646 lub wybierz z listy" />
+          <input type="text" id="trainNo" value="" class="w-full bg-pkp-dark border border-pkp-borderLight rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-pkp-orange text-slate-100 placeholder:text-slate-500 transition-colors" placeholder="np. IC 1646 lub wybierz z listy" />
         </div>
       </div>
 
-      <!-- Controls & Checkboxes (Task 090, 091) -->
-      <div class="flex flex-wrap items-center justify-between pt-3 border-t border-slate-800 gap-4">
+      <!-- Pasek dolny: Opcje i Przyciski Akcji -->
+      <div class="flex flex-wrap items-center justify-between pt-3.5 border-t border-pkp-border gap-4">
         <div class="flex items-center space-x-6">
-          <label class="flex items-center space-x-2 text-xs text-amber-300 font-semibold cursor-pointer">
-            <input type="checkbox" id="showBrowserCheckbox" class="rounded border-amber-600 bg-slate-950 text-amber-500 focus:ring-amber-500 h-4 w-4" />
-            <span>👁️ Pokaż okno przeglądarki podczas skanowania (podgląd na żywo)</span>
-          </label>
-          <label class="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer">
-            <input type="checkbox" id="prefWindow" class="rounded border-slate-700 bg-slate-950 text-blue-600 focus:ring-blue-500 h-4 w-4" />
+          <label class="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer select-none">
+            <input type="checkbox" id="prefWindow" class="rounded border-pkp-borderLight bg-pkp-dark text-pkp-orange focus:ring-pkp-orange h-4 w-4" />
             <span>Preferuj miejsce przy oknie</span>
           </label>
         </div>
 
-        <!-- 2-step buttons (Task 091) -->
         <div class="flex items-center gap-3">
-          <button id="btnFetchRoute" onclick="fetchTrainRoute()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-semibold text-xs px-4 py-2.5 rounded-lg transition-all flex items-center gap-1.5 shadow">
-            <span>🗺️</span>
-            <span>1. Pobierz trasę i przystanki pociągu</span>
+          <button id="btnFetchRoute" onclick="fetchTrainRoute()" class="bg-pkp-surfaceHover hover:bg-pkp-border border border-pkp-borderLight text-slate-200 font-semibold text-xs px-4 py-2.5 rounded-lg transition-all flex items-center gap-2 shadow">
+            <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+            </svg>
+            <span>1. Pobierz trasę i przystanki</span>
           </button>
-          <button id="btnScanSeats" onclick="runLiveScan()" class="bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-semibold text-xs px-5 py-2.5 rounded-lg shadow-lg shadow-blue-600/30 transition-all flex items-center gap-2">
-            <span>🔍</span>
-            <span>2. Skanuj wolne miejsca we wszystkich wagonach i optymalizuj</span>
+          <button id="btnScanSeats" onclick="runLiveScan()" class="bg-pkp-orange hover:bg-pkp-orangeHover active:bg-pkp-orangeActive text-white font-bold text-xs px-5 py-2.5 rounded-lg shadow-lg shadow-orange-500/25 transition-all flex items-center gap-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <span>2. Wyszukaj i optymalizuj miejsca</span>
           </button>
         </div>
       </div>
 
-      <!-- Route stops preview card (from Step 1) -->
-      <div id="routePreviewCard" class="hidden bg-slate-950/80 border border-blue-900/40 rounded-lg p-3 text-xs space-y-2">
-        <div class="flex justify-between items-center text-blue-400 font-semibold">
+      <!-- Karta podglądu stacji pośrednich -->
+      <div id="routePreviewCard" class="hidden bg-pkp-dark border border-pkp-borderLight rounded-lg p-3.5 text-xs space-y-2">
+        <div class="flex justify-between items-center text-white font-bold">
           <span id="routePreviewTitle">Wykryta trasa pociągu</span>
           <span id="routePreviewCount" class="text-slate-400 font-normal"></span>
         </div>
@@ -198,243 +232,197 @@
       </div>
     </section>
 
-    <!-- PANEL TRYBU 2: Wklej / Edytuj rozpiskę miejsc (Task 092) -->
-    <section id="panelModeText" class="hidden bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl space-y-4">
-      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+    <!-- PANEL TRYBU 2: Wklejanie / Edycja rozpiski -->
+    <section id="panelModeText" class="hidden bg-pkp-surface border border-pkp-border rounded-xl p-5 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between border-b border-pkp-border pb-3">
         <div>
-          <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-            <span>📝</span> Rozpiska Wolnych Miejsc (Format: wX mY/mZ)
+          <h2 class="text-xs font-extrabold uppercase tracking-wider text-slate-200">
+            Zestawienie Wolnych Miejsc (Format tekstowy: wX mY/mZ)
           </h2>
-          <p class="text-xs text-slate-500">Wklej raport miejsc dla kolejnych odcinków lub załaduj wzorcowy przykład</p>
+          <p class="text-[11px] text-slate-400">Wklej raport wolnych foteli dla kolejnych stacji pośrednich lub skorzystaj z gotowego wzorca</p>
         </div>
         <div class="flex items-center gap-3">
-          <button onclick="loadFixtureKoluszkiOpole()" class="bg-slate-800 hover:bg-slate-700 text-amber-400 border border-amber-500/30 text-xs px-3.5 py-1.5 rounded-lg transition-colors font-semibold flex items-center gap-1.5">
-            <span>⭐</span>
-            <span>Załaduj przykład: Koluszki -> Opole</span>
+          <button onclick="loadFixtureKoluszkiOpole()" class="bg-pkp-surfaceHover hover:bg-pkp-border text-pkp-orange border border-pkp-orange/40 text-xs px-3.5 py-1.5 rounded-lg transition-colors font-semibold flex items-center gap-1.5">
+            <span>Załaduj przykład: Koluszki → Opole</span>
           </button>
         </div>
       </div>
 
       <div>
-        <textarea id="rawMapInput" rows="11" class="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-blue-500 leading-relaxed scrollbar-thin" placeholder="Wklej rozpiskę np.:&#10;Koluszki - Piotrków 14:45&#10;W5 m82&#10;W3 m84/m87/m91&#10;&#10;Piotrków - Radomsko 15:12&#10;W3 m91&#10;W5 m82/m88"></textarea>
+        <textarea id="rawMapInput" rows="10" class="w-full bg-pkp-dark border border-pkp-borderLight rounded-lg p-3.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-pkp-orange leading-relaxed scrollbar-thin placeholder:text-slate-600" placeholder="Wklej zestawienie w formacie:&#10;Koluszki - Piotrków 14:45&#10;W5 m82&#10;W3 m84/m87/m91&#10;&#10;Piotrków - Radomsko 15:12&#10;W3 m91&#10;W5 m82/m88"></textarea>
       </div>
 
-      <div class="flex items-center justify-between pt-2 border-t border-slate-800">
-        <label class="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer">
-          <input type="checkbox" id="prefWindowText" class="rounded border-slate-700 bg-slate-950 text-blue-600 focus:ring-blue-500 h-4 w-4" />
+      <div class="flex items-center justify-between pt-2 border-t border-pkp-border">
+        <label class="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer select-none">
+          <input type="checkbox" id="prefWindowText" class="rounded border-pkp-borderLight bg-pkp-dark text-pkp-orange focus:ring-pkp-orange h-4 w-4" />
           <span>Preferuj miejsce przy oknie</span>
         </label>
-        <button onclick="runTextOptimization()" class="bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-semibold text-xs px-6 py-2.5 rounded-lg shadow-lg shadow-emerald-600/30 transition-all flex items-center gap-2">
-          <span>⚡</span>
+        <button onclick="runTextOptimization()" class="bg-pkp-orange hover:bg-pkp-orangeHover active:bg-pkp-orangeActive text-white font-bold text-xs px-6 py-2.5 rounded-lg shadow-lg shadow-orange-500/25 transition-all flex items-center gap-2">
           <span>Oblicz najlepszą trasę</span>
         </button>
       </div>
     </section>
 
-    <!-- Pasek Postępu Na Żywo (Progress Bar & Live Scraper Console) -->
-    <div id="progressSection" class="hidden bg-slate-900 border border-slate-800 rounded-xl p-4 shadow space-y-3">
+    <!-- Pasek Postępu i Konsola Skanera -->
+    <div id="progressSection" class="hidden bg-pkp-surface border border-pkp-border rounded-xl p-4 shadow-xl space-y-3">
       <div class="flex justify-between items-center text-xs font-medium">
-        <span id="progressMessage" class="text-blue-400 font-semibold">Pobieranie rozkładu jazdy...</span>
-        <span id="progressPercent" class="text-slate-400 font-mono">0%</span>
+        <span id="progressMessage" class="text-white font-semibold">Pobieranie rozkładu jazdy...</span>
+        <span id="progressPercent" class="text-pkp-orange font-mono font-bold">0%</span>
       </div>
-      <div class="w-full bg-slate-950 h-2.5 rounded-full overflow-hidden border border-slate-800">
-        <div id="progressBar" class="bg-gradient-to-r from-blue-600 to-cyan-400 h-full w-0 transition-all duration-300"></div>
+      <div class="w-full bg-pkp-dark h-2 rounded-full overflow-hidden border border-pkp-border">
+        <div id="progressBar" class="bg-gradient-to-r from-blue-600 via-pkp-blue to-pkp-orange h-full w-0 transition-all duration-300"></div>
       </div>
-      <!-- Live Scraper Terminal Log -->
-      <div id="liveScraperConsole" class="mt-2 bg-slate-950/90 rounded-lg p-3 border border-slate-800 text-[11px] font-mono text-slate-300 max-h-36 overflow-y-auto space-y-1 scrollbar-thin">
-        <div class="text-slate-500 italic">[Konsola scrapera gotowa na uruchomienie zadania...]</div>
+      <div id="liveScraperConsole" class="mt-2 bg-pkp-dark rounded-lg p-3 border border-pkp-border text-[11px] font-mono text-slate-300 max-h-36 overflow-y-auto space-y-1 scrollbar-thin">
+        <div class="text-slate-500 italic">[Konsola systemu PKP Intercity oczekuje na uruchomienie zadania...]</div>
       </div>
     </div>
 
-    <!-- Error message alert -->
-    <div id="errorAlert" class="hidden bg-red-950/70 border border-red-800 text-red-300 p-4 rounded-xl text-sm flex items-start gap-3">
-      <span class="text-lg">⚠️</span>
+    <!-- Alert błędu -->
+    <div id="errorAlert" class="hidden bg-rose-950/80 border border-rose-800 text-rose-200 p-4 rounded-xl text-xs flex items-start gap-3 shadow-xl">
+      <svg class="w-5 h-5 text-rose-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+      </svg>
       <div id="errorMessage" class="flex-1 leading-relaxed">Wystąpił błąd podczas analizy.</div>
     </div>
 
-    <!-- 4. Plan Zakupu Biletów i Przesiadek (Task 094) -->
-    <section id="purchasePlanSection" class="hidden bg-gradient-to-br from-slate-900 to-slate-900/90 border-2 border-amber-500/50 rounded-xl p-5 shadow-2xl space-y-3">
-      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+    <!-- Plan Zakupu Biletów i Przesiadek (Oficjalny styl biletowy PKP) -->
+    <section id="purchasePlanSection" class="hidden bg-pkp-surface border border-pkp-orange/40 rounded-xl p-5 shadow-2xl space-y-3.5">
+      <div class="flex items-center justify-between border-b border-pkp-border pb-3">
         <div class="flex items-center gap-3">
-          <div class="w-9 h-9 rounded-lg bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 text-xl font-bold">
-            🛒
+          <div class="w-9 h-9 rounded-lg bg-pkp-orange/15 border border-pkp-orange/30 flex items-center justify-center text-pkp-orange font-bold">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z" />
+            </svg>
           </div>
           <div>
-            <h2 class="text-sm font-extrabold uppercase tracking-wide text-amber-400">
-              Plan Zakupu Biletów i Przesiadek
+            <h2 class="text-sm font-extrabold uppercase tracking-wide text-white">
+              Plan Zakupu Biletów i Strategia Podróży
             </h2>
-            <p class="text-xs text-slate-400">Gotowa instrukcja zakupu biletów krok po kroku gwarantująca miejsce siedzące</p>
+            <p class="text-xs text-slate-400">Instrukcja zakupu biletów w kasie lub w serwisie intercity.pl gwarantująca miejsce siedzące</p>
           </div>
         </div>
-        <span id="ticketsCountBadge" class="text-xs font-bold px-3 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
-          Liczba biletów: 2
+        <span id="ticketsCountBadge" class="text-xs font-bold px-3 py-1 rounded-full bg-pkp-orange/20 text-pkp-orange border border-pkp-orange/30">
+          Liczba biletów: 0
         </span>
       </div>
 
-      <div id="purchaseInstructionsList" class="space-y-2.5 pt-1">
-        <!-- Rendered dynamically -->
+      <div id="purchaseInstructionsList" class="space-y-2 pt-1">
+        <!-- Renderowane dynamicznie -->
       </div>
     </section>
 
-    <!-- 5. Sekcja Rekomendowanych Strategii (Top 3 Karty) -->
+    <!-- Sekcja Rekomendowanych Strategii (Top 3 Karty) -->
     <section>
       <div class="flex items-center justify-between mb-3">
-        <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-2">
-          <span>🏆</span> Rekomendowane Strategie Podróży (Top 3)
+        <h2 class="text-xs font-extrabold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+          <span>Rekomendowane Warianty Podróży (Top 3)</span>
         </h2>
-        <span class="text-xs text-slate-500">Kliknij kartę, aby podświetlić jej przebieg na osi Gantta</span>
+        <span class="text-xs text-slate-400">Kliknij kartę, aby wyświetlić szczegóły i podświetlić miejsca na schemacie</span>
       </div>
 
       <div id="strategiesContainer" class="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <!-- Rendered dynamically -->
+        <!-- Renderowane dynamicznie -->
       </div>
     </section>
 
-    <!-- 6. Interaktywna Tablica Miejsc (Gantt Chart / Heatmapa) (Tasks 095, 096) -->
-    <section class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl space-y-4">
-      <div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-3">
+    <!-- Tablica Dostępności Miejsc (Wykres Gantta) -->
+    <section class="bg-pkp-surface border border-pkp-border rounded-xl p-5 shadow-xl space-y-4">
+      <div class="flex flex-wrap items-center justify-between gap-4 border-b border-pkp-border pb-3">
         <div>
-          <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-            <span>📊</span> Tablica Dostępności Miejsc (Wykres Gantta)
+          <h2 class="text-xs font-extrabold uppercase tracking-wider text-slate-200">
+            Tablica Dostępności Miejsc w Wagonach
           </h2>
-          <p class="text-xs text-slate-500">Pogrupowana wagonami z uwzględnieniem numerów przedziałów i dokładnych godzin odjazdu</p>
+          <p class="text-xs text-slate-400">Siatka foteli pogrupowana wagonami Klasy 2 ze statusem zajętości na każdym odcinku trasy</p>
         </div>
 
-        <!-- Filters (Task 096) -->
         <div class="flex items-center gap-3 text-xs">
           <label class="text-slate-400">Filtr wagonu:</label>
-          <select id="carriageFilter" onchange="renderMatrix()" class="bg-slate-950 border border-slate-700 rounded px-2.5 py-1 text-slate-200">
+          <select id="carriageFilter" onchange="renderMatrix()" class="bg-pkp-dark border border-pkp-borderLight rounded px-2.5 py-1 text-slate-200 focus:outline-none focus:border-pkp-orange">
             <option value="ALL">Wszystkie wagony</option>
           </select>
-          <button id="toggleFilterSelectedBtn" onclick="toggleFilterSelected()" class="px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 transition-colors">
-            Pokaż tylko miejsca wchodzące w skład rekomendacji
+          <button id="toggleFilterSelectedBtn" onclick="toggleFilterSelected()" class="px-3 py-1 rounded bg-pkp-surfaceHover hover:bg-pkp-border border border-pkp-borderLight text-slate-200 transition-colors">
+            Pokaż tylko miejsca z wybranego wariantu
           </button>
         </div>
       </div>
 
-      <!-- Legend -->
-      <div class="flex flex-wrap items-center gap-5 text-xs text-slate-400">
-        <div class="flex items-center gap-1.5">
+      <!-- Legenda oznaczeń -->
+      <div class="flex flex-wrap items-center gap-5 text-xs text-slate-300">
+        <div class="flex items-center gap-2">
           <span class="w-3.5 h-3.5 rounded bg-emerald-600/80 border border-emerald-500 inline-block"></span>
-          <span>Wolne</span>
+          <span>Wolne miejsce</span>
         </div>
-        <div class="flex items-center gap-1.5">
-          <span class="w-3.5 h-3.5 rounded bg-red-900/60 border border-red-700 inline-block"></span>
+        <div class="flex items-center gap-2">
+          <span class="w-3.5 h-3.5 rounded bg-rose-950/80 border border-rose-800 inline-block"></span>
           <span>Zajęte</span>
         </div>
-        <div class="flex items-center gap-1.5">
-          <span class="w-3.5 h-3.5 rounded bg-blue-900 border-2 border-amber-400 shadow-sm shadow-amber-400/50 inline-block"></span>
-          <span>Wybrana ścieżka algorytmu</span>
+        <div class="flex items-center gap-2">
+          <span class="w-3.5 h-3.5 rounded bg-pkp-navy border-2 border-pkp-orange shadow-sm inline-block"></span>
+          <span>Wariant optymalny (rekomendowany)</span>
         </div>
-        <div class="flex items-center gap-1.5">
-          <span class="w-3.5 h-3.5 rounded bg-purple-900 border-2 border-purple-400 shadow-sm shadow-purple-400/50 inline-block"></span>
-          <span>Twój ręczny wybór</span>
+        <div class="flex items-center gap-2">
+          <span class="w-3.5 h-3.5 rounded bg-purple-950 border-2 border-purple-400 shadow-sm inline-block"></span>
+          <span>Wybór ręczny</span>
         </div>
       </div>
 
-      <!-- Matrix Table Scrollable Container -->
-      <div class="overflow-x-auto scrollbar-thin rounded-lg border border-slate-800">
+      <!-- Tabela miejsc -->
+      <div class="overflow-x-auto scrollbar-thin rounded-lg border border-pkp-border bg-pkp-dark">
         <table id="ganttTable" class="w-full text-center border-collapse text-xs">
-          <!-- Dynamically populated -->
+          <!-- Renderowane dynamicznie -->
         </table>
       </div>
     </section>
 
   </main>
 
-  <!-- Footer -->
-  <footer class="border-t border-slate-800 text-center py-4 text-xs text-slate-500">
-    PKP Seat Optimizer &bull; Algorytm DAG / Programowanie Dynamiczne &bull; Siedzisz.pl
+  <!-- Stopka -->
+  <footer class="border-t border-pkp-border bg-pkp-dark/90 text-center py-4 text-xs text-slate-400">
+    <div class="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between px-6 gap-2">
+      <span>PKP Intercity Seat Optimizer &bull; IccBagno</span>
+      <span>Algorytm grafu acyklicznego (DAG) &bull; Programowanie Dynamiczne</span>
+    </div>
   </footer>
 
   <script>
-    let currentAnalysisData = null;
-    let selectedStrategyIndex = 0;
-    let customPath = {};
-    let searchDebounceTimer = null;
-    let filterOnlyRecommended = false;
-
     function escapeHtml(str) {
       if (!str) return '';
       return String(str)
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
     }
 
-    const SAMPLE_KOLUSZKI_OPOLE = `Koluszki - Piotrków 14:45
-W5 m82
-W7 m35/m31/m25/m33
-W6 m15/m53
-W3 m84/m87/m91
-W8 m22/m11/m14/m12
-W4 m76
-
-Piotrków - Radomsko 15:12
-W3 m91
-W4 m76
-W5 m82/m88/m74/m65/m32/m33
-W6 m15/m53
-W7 m35/m31/m25/m33
-W8 m22/m11/m14/m12
-
-Radomsko - Częstochowa 15:40
-W3 m84/m91
-W4 m76
-W5 m82/m88/m74/m65/m32/m33
-W6 m15/m53
-W7 m35/m31/m25/m33
-W8 m22/m11/m14/m12
-
-Częstochowa - Częstochowa Stradom 16:03
-W3 m84/m87/m91
-W4 m76
-W5 m82/m88/m74/m65/m32/m33
-W6 m15/m53
-W7 m35/m31/m25/m33
-W8 m22/m11/m14/m12
-
-Częstochowa Stradom - Lubliniec 16:11
-W3 m84/m87/m91
-W5 m88/m83/m81
-W8 m88/m86/m84/m82
-
-Lubliniec - Opole Główne 16:39
-W3 m84/m87/m91
-W8 m88/m86/m84/m82`;
-
     function switchTab(mode) {
-      const tabLive = document.getElementById('tabLiveBtn');
-      const tabText = document.getElementById('tabTextBtn');
-      const panelLive = document.getElementById('panelModeLive');
-      const panelText = document.getElementById('panelModeText');
+      const tabLiveBtn = document.getElementById('tabLiveBtn');
+      const tabTextBtn = document.getElementById('tabTextBtn');
+      const panelModeLive = document.getElementById('panelModeLive');
+      const panelModeText = document.getElementById('panelModeText');
 
       if (mode === 'live') {
-        tabLive.className = 'px-5 py-3 text-sm font-semibold rounded-t-lg border-b-2 border-blue-500 bg-slate-900 text-blue-400 flex items-center gap-2 transition-all';
-        tabText.className = 'px-5 py-3 text-sm font-semibold rounded-t-lg border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/60 flex items-center gap-2 transition-all';
-        panelLive.classList.remove('hidden');
-        panelText.classList.add('hidden');
+        tabLiveBtn.className = 'px-5 py-3 text-xs font-bold rounded-t-lg border-b-2 border-pkp-orange bg-pkp-surface text-white flex items-center gap-2 transition-all shadow';
+        tabTextBtn.className = 'px-5 py-3 text-xs font-semibold rounded-t-lg border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:bg-pkp-surface/60 flex items-center gap-2 transition-all';
+        panelModeLive.classList.remove('hidden');
+        panelModeText.classList.add('hidden');
       } else {
-        tabText.className = 'px-5 py-3 text-sm font-semibold rounded-t-lg border-b-2 border-emerald-500 bg-slate-900 text-emerald-400 flex items-center gap-2 transition-all';
-        tabLive.className = 'px-5 py-3 text-sm font-semibold rounded-t-lg border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/60 flex items-center gap-2 transition-all';
-        panelText.classList.remove('hidden');
-        panelLive.classList.add('hidden');
+        tabTextBtn.className = 'px-5 py-3 text-xs font-bold rounded-t-lg border-b-2 border-pkp-orange bg-pkp-surface text-white flex items-center gap-2 transition-all shadow';
+        tabLiveBtn.className = 'px-5 py-3 text-xs font-semibold rounded-t-lg border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:bg-pkp-surface/60 flex items-center gap-2 transition-all';
+        panelModeText.classList.remove('hidden');
+        panelModeLive.classList.add('hidden');
       }
     }
 
-    function loadFixtureKoluszkiOpole() {
-      document.getElementById('rawMapInput').value = SAMPLE_KOLUSZKI_OPOLE;
-    }
-
-    async function handleStationSearch(inputId, suggestionsId) {
+    let searchDebounceTimer = null;
+    function handleStationSearch(inputId, suggestionsId) {
+      clearTimeout(searchDebounceTimer);
       const query = document.getElementById(inputId).value.trim();
       const box = document.getElementById(suggestionsId);
       if (query.length < 2) {
         box.classList.add('hidden');
         return;
       }
-      clearTimeout(searchDebounceTimer);
       searchDebounceTimer = setTimeout(async () => {
         try {
           const res = await fetch(`/api/stations/search?q=${encodeURIComponent(query)}`);
@@ -447,8 +435,8 @@ W8 m88/m86/m84/m82`;
           box.innerHTML = '';
           stations.forEach(s => {
             const item = document.createElement('div');
-            item.className = 'px-3 py-2 hover:bg-blue-600/30 cursor-pointer flex justify-between items-center transition-colors text-slate-200';
-            item.innerHTML = `<span class="font-medium">${s.name}</span><span class="text-[10px] text-slate-500 font-mono">EVA: ${s.eva_code}</span>`;
+            item.className = 'px-3 py-2 hover:bg-pkp-surfaceHover cursor-pointer flex justify-between items-center transition-colors text-slate-200';
+            item.innerHTML = `<span class="font-medium">${s.name}</span><span class="text-[10px] text-slate-400 font-mono">EVA: ${s.eva_code}</span>`;
             item.onclick = () => {
               document.getElementById(inputId).value = s.name;
               box.classList.add('hidden');
@@ -476,7 +464,7 @@ W8 m88/m86/m84/m82`;
         : (window.allFetchedTrains || []);
 
       const countText = trains.length > 0 ? `znaleziono ${trains.length}` : 'brak połączeń';
-      select.innerHTML = `<option value="">-- Wybierz pociąg (${countText}) --</option>`;
+      select.innerHTML = `<option value="">-- Wybierz połączenie (${countText}) --</option>`;
 
       trains.forEach(t => {
         const opt = document.createElement('option');
@@ -502,7 +490,7 @@ W8 m88/m86/m84/m82`;
       const select = document.getElementById('trainSelect');
       if (!fromSt || !toSt) return;
 
-      select.innerHTML = '<option value="">⏳ Wyszukiwanie pociągów...</option>';
+      select.innerHTML = '<option value="">Wyszukiwanie połączeń w rozkładzie PKP...</option>';
       try {
         const url = `/api/v1/trains?from_station=${encodeURIComponent(fromSt)}&to_station=${encodeURIComponent(toSt)}&date=${encodeURIComponent(date)}&direct_only=false`;
         const res = await fetch(url);
@@ -511,7 +499,7 @@ W8 m88/m86/m84/m82`;
         window.allFetchedTrains = trains || [];
         renderTrainSelect();
       } catch (e) {
-        select.innerHTML = '<option value="">Nie udało się pobrać (wpisz numer ręcznie)</option>';
+        select.innerHTML = '<option value="">Nie udało się pobrać połączeń (wpisz numer ręcznie)</option>';
       }
     }
 
@@ -547,7 +535,7 @@ W8 m88/m86/m84/m82`;
 
       errorAlert.classList.add('hidden');
       card.classList.remove('hidden');
-      list.innerHTML = '<span class="text-slate-400">Pobieranie rozkładu stacji...</span>';
+      list.innerHTML = '<span class="text-slate-400">Pobieranie rozkładu przystanków...</span>';
 
       try {
         const url = `/api/v1/train-route?from_station=${encodeURIComponent(fromSt)}&to_station=${encodeURIComponent(toSt)}&date=${encodeURIComponent(date)}&train_number=${encodeURIComponent(trainNo)}&dep_time=${encodeURIComponent(depTime)}`;
@@ -563,9 +551,9 @@ W8 m88/m86/m84/m82`;
 
         data.stops.forEach((st, idx) => {
           const badge = document.createElement('div');
-          badge.className = 'px-2 py-1 bg-slate-900 border border-slate-700 rounded text-slate-200 flex items-center gap-1.5';
+          badge.className = 'px-2 py-1 bg-pkp-surface border border-pkp-borderLight rounded text-slate-200 flex items-center gap-1.5';
           const time = st.departure_time || st.arrival_time || '--:--';
-          badge.innerHTML = `<span class="text-blue-400 font-bold">${idx + 1}.</span> <strong>${st.name}</strong> <span class="text-amber-400">(${time})</span>`;
+          badge.innerHTML = `<span class="text-pkp-orange font-bold">${idx + 1}.</span> <strong>${st.name}</strong> <span class="text-slate-400">(${time})</span>`;
           list.appendChild(badge);
         });
       } catch (err) {
@@ -581,7 +569,6 @@ W8 m88/m86/m84/m82`;
       const date = document.getElementById('travelDate').value;
       const trainNo = document.getElementById('trainNo').value.trim();
       const depTime = document.getElementById('travelTime').value.trim();
-      const showBrowser = document.getElementById('showBrowserCheckbox').checked;
       const preferWindow = document.getElementById('prefWindow').checked;
 
       const progressSection = document.getElementById('progressSection');
@@ -601,14 +588,12 @@ W8 m88/m86/m84/m82`;
       progressSection.classList.remove('hidden');
       progressBar.style.width = '10%';
       progressPercent.innerText = '10%';
-      const browserModeText = showBrowser ? 'WIDOCZNY (okno Chromium na pulpicie)' : 'W TLE (headless)';
-      progressMessage.innerText = `Uruchamianie scrapera Playwright (Tryb: ${browserModeText})...`;
+      progressMessage.innerText = 'Inicjalizacja silnika e-IC 2.0...';
 
       if (liveConsole) {
         liveConsole.innerHTML = `
-          <div class="text-blue-400 font-bold">[START] Rozpoczynanie zadania skanowania dla pociągu ${escapeHtml(trainNo || 'IC')}</div>
-          <div class="text-amber-300 font-medium">[DEBUG] Uruchomiono przeglądarkę (Tryb widoczny: ${showBrowser ? 'TAK' : 'NIE'})</div>
-          <div class="text-slate-400">Trasa główna: ${escapeHtml(fromSt)} &rarr; ${escapeHtml(toSt)} (Data: ${escapeHtml(date)} ${escapeHtml(depTime)})</div>
+          <div class="text-white font-bold">[START] Rozpoczynanie zadania optymalizacji dla pociągu ${escapeHtml(trainNo || 'IC')}</div>
+          <div class="text-slate-400">Relacja: ${escapeHtml(fromSt)} &rarr; ${escapeHtml(toSt)} (Data: ${escapeHtml(date)} ${escapeHtml(depTime)})</div>
         `;
       }
 
@@ -631,9 +616,9 @@ W8 m88/m86/m84/m82`;
               if (sData.logs && sData.logs.length > 0 && liveConsole) {
                 liveConsole.innerHTML = sData.logs.map(l => {
                   let cls = 'text-slate-300';
-                  if (l.includes('[BŁĄD]') || l.includes('Error')) cls = 'text-red-400 font-semibold';
-                  else if (l.includes('[DEBUG]')) cls = 'text-amber-300';
-                  else if (l.includes('[ROUTE]')) cls = 'text-cyan-300';
+                  if (l.includes('[BŁĄD]') || l.includes('Error')) cls = 'text-rose-400 font-semibold';
+                  else if (l.includes('[DEBUG]')) cls = 'text-slate-400';
+                  else if (l.includes('[ROUTE]')) cls = 'text-blue-300 font-medium';
                   else if (l.includes('[100%]')) cls = 'text-emerald-400 font-bold';
                   return `<div class="${cls} leading-tight">${escapeHtml(l)}</div>`;
                 }).join('');
@@ -643,7 +628,7 @@ W8 m88/m86/m84/m82`;
           } catch (e) {
             // Non-blocking polling error
           }
-        }, 500);
+        }, 400);
 
         const res = await fetch('/api/v1/optimize', {
           method: 'POST',
@@ -654,8 +639,7 @@ W8 m88/m86/m84/m82`;
             date: date,
             time: depTime,
             train_number: trainNo,
-            headless: !showBrowser,
-            show_browser: showBrowser,
+            headless: true,
             prefer_window: preferWindow,
           }),
         });
@@ -670,7 +654,6 @@ W8 m88/m86/m84/m82`;
         const data = await res.json();
         handleOptimizationSuccess(data);
 
-        // Task 093: Auto-fill textarea in Mode 2
         if (data.raw_availability_report) {
           document.getElementById('rawMapInput').value = data.raw_availability_report;
         }
@@ -682,13 +665,13 @@ W8 m88/m86/m84/m82`;
 
         const isSnapshotError = err.message && (err.message.includes('error_85_percent.png') || err.message.includes('debug_85.html') || err.message.includes('85%'));
         document.getElementById('errorMessage').innerHTML = `
-          <div class="font-semibold text-red-200 mb-1">${escapeHtml(err.message)}</div>
+          <div class="font-semibold text-rose-200 mb-1">${escapeHtml(err.message)}</div>
           ${isSnapshotError ? `
-            <div class="mt-2 text-xs bg-red-900/60 p-2.5 rounded border border-red-700/80 font-mono text-red-200 flex flex-col gap-1">
-              <div>📸 <strong>Diagnostyka błędu (Fail-Fast):</strong> Zapisano zrzut ekranu strony PKP oraz kod HTML:</div>
-              <div class="text-amber-300 font-bold">&bull; logs/debug_snapshots/error_85_percent.png</div>
-              <div class="text-amber-300 font-bold">&bull; logs/debug_snapshots/debug_85.html</div>
-              <div class="text-slate-300 text-[10px] mt-1">Zajrzyj do powyższego pliku PNG, aby sprawdzić, co dokładnie wyświetliła strona e-IC (np. brak miejsc w Klasie 2, komunikat o ZKA, lub błąd serwera PKP).</div>
+            <div class="mt-2 text-xs bg-rose-950/80 p-2.5 rounded border border-rose-800 font-mono text-rose-200 flex flex-col gap-1">
+              <div class="font-bold text-white">Raport diagnostyczny strony PKP:</div>
+              <div class="text-pkp-orange font-bold">&bull; logs/debug_snapshots/error_85_percent.png</div>
+              <div class="text-pkp-orange font-bold">&bull; logs/debug_snapshots/debug_85.html</div>
+              <div class="text-slate-400 text-[10px] mt-1">Zrzut ekranu strony PKP wskazuje dokładny komunikat wyświetlony przez system e-IC.</div>
             </div>
           ` : ''}
         `;
@@ -751,7 +734,7 @@ W8 m88/m86/m84/m82`;
 
       setTimeout(() => {
         progressSection.classList.add('hidden');
-      }, 2500);
+      }, 2000);
 
       renderPurchaseInstructions(data);
       renderCarriageFilter(data.seat_matrix);
@@ -759,7 +742,6 @@ W8 m88/m86/m84/m82`;
       renderMatrix();
     }
 
-    // Task 094: Render Purchase Instructions Box
     function renderPurchaseInstructions(data) {
       const section = document.getElementById('purchasePlanSection');
       const list = document.getElementById('purchaseInstructionsList');
@@ -775,18 +757,18 @@ W8 m88/m86/m84/m82`;
         return;
       }
 
-      countBadge.innerText = `Liczba biletów do kupienia: ${instructions.length}`;
+      countBadge.innerText = `Liczba biletów: ${instructions.length}`;
       list.innerHTML = '';
 
       instructions.forEach((instr, idx) => {
         const item = document.createElement('div');
-        item.className = 'bg-slate-950/90 border border-amber-500/30 rounded-lg p-3 text-xs text-slate-200 flex items-start gap-3 shadow';
+        item.className = 'bg-pkp-dark border border-pkp-borderLight rounded-lg p-3 text-xs text-slate-200 flex items-start gap-3 shadow';
         item.innerHTML = `
-          <div class="w-6 h-6 rounded-full bg-amber-500/20 text-amber-400 font-bold flex items-center justify-center text-xs flex-shrink-0 mt-0.5">
+          <div class="w-6 h-6 rounded-full bg-pkp-orange/20 text-pkp-orange font-bold flex items-center justify-center text-xs flex-shrink-0 mt-0.5">
             ${idx + 1}
           </div>
           <div class="flex-1 leading-relaxed">
-            <span class="font-medium text-amber-200">${instr}</span>
+            <span class="font-medium text-white">${instr}</span>
           </div>
         `;
         list.appendChild(item);
@@ -809,10 +791,10 @@ W8 m88/m86/m84/m82`;
       const btn = document.getElementById('toggleFilterSelectedBtn');
       if (filterOnlyRecommended) {
         btn.innerText = 'Pokaż wszystkie wolne miejsca w pociągu';
-        btn.className = 'px-3 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white font-semibold transition-colors';
+        btn.className = 'px-3 py-1 rounded bg-pkp-orange hover:bg-pkp-orangeHover text-white font-bold transition-colors';
       } else {
-        btn.innerText = 'Pokaż tylko miejsca wchodzące w skład rekomendacji';
-        btn.className = 'px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 transition-colors';
+        btn.innerText = 'Pokaż tylko miejsca z wybranego wariantu';
+        btn.className = 'px-3 py-1 rounded bg-pkp-surfaceHover hover:bg-pkp-border border border-pkp-borderLight text-slate-200 transition-colors';
       }
       renderMatrix();
     }
@@ -822,25 +804,27 @@ W8 m88/m86/m84/m82`;
       container.innerHTML = '';
 
       if (!strategies || strategies.length === 0) {
-        container.innerHTML = '<div class="col-span-3 text-center text-slate-500 py-6">Brak dostępnych strategii.</div>';
+        container.innerHTML = '<div class="col-span-3 text-center text-slate-400 py-6">Brak dostępnych wariantów.</div>';
         return;
       }
 
       strategies.forEach((strat, idx) => {
         const isSelected = idx === selectedStrategyIndex;
-        const cardBorder = isSelected ? 'border-amber-400 ring-2 ring-amber-400/40' : 'border-slate-800 hover:border-slate-700';
+        const cardBorder = isSelected ? 'border-pkp-orange ring-1 ring-pkp-orange' : 'border-pkp-border hover:border-pkp-borderLight';
 
         let stepsHtml = '';
         strat.steps.forEach(step => {
           const compStr = step.compartment ? ` (Przedział ${step.compartment})` : '';
           const altsStr = (step.alternative_seats_in_same_carriage && step.alternative_seats_in_same_carriage.length)
-            ? `<div class="text-[10px] text-cyan-400/80 mt-0.5">↳ Inne wolne w tym wagonie: ${step.alternative_seats_in_same_carriage.map(m => 'm' + m).join(', ')}</div>`
+            ? `<div class="text-[10px] text-blue-300 mt-0.5">↳ Inne wolne fotele w wagonie: ${step.alternative_seats_in_same_carriage.map(m => 'm' + m).join(', ')}</div>`
             : '';
 
           if (step.is_standing) {
             stepsHtml += `
-              <div class="text-xs flex items-center gap-2 text-red-400 bg-red-950/40 p-2 rounded border border-red-900/50 my-1">
-                <span>🚶</span>
+              <div class="text-xs flex items-center gap-2 text-rose-300 bg-rose-950/40 p-2 rounded border border-rose-900/50 my-1">
+                <svg class="w-3.5 h-3.5 text-rose-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                </svg>
                 <div>
                   <strong>${step.from_station_name} → ${step.to_station_name}</strong>: KORYTARZ (${step.duration_min} min)
                 </div>
@@ -848,10 +832,12 @@ W8 m88/m86/m84/m82`;
           } else {
             stepsHtml += `
               <div class="text-xs flex items-center gap-2 text-emerald-300 bg-emerald-950/30 p-2 rounded border border-emerald-900/50 my-1">
-                <span>💺</span>
+                <svg class="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12v7m14-7v7m-7-7v7" />
+                </svg>
                 <div class="flex-1">
                   <strong>${step.from_station_name} → ${step.to_station_name}</strong>: Wagon ${step.carriage_no}, m. ${step.seat_no}${compStr} (${step.duration_min} min)
-                  ${step.transfer_Instruction ? `<div class="text-[10px] text-amber-300/80 italic">↳ ${step.transfer_Instruction}</div>` : ''}
+                  ${step.transfer_Instruction ? `<div class="text-[10px] text-amber-300 italic">↳ ${step.transfer_Instruction}</div>` : ''}
                   ${altsStr}
                 </div>
               </div>`;
@@ -859,7 +845,7 @@ W8 m88/m86/m84/m82`;
         });
 
         const card = document.createElement('div');
-        card.className = `bg-slate-900 border ${cardBorder} rounded-xl p-4 cursor-pointer transition-all shadow-lg`;
+        card.className = `bg-pkp-surface border ${cardBorder} rounded-xl p-4 cursor-pointer transition-all shadow-lg`;
         card.onclick = () => {
           selectedStrategyIndex = idx;
           renderStrategies(currentAnalysisData.strategies);
@@ -867,17 +853,20 @@ W8 m88/m86/m84/m82`;
           renderPurchaseInstructions(currentAnalysisData);
         };
 
+        const rankBadgeClass = isSelected ? 'bg-pkp-orange text-white' : 'bg-pkp-surfaceHover text-slate-300';
+        const rankLabel = idx === 0 ? 'Wariant Optymalny' : (idx === 1 ? 'Wariant Alternatywny' : 'Wariant Rezerwowy');
+
         card.innerHTML = `
           <div class="flex items-center justify-between mb-2">
-            <span class="text-xs font-bold px-2 py-0.5 rounded ${isSelected ? 'bg-amber-400 text-slate-950' : 'bg-slate-800 text-slate-300'}">
-              #${strat.rank} ${isSelected ? '✓ WYBRANA' : ''}
+            <span class="text-xs font-bold px-2 py-0.5 rounded ${rankBadgeClass}">
+              #${strat.rank} ${rankLabel}
             </span>
-            <span class="text-xs text-slate-400">${strat.total_score} pkt</span>
+            <span class="text-xs text-slate-400 font-mono">${strat.total_score} pkt</span>
           </div>
           <h3 class="text-sm font-bold text-white mb-1">${strat.title}</h3>
           <div class="text-xs text-slate-400 flex items-center gap-3 mb-3">
-            <span>🔄 Przesiadki: <strong>${strat.transfers_count}</strong></span>
-            <span>🚶 Stanie: <strong>${strat.total_standing_min} min</strong></span>
+            <span>Przesiadki: <strong class="text-white">${strat.transfers_count}</strong></span>
+            <span>Stanie: <strong class="text-white">${strat.total_standing_min} min</strong></span>
           </div>
           <div class="space-y-1">
             ${stepsHtml}
@@ -887,7 +876,6 @@ W8 m88/m86/m84/m82`;
       });
     }
 
-    // Task 095: Gantt Matrix with departure times, carriage grouping, and compartment numbers
     function renderMatrix() {
       if (!currentAnalysisData) return;
 
@@ -910,7 +898,6 @@ W8 m88/m86/m84/m82`;
         });
       }
 
-      // Filter seats
       let filteredSeats = seat_matrix;
       if (carriageFilter !== 'ALL') {
         filteredSeats = filteredSeats.filter(s => String(s.carriage_no) === carriageFilter);
@@ -919,32 +906,28 @@ W8 m88/m86/m84/m82`;
         filteredSeats = filteredSeats.filter(s => selectedSeatUids.has(s.seat_uid));
       }
 
-      // Sort seats by carriage_no, then seat_no numerically
       filteredSeats.sort((a, b) => {
         if (a.carriage_no !== b.carriage_no) return a.carriage_no - b.carriage_no;
         return parseInt(a.seat_no) - parseInt(b.seat_no);
       });
 
-      // Header row with station names AND departure times (Task 095)
-      let headerHtml = '<thead><tr class="bg-slate-950 text-slate-300">';
-      headerHtml += '<th class="p-2.5 border border-slate-800 text-left font-semibold">Miejsce / Wagon (Przedział)</th>';
+      let headerHtml = '<thead><tr class="bg-pkp-navy text-slate-200 border-b border-pkp-border">';
+      headerHtml += '<th class="p-2.5 border border-pkp-border text-left font-bold text-xs">Miejsce / Wagon (Przedział)</th>';
       segments.forEach(seg => {
         const depTimeStr = seg.departure_time ? ` (${seg.departure_time})` : '';
-        headerHtml += `<th class="p-2.5 border border-slate-800 font-semibold">${seg.from_station} → ${seg.to_station}<div class="text-[10px] text-amber-400 font-mono">${depTimeStr} &bull; ${seg.duration_min} min</div></th>`;
+        headerHtml += `<th class="p-2.5 border border-pkp-border font-bold text-xs">${seg.from_station} → ${seg.to_station}<div class="text-[10px] text-pkp-orange font-mono">${depTimeStr} &bull; ${seg.duration_min} min</div></th>`;
       });
       headerHtml += '</tr></thead>';
 
-      // Rows grouped by carriage (Task 095)
-      let bodyHtml = '<tbody class="divide-y divide-slate-800">';
+      let bodyHtml = '<tbody class="divide-y divide-pkp-border">';
       let lastCarriage = null;
 
       filteredSeats.forEach(seat => {
-        // Carriage divider header
         if (seat.carriage_no !== lastCarriage) {
           lastCarriage = seat.carriage_no;
-          bodyHtml += `<tr class="bg-blue-950/40 text-blue-300 font-bold text-left">
-            <td colspan="${segments.length + 1}" class="px-3 py-1.5 border border-slate-800 text-xs">
-              🚆 WAGON ${seat.carriage_no}
+          bodyHtml += `<tr class="bg-pkp-navy/60 text-white font-bold text-left border-y border-pkp-border">
+            <td colspan="${segments.length + 1}" class="px-3 py-1.5 text-xs tracking-wider">
+              WAGON ${seat.carriage_no} &bull; Klasa 2
             </td>
           </tr>`;
         }
@@ -952,8 +935,8 @@ W8 m88/m86/m84/m82`;
         const seatInt = parseInt(seat.seat_no);
         const compartment = !isNaN(seatInt) && seatInt >= 10 ? Math.floor(seatInt / 10) : 1;
 
-        bodyHtml += `<tr class="hover:bg-slate-800/40 transition-colors">`;
-        bodyHtml += `<td class="p-2.5 border border-slate-800 font-medium text-left bg-slate-900/80 text-slate-200">
+        bodyHtml += `<tr class="hover:bg-pkp-surfaceHover/50 transition-colors">`;
+        bodyHtml += `<td class="p-2.5 border border-pkp-border font-medium text-left bg-pkp-surface/90 text-slate-200">
           <div class="flex items-center justify-between">
             <span>W${seat.carriage_no} / Miejsce <strong>${seat.seat_no}</strong></span>
             <span class="text-[10px] text-slate-400 font-mono">Przedział ${compartment}</span>
@@ -969,14 +952,14 @@ W8 m88/m86/m84/m82`;
             cellClass = 'cell-selected';
             cellText = 'WYBRANE';
           } else if (isFree === 1) {
-            cellClass = 'bg-emerald-950/60 text-emerald-400 border border-emerald-900/60 font-medium';
+            cellClass = 'bg-emerald-950/60 text-emerald-400 border border-emerald-900/60 font-semibold';
             cellText = 'WOLNE';
           } else {
-            cellClass = 'bg-red-950/40 text-red-500/80 border border-red-900/40';
+            cellClass = 'bg-rose-950/30 text-rose-400/80 border border-rose-950/60';
             cellText = 'ZAJĘTE';
           }
 
-          bodyHtml += `<td class="p-2.5 border border-slate-800 ${cellClass} transition-all">${cellText}</td>`;
+          bodyHtml += `<td class="p-2.5 border border-pkp-border ${cellClass} transition-all">${cellText}</td>`;
         });
         bodyHtml += '</tr>';
       });
@@ -984,6 +967,38 @@ W8 m88/m86/m84/m82`;
 
       table.innerHTML = headerHtml + bodyHtml;
     }
+
+    function loadFixtureKoluszkiOpole() {
+      const fixtureText = `Koluszki - Piotrków 14:45
+W5 m82
+W3 m84/m87/m91
+
+Piotrków - Radomsko 15:12
+W3 m91
+W5 m82/m88
+
+Radomsko - Częstochowa 15:40
+W3 m84/m91
+W5 m82
+
+Częstochowa - Częstochowa Stradom 16:05
+W3 m84/m91
+W5 m82
+
+Częstochowa Stradom - Lubliniec 16:30
+W3 m84
+W5 m82
+
+Lubliniec - Opole Główne 17:05
+W5 m82
+W6 m14/m16`;
+      document.getElementById('rawMapInput').value = fixtureText;
+    }
+
+    let currentAnalysisData = null;
+    let selectedStrategyIndex = 0;
+    let customPath = {};
+    let filterOnlyRecommended = false;
 
     // --- Interactive Polish Calendar Picker with manual typing support ---
     const MONTH_NAMES_PL = [
@@ -1031,7 +1046,6 @@ W8 m88/m86/m84/m82`;
           openCalendar();
         });
 
-        // Manual typing support: DD.MM.YYYY, DD-MM-YYYY, DDMMYYYY, YYYY-MM-DD
         dateInput.addEventListener('input', () => {
           parseAndSetDateFromInput(dateInput.value.trim());
         });
@@ -1134,7 +1148,6 @@ W8 m88/m86/m84/m82`;
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
-      // Prevent past dates
       if (parsed < today) return;
 
       selectedDate = parsed;
@@ -1203,11 +1216,11 @@ W8 m88/m86/m84/m82`;
           btn.classList.add('text-slate-600', 'cursor-not-allowed', 'opacity-30');
           btn.disabled = true;
         } else if (isSelected) {
-          btn.classList.add('bg-blue-600', 'text-white', 'font-bold', 'shadow-md', 'shadow-blue-600/40');
+          btn.classList.add('bg-pkp-orange', 'text-white', 'font-bold', 'shadow-md', 'shadow-orange-500/40');
         } else if (isToday) {
-          btn.classList.add('border', 'border-blue-400', 'text-blue-300', 'font-bold', 'hover:bg-slate-800');
+          btn.classList.add('border', 'border-pkp-orange', 'text-pkp-orange', 'font-bold', 'hover:bg-pkp-surfaceHover');
         } else {
-          btn.classList.add('text-slate-200', 'hover:bg-slate-800');
+          btn.classList.add('text-slate-200', 'hover:bg-pkp-surfaceHover');
         }
 
         if (!isPast) {
@@ -1223,7 +1236,6 @@ W8 m88/m86/m84/m82`;
       }
     }
 
-    // Initialize application on page load
     window.addEventListener('DOMContentLoaded', () => {
       initCalendar();
     });

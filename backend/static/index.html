@@ -95,21 +95,61 @@
       </div>
 
       <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <!-- From Station -->
+        <!-- 1. Stacja początkowa (A) -->
         <div class="relative">
           <label class="block text-xs font-medium text-slate-300 mb-1.5">Stacja początkowa (A)</label>
-          <input type="text" id="fromStation" value="Koluszki" autocomplete="off" oninput="handleStationSearch('fromStation', 'fromSuggestions')" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 text-slate-200" />
+          <input type="text" id="fromStation" value="" autocomplete="off" placeholder="Wpisz stację odjazdu (np. Warszawa Centralna)..." oninput="handleStationSearch('fromStation', 'fromSuggestions')" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 text-slate-200 placeholder:text-slate-600" />
           <div id="fromSuggestions" class="hidden absolute left-0 right-0 top-full mt-1 bg-slate-900 border border-slate-700 rounded-lg shadow-2xl z-50 max-h-56 overflow-y-auto divide-y divide-slate-800 text-xs"></div>
         </div>
 
-        <!-- To Station -->
+        <!-- 2. Stacja docelowa (B) -->
         <div class="relative">
           <label class="block text-xs font-medium text-slate-300 mb-1.5">Stacja docelowa (B)</label>
-          <input type="text" id="toStation" value="Opole Główne" autocomplete="off" oninput="handleStationSearch('toStation', 'toSuggestions')" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 text-slate-200" />
+          <input type="text" id="toStation" value="" autocomplete="off" placeholder="Wpisz stację przyjazdu (np. Kraków Główny)..." oninput="handleStationSearch('toStation', 'toSuggestions')" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 text-slate-200 placeholder:text-slate-600" />
           <div id="toSuggestions" class="hidden absolute left-0 right-0 top-full mt-1 bg-slate-900 border border-slate-700 rounded-lg shadow-2xl z-50 max-h-56 overflow-y-auto divide-y divide-slate-800 text-xs"></div>
         </div>
 
-        <!-- Train No (Task 090) -->
+        <!-- 3. Data i Godzina odjazdu (z miesięcznym kalendarzem i ręcznym wpisem) -->
+        <div class="relative">
+          <label class="block text-xs font-medium text-slate-300 mb-1.5">Data i Godzina odjazdu</label>
+          <div class="grid grid-cols-2 gap-2">
+            <!-- Data z kalendarzem -->
+            <div class="relative">
+              <input type="text" id="travelDateDisplay" autocomplete="off" placeholder="DD.MM.YYYY" 
+                class="w-full bg-slate-950 border border-slate-700 rounded-lg pl-2 pr-7 py-2 text-xs focus:outline-none focus:border-blue-500 text-slate-200 cursor-pointer font-mono" />
+              <button type="button" id="btnToggleCalendar" class="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-blue-400 text-xs transition-colors" title="Otwórz kalendarz">
+                📅
+              </button>
+              <input type="hidden" id="travelDate" value="" />
+            </div>
+            <!-- Godzina -->
+            <input type="time" id="travelTime" value="" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-xs focus:outline-none focus:border-blue-500 text-slate-200" />
+          </div>
+
+          <div class="flex items-center gap-2 mt-2">
+            <input type="checkbox" id="directOnly" checked onchange="toggleDirectFilter()" class="rounded border-slate-700 bg-slate-950 text-blue-600 focus:ring-blue-500 w-3.5 h-3.5 cursor-pointer">
+            <label for="directOnly" class="text-[11px] text-slate-300 select-none cursor-pointer">Tylko pociągi bezpośrednie</label>
+          </div>
+
+          <!-- Okienko interaktywnego kalendarza miesięcznego -->
+          <div id="calendarPopup" class="hidden absolute left-0 top-full mt-1 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-50 p-3 w-72 text-xs select-none">
+            <div class="flex items-center justify-between mb-2 pb-2 border-b border-slate-800 text-slate-200">
+              <button type="button" id="calPrevMonth" class="px-2 py-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors font-bold">&lt;</button>
+              <span id="calMonthYearTitle" class="font-semibold text-xs tracking-wide">Listopad 2026</span>
+              <button type="button" id="calNextMonth" class="px-2 py-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors font-bold">&gt;</button>
+            </div>
+            <div class="grid grid-cols-7 gap-1 text-center font-semibold text-[10px] text-slate-400 mb-1.5">
+              <span>Pn</span><span>Wt</span><span>Śr</span><span>Czw</span><span>Pt</span><span>Sob</span><span class="text-rose-400">Ndz</span>
+            </div>
+            <div id="calDaysGrid" class="grid grid-cols-7 gap-1 text-center text-xs"></div>
+            <div class="mt-2.5 pt-2 border-t border-slate-800 flex justify-between items-center text-[10px]">
+              <button type="button" id="calTodayBtn" class="text-blue-400 hover:text-blue-300 font-semibold underline">Dzisiaj</button>
+              <span class="text-slate-500">Format: DD.MM.YYYY</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 4. Numer pociągu (opcjonalnie z wyszukiwaniem) -->
         <div>
           <div class="flex justify-between items-center mb-1.5">
             <label class="block text-xs font-medium text-slate-300">Numer pociągu (opcjonalnie)</label>
@@ -118,20 +158,7 @@
           <select id="trainSelect" onchange="onTrainSelected()" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-200 mb-1.5">
             <option value="">-- Wybierz z rozkładu PKP --</option>
           </select>
-          <input type="text" id="trainNo" value="IC 16104" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500 text-slate-200" placeholder="np. IC 16104" />
-        </div>
-
-        <!-- Date & Time -->
-        <div>
-          <label class="block text-xs font-medium text-slate-300 mb-1.5">Data i Godzina odjazdu</label>
-          <div class="grid grid-cols-2 gap-2">
-            <input type="date" id="travelDate" value="2026-11-15" onchange="loadAvailableTrains()" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-xs focus:outline-none focus:border-blue-500 text-slate-200" />
-            <input type="time" id="travelTime" value="14:45" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-xs focus:outline-none focus:border-blue-500 text-slate-200" />
-          </div>
-          <div class="flex items-center gap-2 mt-2">
-            <input type="checkbox" id="directOnly" onchange="toggleDirectFilter()" class="rounded border-slate-700 bg-slate-950 text-blue-600 focus:ring-blue-500 w-3.5 h-3.5 cursor-pointer">
-            <label for="directOnly" class="text-[11px] text-slate-400 select-none cursor-pointer">Tylko pociągi bezpośrednie</label>
-          </div>
+          <input type="text" id="trainNo" value="" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500 text-slate-200 placeholder:text-slate-600" placeholder="np. IC 1646 lub wybierz z listy" />
         </div>
       </div>
 
@@ -443,7 +470,7 @@ W8 m88/m86/m84/m82`;
 
     function renderTrainSelect() {
       const select = document.getElementById('trainSelect');
-      const directOnly = document.getElementById('directOnly') ? document.getElementById('directOnly').checked : false;
+      const directOnly = document.getElementById('directOnly') ? document.getElementById('directOnly').checked : true;
       const trains = directOnly
         ? (window.allFetchedTrains || []).filter(t => t.changes === 0)
         : (window.allFetchedTrains || []);
@@ -512,6 +539,12 @@ W8 m88/m86/m84/m82`;
       const list = document.getElementById('routeStopsList');
       const errorAlert = document.getElementById('errorAlert');
 
+      if (!fromSt || !toSt) {
+        errorAlert.classList.remove('hidden');
+        document.getElementById('errorMessage').innerText = 'Wpisz stację początkową i docelową przed pobraniem trasy pociągu.';
+        return;
+      }
+
       errorAlert.classList.add('hidden');
       card.classList.remove('hidden');
       list.innerHTML = '<span class="text-slate-400">Pobieranie rozkładu stacji...</span>';
@@ -557,6 +590,12 @@ W8 m88/m86/m84/m82`;
       const progressPercent = document.getElementById('progressPercent');
       const liveConsole = document.getElementById('liveScraperConsole');
       const errorAlert = document.getElementById('errorAlert');
+
+      if (!fromSt || !toSt) {
+        errorAlert.classList.remove('hidden');
+        document.getElementById('errorMessage').innerText = 'Wpisz stację początkową i docelową przed rozpoczęciem skanowania.';
+        return;
+      }
 
       errorAlert.classList.add('hidden');
       progressSection.classList.remove('hidden');
@@ -946,10 +985,247 @@ W8 m88/m86/m84/m82`;
       table.innerHTML = headerHtml + bodyHtml;
     }
 
-    // Auto-run example on page load
+    // --- Interactive Polish Calendar Picker with manual typing support ---
+    const MONTH_NAMES_PL = [
+      'Styczeń', 'Luty', 'Marzec', 'Kwiecień', 'Maj', 'Czerwiec',
+      'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień'
+    ];
+
+    let currentCalDate = new Date();
+    let selectedDate = new Date();
+
+    function initCalendar() {
+      const now = new Date();
+      currentCalDate = new Date(now.getFullYear(), now.getMonth(), 1);
+      selectedDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+      setInitialDateTime();
+      renderCalendar();
+
+      const dateInput = document.getElementById('travelDateDisplay');
+      const toggleBtn = document.getElementById('btnToggleCalendar');
+      const popup = document.getElementById('calendarPopup');
+
+      function openCalendar() {
+        if (!popup) return;
+        popup.classList.remove('hidden');
+        renderCalendar();
+      }
+
+      function closeCalendar() {
+        if (!popup) return;
+        popup.classList.add('hidden');
+      }
+
+      if (toggleBtn) {
+        toggleBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (popup.classList.contains('hidden')) openCalendar();
+          else closeCalendar();
+        });
+      }
+
+      if (dateInput) {
+        dateInput.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openCalendar();
+        });
+
+        // Manual typing support: DD.MM.YYYY, DD-MM-YYYY, DDMMYYYY, YYYY-MM-DD
+        dateInput.addEventListener('input', () => {
+          parseAndSetDateFromInput(dateInput.value.trim());
+        });
+
+        dateInput.addEventListener('blur', () => {
+          if (selectedDate) {
+            const y = selectedDate.getFullYear();
+            const m = String(selectedDate.getMonth() + 1).padStart(2, '0');
+            const d = String(selectedDate.getDate()).padStart(2, '0');
+            dateInput.value = `${d}.${m}.${y}`;
+            document.getElementById('travelDate').value = `${y}-${m}-${d}`;
+          }
+        });
+      }
+
+      document.addEventListener('click', (e) => {
+        if (popup && !popup.contains(e.target) && e.target !== dateInput && e.target !== toggleBtn) {
+          closeCalendar();
+        }
+      });
+
+      const prevBtn = document.getElementById('calPrevMonth');
+      if (prevBtn) {
+        prevBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          currentCalDate.setMonth(currentCalDate.getMonth() - 1);
+          renderCalendar();
+        });
+      }
+
+      const nextBtn = document.getElementById('calNextMonth');
+      if (nextBtn) {
+        nextBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          currentCalDate.setMonth(currentCalDate.getMonth() + 1);
+          renderCalendar();
+        });
+      }
+
+      const todayBtn = document.getElementById('calTodayBtn');
+      if (todayBtn) {
+        todayBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const t = new Date();
+          selectCalendarDate(t.getFullYear(), t.getMonth(), t.getDate());
+          currentCalDate = new Date(t.getFullYear(), t.getMonth(), 1);
+          closeCalendar();
+        });
+      }
+    }
+
+    function setInitialDateTime() {
+      const now = new Date();
+      const y = now.getFullYear();
+      const m = String(now.getMonth() + 1).padStart(2, '0');
+      const d = String(now.getDate()).padStart(2, '0');
+      const hh = String(now.getHours()).padStart(2, '0');
+      const mm = String(now.getMinutes()).padStart(2, '0');
+
+      const iso = `${y}-${m}-${d}`;
+      const display = `${d}.${m}.${y}`;
+
+      const tDate = document.getElementById('travelDate');
+      const tDisp = document.getElementById('travelDateDisplay');
+      const tTime = document.getElementById('travelTime');
+
+      if (tDate) tDate.value = iso;
+      if (tDisp) tDisp.value = display;
+      if (tTime) tTime.value = `${hh}:${mm}`;
+    }
+
+    function parseAndSetDateFromInput(raw) {
+      if (!raw) return;
+      let y, m, d;
+
+      const matchDmy = raw.match(/^(\d{1,2})[\.\-\/](\d{1,2})[\.\-\/](\d{4})$/);
+      const match8 = raw.match(/^(\d{2})(\d{2})(\d{4})$/);
+      const matchYmd = raw.match(/^(\d{4})[\.\-\/](\d{1,2})[\.\-\/](\d{1,2})$/);
+
+      if (matchDmy) {
+        d = parseInt(matchDmy[1], 10);
+        m = parseInt(matchDmy[2], 10) - 1;
+        y = parseInt(matchDmy[3], 10);
+      } else if (match8) {
+        d = parseInt(match8[1], 10);
+        m = parseInt(match8[2], 10) - 1;
+        y = parseInt(match8[3], 10);
+      } else if (matchYmd) {
+        y = parseInt(matchYmd[1], 10);
+        m = parseInt(matchYmd[2], 10) - 1;
+        d = parseInt(matchYmd[3], 10);
+      } else {
+        return;
+      }
+
+      const parsed = new Date(y, m, d);
+      if (isNaN(parsed.getTime())) return;
+      if (parsed.getFullYear() !== y || parsed.getMonth() !== m || parsed.getDate() !== d) return;
+
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      // Prevent past dates
+      if (parsed < today) return;
+
+      selectedDate = parsed;
+      currentCalDate = new Date(y, m, 1);
+
+      const mStr = String(m + 1).padStart(2, '0');
+      const dStr = String(d).padStart(2, '0');
+      const tDate = document.getElementById('travelDate');
+      if (tDate) tDate.value = `${y}-${mStr}-${dStr}`;
+      renderCalendar();
+      loadAvailableTrains();
+    }
+
+    function selectCalendarDate(year, month, day) {
+      selectedDate = new Date(year, month, day);
+      const mStr = String(month + 1).padStart(2, '0');
+      const dStr = String(day).padStart(2, '0');
+      const tDisp = document.getElementById('travelDateDisplay');
+      const tDate = document.getElementById('travelDate');
+      if (tDisp) tDisp.value = `${dStr}.${mStr}.${year}`;
+      if (tDate) tDate.value = `${year}-${mStr}-${dStr}`;
+      renderCalendar();
+      loadAvailableTrains();
+    }
+
+    function renderCalendar() {
+      const grid = document.getElementById('calDaysGrid');
+      const title = document.getElementById('calMonthYearTitle');
+      if (!grid || !title) return;
+
+      const year = currentCalDate.getFullYear();
+      const month = currentCalDate.getMonth();
+
+      title.innerText = `${MONTH_NAMES_PL[month]} ${year}`;
+      grid.innerHTML = '';
+
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      const firstDayOfMonth = new Date(year, month, 1);
+      let startDayOfWeek = firstDayOfMonth.getDay() - 1;
+      if (startDayOfWeek === -1) startDayOfWeek = 6;
+
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+      for (let i = 0; i < startDayOfWeek; i++) {
+        const emptyCell = document.createElement('div');
+        emptyCell.className = 'py-1.5';
+        grid.appendChild(emptyCell);
+      }
+
+      for (let d = 1; d <= daysInMonth; d++) {
+        const cellDate = new Date(year, month, d);
+        cellDate.setHours(0, 0, 0, 0);
+
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.innerText = d;
+        btn.className = 'w-7 h-7 mx-auto flex items-center justify-center rounded-lg transition-colors text-xs font-medium';
+
+        const isPast = cellDate < today;
+        const isToday = cellDate.getTime() === today.getTime();
+        const isSelected = selectedDate && cellDate.getTime() === (new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate())).getTime();
+
+        if (isPast) {
+          btn.classList.add('text-slate-600', 'cursor-not-allowed', 'opacity-30');
+          btn.disabled = true;
+        } else if (isSelected) {
+          btn.classList.add('bg-blue-600', 'text-white', 'font-bold', 'shadow-md', 'shadow-blue-600/40');
+        } else if (isToday) {
+          btn.classList.add('border', 'border-blue-400', 'text-blue-300', 'font-bold', 'hover:bg-slate-800');
+        } else {
+          btn.classList.add('text-slate-200', 'hover:bg-slate-800');
+        }
+
+        if (!isPast) {
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            selectCalendarDate(year, month, d);
+            const popup = document.getElementById('calendarPopup');
+            if (popup) popup.classList.add('hidden');
+          });
+        }
+
+        grid.appendChild(btn);
+      }
+    }
+
+    // Initialize application on page load
     window.addEventListener('DOMContentLoaded', () => {
-      loadFixtureKoluszkiOpole();
-      runTextOptimization();
+      initCalendar();
     });
   </script>
 </body>

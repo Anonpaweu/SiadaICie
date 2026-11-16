@@ -36,4 +36,8 @@ Thumbs.db
 # Scraper diagnostics and logs
 logs/
 
+# Ignored user folders
+Scraper_G_Trends/
+screeny i html krok po kroku strony icc/
+
 

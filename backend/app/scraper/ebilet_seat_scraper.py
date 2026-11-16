@@ -69,6 +69,45 @@ def log_network_api_call(url: str, status: int, data: Any) -> None:
         pass
 
 
+def force_unhide_chrome_windows() -> None:
+    """
+    On Windows, child processes spawned by background tasks inherit
+    STARTUPINFO.wShowWindow = SW_HIDE, causing GUI processes (Chrome) to be hidden
+    from the desktop. This helper enumerates top-level windows and forces Chrome
+    windows to become visible and maximized (SW_MAXIMIZE = 3).
+    """
+    if os.name != 'nt':
+        return
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+
+        def enum_cb(hwnd, extra):
+            try:
+                class_buf = ctypes.create_unicode_buffer(256)
+                user32.GetClassNameW(hwnd, class_buf, 256)
+                c_name = class_buf.value
+
+                length = user32.GetWindowTextLengthW(hwnd)
+                title = ""
+                if length > 0:
+                    buff = ctypes.create_unicode_buffer(length + 1)
+                    user32.GetWindowTextW(hwnd, buff, length + 1)
+                    title = buff.value
+
+                if "Chrome_WidgetWin_1" in c_name or any(k in title.lower() for k in ["chrome", "intercity", "e-ic", "bilet"]):
+                    user32.ShowWindow(hwnd, 3)  # SW_MAXIMIZE
+                    user32.SetForegroundWindow(hwnd)
+            except Exception:
+                pass
+            return True
+
+        EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
+        user32.EnumWindows(EnumWindowsProc(enum_cb), 0)
+    except Exception:
+        pass
+
+
 class EbiletSeatScraper:
     """
     Playwright-based scraper for ebilet.intercity.pl (e-IC 2.0 React SPA).
@@ -117,6 +156,8 @@ class EbiletSeatScraper:
         await page.add_init_script(
             "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
         )
+        if not self.headless:
+            force_unhide_chrome_windows()
         return page
 
     async def close_cookie_banners(self, page: Page) -> None:
@@ -461,24 +502,62 @@ class EbiletSeatScraper:
             await asyncio.sleep(0.5)
             await self.close_cookie_banners(page)
 
+            if not self.headless:
+                force_unhide_chrome_windows()
+
             # Oczekiwanie na kafelki pociągów na liście połączeń (Krok 2)
-            try:
-                await page.wait_for_selector(
-                    "li[class*='TripProposition'], button[data-testid='OutlineButton'], button:has-text('Kup bilet')",
-                    timeout=15000,
+            report(35, f"Oczekiwanie na listę połączeń dla relacji {from_station} -> {to_station}...")
+            start_wait = time.time()
+            reloaded = False
+            cards_found = False
+
+            while time.time() - start_wait < 35.0:
+                loader_count = await page.locator(
+                    "[class*='trainLoaderWithText'], [class*='TrainLoaderWithText'], .Loader_linear__OpQ5L, [class*='Loader']"
+                ).count()
+                cards = page.locator(
+                    "li[class*='TripPropositionDesktop_tripPropositionDesktop__container'], li[class*='TripProposition'], .connection-card, .connection-row, tr.connection"
                 )
-            except Exception:
-                pass
+                card_count = await cards.count()
+
+                if card_count > 0 and loader_count == 0:
+                    cards_found = True
+                    break
+
+                # Jeśli e-IC zawiesiło ładowanie na dłużej niż 16s bez kart, odśwież stronę
+                if time.time() - start_wait > 16.0 and not reloaded and card_count == 0:
+                    logger.warning(f"[CONNECTION LIST] Długie ładowanie ({time.time() - start_wait:.1f}s), odświeżam stronę...")
+                    reloaded = True
+                    try:
+                        await page.reload(wait_until="domcontentloaded", timeout=15000)
+                        await asyncio.sleep(1.0)
+                        await self.close_cookie_banners(page)
+                    except Exception:
+                        pass
+                    continue
+
+                await asyncio.sleep(0.5)
+
+            if not cards_found:
+                try:
+                    body_text = (await page.locator("body").inner_text()).lower()
+                    if "brak połączeń" in body_text or "nie znaleziono połączeń" in body_text:
+                        snap_png, _ = await self.save_debug_snapshot(page, f"err_no_trains_{train_number}_{from_station}_{to_station}")
+                        raise GraphicReservationUnavailableError(
+                            f"System PKP Intercity nie znalazł żadnych połączeń dla relacji {from_station} -> {to_station} w dniu {date_str} o godz. {clean_dep_time}."
+                        )
+                except GraphicReservationUnavailableError:
+                    raise
+                except Exception:
+                    pass
+
+                snap_png, _ = await self.save_debug_snapshot(page, f"err_no_train_{train_number}_{from_station}_{to_station}")
+                raise GraphicReservationUnavailableError(
+                    f"Nie znaleziono pociągu {train_number} na liście połączeń dla relacji {from_station} -> {to_station} po 35s oczekiwania. Zapisano {snap_png.name}"
+                )
 
             # Step 2: Connection list (Tasks V3-17 to V3-20)
             report(70, f"Dopasowywanie pociągu {train_number} i wybór Klasy 2...")
-            try:
-                await page.wait_for_selector(
-                    "li[class*='TripPropositionDesktop'], .connection-row, tr.connection, ul[class*='YourTrip']",
-                    timeout=8000,
-                )
-            except Exception:
-                pass
 
             # Save step2 snapshot if first query (Task V3-18)
             step2_snap = DEBUG_SNAPSHOTS_DIR / "step2_connections_list.html"
@@ -502,6 +581,7 @@ class EbiletSeatScraper:
                     card_text = await card.inner_text()
                     if train_clean_num in card_text:
                         chosen_card = card
+                        logger.info(f"[TRAIN MATCH] Dopasowano pociąg po numerze {train_clean_num} w kafelku #{idx+1}")
                         break
                 if not chosen_card:
                     for idx in range(card_count):
@@ -509,9 +589,11 @@ class EbiletSeatScraper:
                         card_text = await card.inner_text()
                         if clean_dep_time in card_text:
                             chosen_card = card
+                            logger.info(f"[TRAIN MATCH] Dopasowano pociąg po godzinie {clean_dep_time} w kafelku #{idx+1}")
                             break
                 if not chosen_card:
                     chosen_card = connection_cards.first
+                    logger.info("[TRAIN MATCH] Używam pierwszego kafelka z listy połączeń")
 
             if not chosen_card:
                 # Task V3-03: STRICTLY NO fallback to body!
@@ -1144,25 +1226,33 @@ class LiveTrainScanner:
                 logger.warning(f"[BROWSER] Google Chrome niedostępny ({e}), uruchamiam domyślne Chromium")
                 browser = await p.chromium.launch(**launch_kwargs)
 
+            unhide_task = None
             try:
                 context = await self.scraper.create_context(browser)
-                page = await self.scraper.init_page(context)
+
                 if not self.scraper.headless:
-                    try:
-                        await page.bring_to_front()
-                    except Exception:
-                        pass
+                    force_unhide_chrome_windows()
+                    async def _keep_unhidden():
+                        while True:
+                            try:
+                                force_unhide_chrome_windows()
+                            except Exception:
+                                pass
+                            await asyncio.sleep(1.0)
+                    unhide_task = asyncio.create_task(_keep_unhidden())
 
                 # Warmup session on origin before starting segments
                 try:
                     self._notify("Inicjalizacja sesji e-IC 2.0...")
-                    await page.goto("https://ebilet.intercity.pl/", wait_until="domcontentloaded", timeout=15000)
-                    await self.scraper.close_cookie_banners(page)
+                    warmup_page = await self.scraper.init_page(context)
+                    await warmup_page.goto("https://ebilet.intercity.pl/", wait_until="domcontentloaded", timeout=15000)
+                    await self.scraper.close_cookie_banners(warmup_page)
                     await asyncio.sleep(0.5)
+                    await warmup_page.close()
                 except Exception as e:
                     logger.warning(f"[WARMUP] Ostrzeżenie podczas otwierania strony e-IC: {e}")
 
-                # Iterate each segment sequentially using persistent session
+                # Iterate each segment sequentially using persistent session with clean pages per segment
                 for idx in range(num_segments):
                     s_from = stops[idx]
                     s_to = stops[idx + 1]
@@ -1174,15 +1264,22 @@ class LiveTrainScanner:
                         overall = int(10 + ((idx + (pct / 100)) / num_segments) * 85)
                         self._notify(f"[{overall}%] Odcinek {idx + 1}/{num_segments}: {msg}")
 
-                    carriages = await self.scraper.scan_segment(
-                        from_station=s_from.name,
-                        to_station=s_to.name,
-                        travel_date=travel_date,
-                        departure_time=seg_dep_time,
-                        train_number=train_number,
-                        progress_cb=seg_cb,
-                        page=page,  # Reuse active session
-                    )
+                    seg_page = await self.scraper.init_page(context)
+                    try:
+                        carriages = await self.scraper.scan_segment(
+                            from_station=s_from.name,
+                            to_station=s_to.name,
+                            travel_date=travel_date,
+                            departure_time=seg_dep_time,
+                            train_number=train_number,
+                            progress_cb=seg_cb,
+                            page=seg_page,  # Clean page within persistent context
+                        )
+                    finally:
+                        try:
+                            await seg_page.close()
+                        except Exception:
+                            pass
 
                     c_summary_parts = []
                     for c_no in sorted(carriages.keys(), key=lambda x: int(x) if x.isdigit() else 99):
@@ -1202,6 +1299,8 @@ class LiveTrainScanner:
                     segments_map.append(seg_map)
 
             finally:
+                if unhide_task:
+                    unhide_task.cancel()
                 await browser.close()
 
         # 3. Create FullTrainAvailabilityMap

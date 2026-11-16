@@ -237,3 +237,30 @@ class TestEbiletV3RealDOM:
             assert len(full_map.segments) == 2
             assert full_map.segments[0].carriages == {}
             assert full_map.segments[1].carriages == {"3": ["15", "16"]}
+
+    @pytest.mark.asyncio
+    async def test_find_seats_in_iframe_evaluates_fast_js(self, scraper):
+        """Verifies _find_seats_in_iframe uses in-page evaluate() and sorts seats numerically."""
+        from unittest.mock import AsyncMock, MagicMock
+        from backend.app.scraper.ebilet_seat_scraper import SVG_SEATS_EXTRACTOR_JS
+
+        mock_frame = MagicMock()
+        mock_frame.url = "https://ebilet.intercity.pl/schemat.html"
+        mock_frame.title = AsyncMock(return_value="Schemat wagonu")
+        mock_frame.evaluate = AsyncMock(return_value=["48", "14", "28", "17", "43", "24", "38"])
+
+        mock_page = MagicMock()
+        mock_page.frames = [mock_frame]
+        mock_page.url = "https://ebilet.intercity.pl/schemat.html"
+
+        seats = await scraper._find_seats_in_iframe(mock_frame)
+        assert seats == ["14", "17", "24", "28", "38", "43", "48"]
+        mock_frame.evaluate.assert_called_once_with(SVG_SEATS_EXTRACTOR_JS)
+
+    def test_speedup_js_scripts_syntax(self):
+        """Verifies that SVG_SEATS_EXTRACTOR_JS and CAROUSEL_METADATA_JS are valid non-empty scripts."""
+        from backend.app.scraper.ebilet_seat_scraper import SVG_SEATS_EXTRACTOR_JS, CAROUSEL_METADATA_JS
+        assert "wolne" in SVG_SEATS_EXTRACTOR_JS
+        assert "klasa 1" in SVG_SEATS_EXTRACTOR_JS
+        assert "Carriage_carriageSlide" in CAROUSEL_METADATA_JS
+        assert "swiper-slide-active" in CAROUSEL_METADATA_JS

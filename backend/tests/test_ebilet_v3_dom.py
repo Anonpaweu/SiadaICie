@@ -138,3 +138,102 @@ class TestEbiletV3RealDOM:
         assert "5" not in result
         assert "3" in result
         assert result["3"] == ["14", "17"]
+
+    def test_wagon_aria_label_extraction_step6(self):
+        """Verifies extracting wagon number from aria-label on Step 6 slides."""
+        fpath = SNAPSHOTS_DIR / "6-e-IC2 - Internetowa rezerwacja miejsc.html"
+        assert fpath.exists()
+        soup = bs4.BeautifulSoup(fpath.read_text(encoding="utf-8", errors="ignore"), "html.parser")
+        slides = soup.select("div[class*='Carriage_carriageSlide']")
+
+        extracted_wagons = []
+        for s in slides:
+            box = s.select_one("div[aria-label*='wagon numer'], div[aria-label*='Wagon']")
+            if box:
+                aria = box.get("aria-label", "")
+                m = re.search(r'wagon\s+(?:numer\s+)?(\d+)', aria, re.IGNORECASE)
+                if m:
+                    extracted_wagons.append(m.group(1))
+
+        assert extracted_wagons == ["1", "2", "3", "4", "5", "6", "7", "8"]
+
+    @pytest.mark.asyncio
+    async def test_safe_click_fallback_to_js(self, scraper):
+        """Verifies safe_click falls back to evaluate('el => el.click()') when click() fails."""
+        from unittest.mock import AsyncMock
+
+        mock_locator = AsyncMock()
+        mock_locator.click.side_effect = Exception("Element is intercepted")
+        mock_locator.evaluate.return_value = None
+
+        result = await scraper.safe_click(mock_locator, timeout=500)
+        assert result is True
+        mock_locator.click.assert_called_once()
+        mock_locator.evaluate.assert_called_once_with("el => el.click()")
+
+    @pytest.mark.asyncio
+    async def test_error_radar_detects_server_glitch(self, scraper):
+        """Verifies error radar detects 'Ups...' glitch and triggers reload."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        mock_page = MagicMock()
+        mock_loc = MagicMock()
+        mock_loc.is_visible = AsyncMock(return_value=True)
+        mock_loc.text_content = AsyncMock(return_value="Ups! Coś poszło nie tak.")
+        mock_page.locator.return_value.first = mock_loc
+        mock_page.reload = AsyncMock()
+
+        scraper.close_cookie_banners = AsyncMock()
+        scraper.dismiss_intermediate_modals = AsyncMock()
+
+        handled = await scraper.check_and_handle_error_radar(mock_page, context_label="test")
+        assert handled is True
+        mock_page.reload.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_scanner_non_fatal_segment_error(self):
+        """Verifies that a sold-out segment does not abort remaining segments in scan_full_train."""
+        from unittest.mock import AsyncMock, patch
+        from backend.app.scraper.ebilet_seat_scraper import LiveTrainScanner
+        from backend.app.scraper.ic_client import GraphicReservationUnavailableError
+        from backend.app.scraper.route_resolver import StationStop
+
+        scanner = LiveTrainScanner(headless=True)
+        mock_stops = [
+            StationStop(seq=1, eva_code="5100028", name="Koluszki", arrival_min=0, departure_min=0, departure_time="14:40"),
+            StationStop(seq=2, eva_code="5100049", name="Piotrków Trybunalski", arrival_min=20, departure_min=21, departure_time="15:01"),
+            StationStop(seq=3, eva_code="5100057", name="Radomsko", arrival_min=45, departure_min=46, departure_time="15:26"),
+        ]
+
+        async def mock_scan_segment(**kwargs):
+            if kwargs["from_station"] == "Koluszki":
+                raise GraphicReservationUnavailableError("BRAK_MIEJSC_KLASA_2")
+            return {"3": ["15", "16"]}
+
+        scanner.scraper.scan_segment = AsyncMock(side_effect=mock_scan_segment)
+
+        with patch("backend.app.scraper.ebilet_seat_scraper.resolve_real_route", return_value=mock_stops), \
+             patch("backend.app.scraper.ebilet_seat_scraper.filter_and_merge_stops", return_value=mock_stops), \
+             patch("backend.app.scraper.ebilet_seat_scraper.async_playwright") as mock_pw:
+
+            mock_browser = AsyncMock()
+            mock_ctx = AsyncMock()
+            mock_page = AsyncMock()
+            mock_browser.new_context.return_value = mock_ctx
+            mock_ctx.new_page.return_value = mock_page
+
+            mock_pw_inst = AsyncMock()
+            mock_pw_inst.chromium.connect_over_cdp.side_effect = Exception("No CDP")
+            mock_pw_inst.chromium.launch.return_value = mock_browser
+            mock_pw.return_value.__aenter__.return_value = mock_pw_inst
+
+            full_map = await scanner.scan_full_train(
+                from_station="Koluszki",
+                to_station="Radomsko",
+                travel_date="2026-11-20",
+                train_number="IC 1646",
+            )
+
+            assert len(full_map.segments) == 2
+            assert full_map.segments[0].carriages == {}
+            assert full_map.segments[1].carriages == {"3": ["15", "16"]}

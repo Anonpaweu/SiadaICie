@@ -74,6 +74,17 @@
   <!-- Główny kontener -->
   <main class="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
 
+    <!-- Baner ostrzegawczy o nocnej przerwie technicznej (widoczny tylko w oknie przerwy 23:45 - 00:30 oraz do 01:00 na przełomie miesięcy) -->
+    <div id="maintenanceAlert" class="hidden bg-amber-950/70 border border-amber-600/60 text-amber-200 px-4 py-3 rounded-xl text-xs flex items-center gap-3 shadow-lg">
+      <svg class="w-5 h-5 text-amber-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+      </svg>
+      <div class="flex-1 leading-relaxed">
+        <strong id="maintenanceTitle" class="font-bold text-amber-300">Nocna przerwa serwisowa (23:45 – 00:30):</strong>
+        <span id="maintenanceText">W tych godzinach systemy kolejowe mogą przeprowadzać codzienną przerwę techniczną (do 01:00 na przełomie miesięcy). Skanowanie połączeń i pobieranie wolnych miejsc może działać niestabilnie lub być chwilowo niedostępne.</span>
+      </div>
+    </div>
+
     <!-- Przełącznik trybów (Nawigacja zakładkowa) -->
     <div class="flex border-b border-pkp-border space-x-2">
       <button id="tabLiveBtn" onclick="switchTab('live')" class="px-5 py-3 text-xs font-bold rounded-t-lg border-b-2 border-pkp-orange bg-pkp-surface text-white flex items-center gap-2 transition-all shadow">
@@ -254,7 +265,19 @@
       <div class="w-full bg-pkp-dark h-2 rounded-full overflow-hidden border border-pkp-border">
         <div id="progressBar" class="bg-gradient-to-r from-blue-600 via-pkp-blue to-pkp-orange h-full w-0 transition-all duration-300"></div>
       </div>
-      <div id="liveScraperConsole" class="mt-2 bg-pkp-dark rounded-lg p-3 border border-pkp-border text-[11px] font-mono text-slate-300 max-h-36 overflow-y-auto space-y-1 scrollbar-thin">
+
+      <!-- Zwijany przełącznik szczegółów technicznych -->
+      <div class="pt-0.5 flex items-center justify-between">
+        <button id="toggleConsoleBtn" type="button" onclick="toggleConsoleDetails()" class="text-[11px] text-slate-400 hover:text-slate-200 flex items-center gap-1.5 transition-colors focus:outline-none select-none">
+          <svg id="consoleChevron" class="w-3.5 h-3.5 transform transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+          </svg>
+          <span id="consoleToggleLabel">Pokaż szczegóły operacji (konsola)</span>
+        </button>
+      </div>
+
+      <!-- Domyślnie schowana konsola ze szczegółami skanowania -->
+      <div id="liveScraperConsole" class="hidden mt-1 bg-pkp-dark rounded-lg p-3 border border-pkp-border text-[11px] font-mono text-slate-300 max-h-36 overflow-y-auto space-y-1 scrollbar-thin">
         <div class="text-slate-500 italic">[Konsola oczekuje na uruchomienie zadania...]</div>
       </div>
     </div>
@@ -1229,8 +1252,69 @@ W6 m14/m16`;
       }
     }
 
+    // --- Collapsible Scraper Console Toggle ---
+    function toggleConsoleDetails() {
+      const consoleEl = document.getElementById('liveScraperConsole');
+      const chevron = document.getElementById('consoleChevron');
+      const label = document.getElementById('consoleToggleLabel');
+      if (!consoleEl) return;
+
+      const isHidden = consoleEl.classList.toggle('hidden');
+      if (chevron) {
+        if (isHidden) {
+          chevron.classList.remove('rotate-180');
+        } else {
+          chevron.classList.add('rotate-180');
+        }
+      }
+      if (label) {
+        label.innerText = isHidden ? 'Pokaż szczegóły operacji (konsola)' : 'Ukryj szczegóły operacji (konsola)';
+      }
+    }
+
+    // --- Maintenance Window Detector (23:45 - 00:30, and until 01:00 at end of month) ---
+    function checkMaintenanceWindow() {
+      const now = new Date();
+      const hours = now.getHours();
+      const minutes = now.getMinutes();
+      const day = now.getDate();
+      const month = now.getMonth();
+      const year = now.getFullYear();
+
+      // Check if today is the 1st of the month or last day of the month
+      const isFirstDay = (day === 1);
+      const isLastDay = new Date(year, month, day + 1).getDate() === 1;
+
+      let inMaintenance = false;
+      let title = 'Nocna przerwa serwisowa (23:45 – 00:30):';
+
+      if (isFirstDay && (hours === 0 || (hours === 1 && minutes === 0))) {
+        inMaintenance = true;
+        title = 'Nocna przerwa serwisowa na przełomie miesięcy (do godz. 01:00):';
+      } else if (isLastDay && hours === 23 && minutes >= 45) {
+        inMaintenance = true;
+        title = 'Nocna przerwa serwisowa na przełomie miesięcy (do godz. 01:00):';
+      } else if ((hours === 23 && minutes >= 45) || (hours === 0 && minutes <= 30)) {
+        inMaintenance = true;
+        title = 'Codzienna nocna przerwa serwisowa (23:45 – 00:30):';
+      }
+
+      const banner = document.getElementById('maintenanceAlert');
+      const titleEl = document.getElementById('maintenanceTitle');
+      if (banner) {
+        if (inMaintenance) {
+          if (titleEl) titleEl.innerText = title;
+          banner.classList.remove('hidden');
+        } else {
+          banner.classList.add('hidden');
+        }
+      }
+    }
+
     window.addEventListener('DOMContentLoaded', () => {
       initCalendar();
+      checkMaintenanceWindow();
+      setInterval(checkMaintenanceWindow, 30000);
     });
   </script>
 </body>

@@ -186,3 +186,39 @@ class TestDisconnectedEZTsPenalty:
         assert second_step.seat_uid in ("7_15", "6_30"), (
             f"Expected 7_15 or 6_30, got {second_step.seat_uid}"
         )
+
+
+class TestProfilesAndCarriageDiversity:
+    """Test 6 & 7: Optimization profiles affect penalties and Top-3 prefers distinct carriages."""
+
+    def test_top_k_prefers_distinct_carriages_for_full_route_seats(self):
+        station_names = ["A", "B", "C", "D"]
+        segment_durations = [30, 30, 30]
+        avail = {
+            "3_11": [1, 1, 1],
+            "3_12": [1, 1, 1],
+            "5_21": [1, 1, 1],
+            "7_31": [1, 1, 1],
+        }
+        meta = {
+            uid: SeatMeta(seat_uid=uid, carriage_no=int(uid.split("_")[0]), seat_no=uid.split("_")[1], compartment_no=1)
+            for uid in avail
+        }
+        strategies = solve_top_strategies(avail, meta, station_names, segment_durations, top_k=3)
+        assert len(strategies) == 3
+        chosen_carriages = [s.carriages_used[0] for s in strategies]
+        assert len(set(chosen_carriages)) == 3, f"Expected 3 distinct carriages in Top-3, got {chosen_carriages}"
+
+    def test_minimal_walking_profile_penalizes_far_carriage_heavily(self):
+        from backend.app.models.domain import OptimizationProfile
+        from backend.app.optimizer.solver import calculate_transfer_penalty
+
+        s_a = SeatMeta(seat_uid="3_11", carriage_no=3, seat_no="11", compartment_no=1)
+        s_b = SeatMeta(seat_uid="8_55", carriage_no=8, seat_no="55", compartment_no=5)
+
+        p_bal = calculate_transfer_penalty(s_a, s_b, False, OptimizerConfig(profile=OptimizationProfile.BALANCED))
+        p_walk = calculate_transfer_penalty(s_a, s_b, False, OptimizerConfig(profile=OptimizationProfile.MINIMAL_WALKING))
+        p_trans = calculate_transfer_penalty(s_a, s_b, False, OptimizerConfig(profile=OptimizationProfile.MINIMAL_TRANSFERS))
+
+        assert p_walk > p_bal * 2.5
+        assert p_trans != p_bal

@@ -35,12 +35,6 @@
       color: #f36f21 !important;
       font-weight: 700;
     }
-    .cell-custom {
-      box-shadow: inset 0 0 0 2px #a855f7, 0 0 12px rgba(168, 85, 247, 0.4);
-      background-color: #3b0764 !important;
-      color: #f3e8ff !important;
-      font-weight: 700;
-    }
     .scrollbar-thin::-webkit-scrollbar {
       height: 6px;
       width: 6px;
@@ -196,21 +190,32 @@
         </div>
       </div>
 
-      <!-- Pasek dolny: Opcje i Przycisk Akcji -->
+      <!-- Pasek dolny: Klasa, Profil i Przycisk Akcji -->
       <div class="flex flex-wrap items-center justify-between pt-3.5 border-t border-pkp-border gap-4">
-        <div class="flex items-center space-x-6">
-          <label class="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer select-none">
-            <input type="checkbox" id="prefWindow" class="rounded border-pkp-borderLight bg-pkp-dark text-pkp-orange focus:ring-pkp-orange h-4 w-4" />
-            <span>Preferuj miejsce przy oknie</span>
-          </label>
+        <div class="flex flex-wrap items-center gap-4 text-xs">
+          <div class="flex items-center gap-2">
+            <label for="ticketClass" class="text-slate-400 font-medium">Klasa:</label>
+            <select id="ticketClass" class="bg-pkp-dark border border-pkp-borderLight rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-pkp-orange transition-colors">
+              <option value="2" selected>Klasa 2</option>
+              <option value="1">Klasa 1</option>
+            </select>
+          </div>
+          <div class="flex items-center gap-2">
+            <label for="optProfile" class="text-slate-400 font-medium">Strategia:</label>
+            <select id="optProfile" class="bg-pkp-dark border border-pkp-borderLight rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-pkp-orange transition-colors">
+              <option value="BALANCED" selected>Zrównoważona</option>
+              <option value="MINIMAL_TRANSFERS">Najmniej przesiadek</option>
+              <option value="MINIMAL_WALKING">Najkrótsze spacery</option>
+            </select>
+          </div>
         </div>
 
         <div>
-          <button id="btnScanSeats" onclick="runLiveScan()" class="bg-pkp-orange hover:bg-pkp-orangeHover active:bg-pkp-orangeActive text-white font-bold text-xs px-6 py-2.5 rounded-lg shadow-lg shadow-orange-500/25 transition-all flex items-center gap-2">
+          <button id="btnScanSeats" onclick="runLiveScan()" class="bg-pkp-orange hover:bg-pkp-orangeHover active:bg-pkp-orangeActive disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-xs px-6 py-2.5 rounded-lg shadow-lg shadow-orange-500/25 transition-all flex items-center gap-2">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
-            <span>Wyszukaj i optymalizuj miejsca</span>
+            <span id="btnScanSeatsLabel">Wyszukaj i optymalizuj miejsca</span>
           </button>
         </div>
       </div>
@@ -245,11 +250,15 @@
         <textarea id="rawMapInput" rows="10" class="w-full bg-pkp-dark border border-pkp-borderLight rounded-lg p-3.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-pkp-orange leading-relaxed scrollbar-thin placeholder:text-slate-600" placeholder="Wklej zestawienie w formacie:&#10;Koluszki - Piotrków 14:45&#10;W5 m82&#10;W3 m84/m87/m91&#10;&#10;Piotrków - Radomsko 15:12&#10;W3 m91&#10;W5 m82/m88"></textarea>
       </div>
 
-      <div class="flex items-center justify-between pt-2 border-t border-pkp-border">
-        <label class="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer select-none">
-          <input type="checkbox" id="prefWindowText" class="rounded border-pkp-borderLight bg-pkp-dark text-pkp-orange focus:ring-pkp-orange h-4 w-4" />
-          <span>Preferuj miejsce przy oknie</span>
-        </label>
+      <div class="flex flex-wrap items-center justify-between pt-2 border-t border-pkp-border gap-4">
+        <div class="flex items-center gap-2 text-xs">
+          <label for="optProfileText" class="text-slate-400 font-medium">Strategia:</label>
+          <select id="optProfileText" class="bg-pkp-dark border border-pkp-borderLight rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-pkp-orange transition-colors">
+            <option value="BALANCED" selected>Zrównoważona</option>
+            <option value="MINIMAL_TRANSFERS">Najmniej przesiadek</option>
+            <option value="MINIMAL_WALKING">Najkrótsze spacery</option>
+          </select>
+        </div>
         <button onclick="runTextOptimization()" class="bg-pkp-orange hover:bg-pkp-orangeHover active:bg-pkp-orangeActive text-white font-bold text-xs px-6 py-2.5 rounded-lg shadow-lg shadow-orange-500/25 transition-all flex items-center gap-2">
           <span>Oblicz najlepszą trasę</span>
         </button>
@@ -337,7 +346,7 @@
           <h2 class="text-xs font-extrabold uppercase tracking-wider text-slate-200">
             Tablica Dostępności Miejsc w Wagonach
           </h2>
-          <p class="text-xs text-slate-400">Siatka foteli pogrupowana wagonami Klasy 2 ze statusem zajętości na każdym odcinku trasy</p>
+          <p class="text-xs text-slate-400">Siatka foteli pogrupowana wagonami wybranej klasy ze statusem zajętości na każdym odcinku trasy</p>
         </div>
 
         <div class="flex items-center gap-3 text-xs">
@@ -363,11 +372,7 @@
         </div>
         <div class="flex items-center gap-2">
           <span class="w-3.5 h-3.5 rounded bg-pkp-navy border-2 border-pkp-orange shadow-sm inline-block"></span>
-          <span>Wariant optymalny (rekomendowany)</span>
-        </div>
-        <div class="flex items-center gap-2">
-          <span class="w-3.5 h-3.5 rounded bg-purple-950 border-2 border-purple-400 shadow-sm inline-block"></span>
-          <span>Wybór ręczny</span>
+          <span>Wybrany wariant</span>
         </div>
       </div>
 
@@ -441,7 +446,7 @@
           stations.forEach(s => {
             const item = document.createElement('div');
             item.className = 'px-3 py-2 hover:bg-pkp-surfaceHover cursor-pointer flex justify-between items-center transition-colors text-slate-200';
-            item.innerHTML = `<span class="font-medium">${s.name}</span><span class="text-[10px] text-slate-400 font-mono">EVA: ${s.eva_code}</span>`;
+            item.innerHTML = `<span class="font-medium">${escapeHtml(s.name)}</span><span class="text-[10px] text-slate-400 font-mono">EVA: ${escapeHtml(s.eva_code)}</span>`;
             item.onclick = () => {
               document.getElementById(inputId).value = s.name;
               box.classList.add('hidden');
@@ -461,6 +466,12 @@
       renderTrainSelect();
     }
 
+    function timeToMinutesJS(t) {
+      if (!t || !t.includes(':')) return 0;
+      const parts = t.split(':');
+      return (parseInt(parts[0], 10) || 0) * 60 + (parseInt(parts[1], 10) || 0);
+    }
+
     function renderTrainSelect() {
       const select = document.getElementById('trainSelect');
       const directOnly = document.getElementById('directOnly') ? document.getElementById('directOnly').checked : true;
@@ -468,10 +479,14 @@
         ? (window.allFetchedTrains || []).filter(t => t.changes === 0)
         : (window.allFetchedTrains || []);
 
-      const countText = trains.length > 0 ? `znaleziono ${trains.length}` : 'brak połączeń';
-      select.innerHTML = `<option value="">-- Wybierz połączenie (${countText}) --</option>`;
+      const countText = trains.length > 0 ? `znaleziono ${trains.length}` : 'brak połączeń na ten dzień';
+      select.innerHTML = `<option value="">-- Wybierz połączenie (${escapeHtml(countText)}) --</option>`;
 
-      trains.forEach(t => {
+      const desiredTime = (document.getElementById('travelTime')?.value || '').trim();
+      const desiredMin = desiredTime ? timeToMinutesJS(desiredTime) : 0;
+      let bestOptionIdx = -1;
+
+      trains.forEach((t, i) => {
         const opt = document.createElement('option');
         opt.value = t.train_number;
         opt.dataset.dep = t.departure;
@@ -480,10 +495,15 @@
         const transferInfo = t.changes > 0 ? ` [Przesiadki: ${t.changes}]` : ' [Bezpośredni]';
         opt.textContent = `${t.departure} → ${t.arrival} | ${t.train_number} (${t.duration})${transferInfo}`;
         select.appendChild(opt);
+
+        // Pick first train departing at or after desired travelTime
+        if (bestOptionIdx === -1 && timeToMinutesJS(t.departure) >= desiredMin) {
+          bestOptionIdx = i + 1; // +1 because index 0 is placeholder option
+        }
       });
 
       if (trains.length > 0) {
-        select.selectedIndex = 1;
+        select.selectedIndex = bestOptionIdx !== -1 ? bestOptionIdx : 1;
         onTrainSelected();
       }
     }
@@ -492,18 +512,20 @@
       const fromSt = document.getElementById('fromStation').value.trim();
       const toSt = document.getElementById('toStation').value.trim();
       const date = document.getElementById('travelDate').value;
+      const depTime = document.getElementById('travelTime').value.trim() || '00:00';
       const select = document.getElementById('trainSelect');
       if (!fromSt || !toSt) return;
 
       select.innerHTML = '<option value="">Wyszukiwanie połączeń w rozkładzie PKP...</option>';
       try {
-        const url = `/api/v1/trains?from_station=${encodeURIComponent(fromSt)}&to_station=${encodeURIComponent(toSt)}&date=${encodeURIComponent(date)}&direct_only=false`;
+        const url = `/api/v1/trains?from_station=${encodeURIComponent(fromSt)}&to_station=${encodeURIComponent(toSt)}&date=${encodeURIComponent(date)}&time=${encodeURIComponent(depTime)}&direct_only=false`;
         const res = await fetch(url);
         if (!res.ok) throw new Error('Błąd API');
         const trains = await res.json();
-        window.allFetchedTrains = trains || [];
+        window.allFetchedTrains = Array.isArray(trains) ? trains : [];
         renderTrainSelect();
       } catch (e) {
+        window.allFetchedTrains = [];
         select.innerHTML = '<option value="">Nie udało się pobrać połączeń (wpisz numer ręcznie)</option>';
       }
     }
@@ -516,7 +538,6 @@
         if (opt.dataset && opt.dataset.dep) {
           document.getElementById('travelTime').value = opt.dataset.dep;
         }
-        // Automatyczne załadowanie trasy po wybraniu pociągu
         fetchTrainRoute(true);
       }
     }
@@ -562,7 +583,7 @@
           const badge = document.createElement('div');
           badge.className = 'px-2 py-1 bg-pkp-surface border border-pkp-borderLight rounded text-slate-200 flex items-center gap-1.5';
           const time = st.departure_time || st.arrival_time || '--:--';
-          badge.innerHTML = `<span class="text-pkp-orange font-bold">${idx + 1}.</span> <strong>${st.name}</strong> <span class="text-slate-400">(${time})</span>`;
+          badge.innerHTML = `<span class="text-pkp-orange font-bold">${idx + 1}.</span> <strong>${escapeHtml(st.name)}</strong> <span class="text-slate-400">(${escapeHtml(time)})</span>`;
           list.appendChild(badge);
         });
       } catch (err) {
@@ -582,8 +603,11 @@
       const date = document.getElementById('travelDate').value;
       const trainNo = document.getElementById('trainNo').value.trim();
       const depTime = document.getElementById('travelTime').value.trim();
-      const preferWindow = document.getElementById('prefWindow').checked;
+      const ticketClass = parseInt(document.getElementById('ticketClass')?.value || '2', 10);
+      const profile = document.getElementById('optProfile')?.value || 'BALANCED';
 
+      const btnScan = document.getElementById('btnScanSeats');
+      const btnLabel = document.getElementById('btnScanSeatsLabel');
       const progressSection = document.getElementById('progressSection');
       const progressBar = document.getElementById('progressBar');
       const progressMessage = document.getElementById('progressMessage');
@@ -597,23 +621,27 @@
         return;
       }
 
-      // Automatycznie pobierz i pokaż trasę pociągu
+      if (btnScan) btnScan.disabled = true;
+      if (btnLabel) btnLabel.innerText = 'Skanowanie w toku...';
+
+      currentTicketClass = ticketClass;
       fetchTrainRoute(true);
 
       errorAlert.classList.add('hidden');
       progressSection.classList.remove('hidden');
-      progressBar.style.width = '10%';
-      progressPercent.innerText = '10%';
+      progressBar.style.width = '5%';
+      progressPercent.innerText = '5%';
       progressMessage.innerText = 'Inicjalizacja silnika skanera...';
 
       if (liveConsole) {
         liveConsole.innerHTML = `
-          <div class="text-white font-bold">[START] Rozpoczynanie zadania optymalizacji dla pociągu ${escapeHtml(trainNo || 'wybranego')}</div>
+          <div class="text-white font-bold">[START] Rozpoczynanie zadania optymalizacji dla pociągu ${escapeHtml(trainNo || 'wybranego')} (Klasa ${ticketClass})</div>
           <div class="text-slate-400">Relacja: ${escapeHtml(fromSt)} &rarr; ${escapeHtml(toSt)} (Data: ${escapeHtml(date)} ${escapeHtml(depTime)})</div>
         `;
       }
 
       let statusInterval = null;
+      let maxSeenPct = 5;
 
       try {
         statusInterval = setInterval(async () => {
@@ -621,10 +649,10 @@
             const sRes = await fetch('/api/v1/scan-status');
             if (sRes.ok) {
               const sData = await sRes.json();
-              if (sData.progress > 0) {
-                const displayPct = Math.min(sData.progress, 99);
-                progressBar.style.width = displayPct + '%';
-                progressPercent.innerText = displayPct + '%';
+              if (sData.progress > maxSeenPct) {
+                maxSeenPct = Math.min(sData.progress, 99);
+                progressBar.style.width = maxSeenPct + '%';
+                progressPercent.innerText = maxSeenPct + '%';
               }
               if (sData.message) {
                 progressMessage.innerText = sData.message;
@@ -655,8 +683,9 @@
             date: date,
             time: depTime,
             train_number: trainNo,
+            ticket_class: ticketClass,
+            profile: profile,
             headless: true,
-            prefer_window: preferWindow,
           }),
         });
 
@@ -684,25 +713,29 @@
           <div class="font-semibold text-rose-200 mb-1">${escapeHtml(err.message)}</div>
           ${isSnapshotError ? `
             <div class="mt-2 text-xs bg-rose-950/80 p-2.5 rounded border border-rose-800 font-mono text-rose-200 flex flex-col gap-1">
-              <div class="font-bold text-white">Raport diagnostyczny strony PKP:</div>
+              <div class="font-bold text-white">Raport diagnostyczny:</div>
               <div class="text-pkp-orange font-bold">&bull; logs/debug_snapshots/error_85_percent.png</div>
               <div class="text-pkp-orange font-bold">&bull; logs/debug_snapshots/debug_85.html</div>
               <div class="text-slate-400 text-[10px] mt-1">Zrzut ekranu wskazuje dokładny komunikat błędu zwrócony przez formularz rezerwacyjny.</div>
             </div>
           ` : ''}
         `;
+      } finally {
+        if (btnScan) btnScan.disabled = false;
+        if (btnLabel) btnLabel.innerText = 'Wyszukaj i optymalizuj miejsca';
       }
     }
 
     async function runTextOptimization() {
       const rawText = document.getElementById('rawMapInput').value;
-      const preferWindow = document.getElementById('prefWindowText').checked;
+      const profile = document.getElementById('optProfileText')?.value || 'BALANCED';
       const progressSection = document.getElementById('progressSection');
       const progressBar = document.getElementById('progressBar');
       const progressMessage = document.getElementById('progressMessage');
       const progressPercent = document.getElementById('progressPercent');
       const errorAlert = document.getElementById('errorAlert');
 
+      currentTicketClass = 2;
       errorAlert.classList.add('hidden');
       progressSection.classList.remove('hidden');
       progressBar.style.width = '50%';
@@ -715,7 +748,7 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             raw_text: rawText,
-            prefer_window: preferWindow,
+            profile: profile,
           }),
         });
 
@@ -737,7 +770,6 @@
     function handleOptimizationSuccess(data) {
       currentAnalysisData = data;
       selectedStrategyIndex = 0;
-      customPath = {};
 
       const progressSection = document.getElementById('progressSection');
       const progressBar = document.getElementById('progressBar');
@@ -763,17 +795,24 @@
       const list = document.getElementById('purchaseInstructionsList');
       const countBadge = document.getElementById('ticketsCountBadge');
 
-      const instructions = data.purchase_instructions || [];
-      if (!instructions.length && data.strategies && data.strategies.length > 0) {
-        instructions.push(...(data.strategies[0].purchase_instructions || []));
-      }
+      const activeStrategy = (data.strategies && data.strategies[selectedStrategyIndex])
+        ? data.strategies[selectedStrategyIndex]
+        : (data.strategies && data.strategies[0] ? data.strategies[0] : null);
+
+      const instructions = activeStrategy && activeStrategy.purchase_instructions && activeStrategy.purchase_instructions.length
+        ? activeStrategy.purchase_instructions
+        : (data.purchase_instructions || []);
 
       if (!instructions.length) {
         section.classList.add('hidden');
         return;
       }
 
-      countBadge.innerText = `Liczba biletów: ${instructions.length}`;
+      const ticketsCount = activeStrategy && Array.isArray(activeStrategy.tickets_to_buy)
+        ? activeStrategy.tickets_to_buy.length
+        : instructions.length;
+
+      countBadge.innerText = `Liczba biletów: ${ticketsCount}`;
       list.innerHTML = '';
 
       instructions.forEach((instr, idx) => {
@@ -784,7 +823,7 @@
             ${idx + 1}
           </div>
           <div class="flex-1 leading-relaxed">
-            <span class="font-medium text-white">${instr}</span>
+            <span class="font-medium text-white">${escapeHtml(instr)}</span>
           </div>
         `;
         list.appendChild(item);
@@ -798,7 +837,7 @@
       const carriages = [...new Set(seatMatrix.map(s => s.carriage_no))].sort((a,b) => a-b);
       select.innerHTML = '<option value="ALL">Wszystkie wagony</option>';
       carriages.forEach(c => {
-        select.innerHTML += `<option value="${c}">Wagon ${c}</option>`;
+        select.innerHTML += `<option value="${escapeHtml(c)}">Wagon ${escapeHtml(c)}</option>`;
       });
     }
 
@@ -830,9 +869,9 @@
 
         let stepsHtml = '';
         strat.steps.forEach(step => {
-          const compStr = step.compartment ? ` (Przedział ${step.compartment})` : '';
+          const compStr = step.compartment ? ` (Przedział ${escapeHtml(step.compartment)})` : '';
           const altsStr = (step.alternative_seats_in_same_carriage && step.alternative_seats_in_same_carriage.length)
-            ? `<div class="text-[10px] text-blue-300 mt-0.5">↳ Inne wolne fotele w wagonie: ${step.alternative_seats_in_same_carriage.map(m => 'm' + m).join(', ')}</div>`
+            ? `<div class="text-[10px] text-blue-300 mt-0.5">↳ Inne wolne fotele w wagonie: ${step.alternative_seats_in_same_carriage.map(m => 'm' + escapeHtml(m)).join(', ')}</div>`
             : '';
 
           if (step.is_standing) {
@@ -842,18 +881,19 @@
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
                 </svg>
                 <div>
-                  <strong>${step.from_station_name} → ${step.to_station_name}</strong>: KORYTARZ (${step.duration_min} min)
+                  <strong>${escapeHtml(step.from_station_name)} → ${escapeHtml(step.to_station_name)}</strong>: KORYTARZ (${escapeHtml(step.duration_min)} min)
                 </div>
               </div>`;
           } else {
+            const transferText = step.transfer_instruction || step.transfer_Instruction || '';
             stepsHtml += `
               <div class="text-xs flex items-center gap-2 text-emerald-300 bg-emerald-950/30 p-2 rounded border border-emerald-900/50 my-1">
                 <svg class="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12v7m14-7v7m-7-7v7" />
                 </svg>
                 <div class="flex-1">
-                  <strong>${step.from_station_name} → ${step.to_station_name}</strong>: Wagon ${step.carriage_no}, m. ${step.seat_no}${compStr} (${step.duration_min} min)
-                  ${step.transfer_Instruction ? `<div class="text-[10px] text-amber-300 italic">↳ ${step.transfer_Instruction}</div>` : ''}
+                  <strong>${escapeHtml(step.from_station_name)} → ${escapeHtml(step.to_station_name)}</strong>: Wagon ${escapeHtml(step.carriage_no)}, m. ${escapeHtml(step.seat_no)}${compStr} (${escapeHtml(step.duration_min)} min)
+                  ${transferText ? `<div class="text-[10px] text-amber-300 italic">↳ ${escapeHtml(transferText)}</div>` : ''}
                   ${altsStr}
                 </div>
               </div>`;
@@ -875,14 +915,14 @@
         card.innerHTML = `
           <div class="flex items-center justify-between mb-2">
             <span class="text-xs font-bold px-2 py-0.5 rounded ${rankBadgeClass}">
-              #${strat.rank} ${rankLabel}
+              #${escapeHtml(strat.rank)} ${rankLabel}
             </span>
-            <span class="text-xs text-slate-400 font-mono">${strat.total_score} pkt</span>
+            <span class="text-xs text-slate-400 font-mono">${escapeHtml(strat.total_score)} pkt</span>
           </div>
-          <h3 class="text-sm font-bold text-white mb-1">${strat.title}</h3>
+          <h3 class="text-sm font-bold text-white mb-1">${escapeHtml(strat.title)}</h3>
           <div class="text-xs text-slate-400 flex items-center gap-3 mb-3">
-            <span>Przesiadki: <strong class="text-white">${strat.transfers_count}</strong></span>
-            <span>Stanie: <strong class="text-white">${strat.total_standing_min} min</strong></span>
+            <span>Przesiadki: <strong class="text-white">${escapeHtml(strat.transfers_count)}</strong></span>
+            <span>Stanie: <strong class="text-white">${escapeHtml(strat.total_standing_min)} min</strong></span>
           </div>
           <div class="space-y-1">
             ${stepsHtml}
@@ -914,7 +954,7 @@
         });
       }
 
-      let filteredSeats = seat_matrix;
+      let filteredSeats = [...seat_matrix];
       if (carriageFilter !== 'ALL') {
         filteredSeats = filteredSeats.filter(s => String(s.carriage_no) === carriageFilter);
       }
@@ -930,8 +970,10 @@
       let headerHtml = '<thead><tr class="bg-pkp-navy text-slate-200 border-b border-pkp-border">';
       headerHtml += '<th class="p-2.5 border border-pkp-border text-left font-bold text-xs">Miejsce / Wagon (Przedział)</th>';
       segments.forEach(seg => {
-        const depTimeStr = seg.departure_time ? ` (${seg.departure_time})` : '';
-        headerHtml += `<th class="p-2.5 border border-pkp-border font-bold text-xs">${seg.from_station} → ${seg.to_station}<div class="text-[10px] text-pkp-orange font-mono">${depTimeStr} &bull; ${seg.duration_min} min</div></th>`;
+        const metaParts = [];
+        if (seg.departure_time) metaParts.push(escapeHtml(seg.departure_time));
+        metaParts.push(`${escapeHtml(seg.duration_min)} min`);
+        headerHtml += `<th class="p-2.5 border border-pkp-border font-bold text-xs">${escapeHtml(seg.from_station)} → ${escapeHtml(seg.to_station)}<div class="text-[10px] text-pkp-orange font-mono">${metaParts.join(' &bull; ')}</div></th>`;
       });
       headerHtml += '</tr></thead>';
 
@@ -943,7 +985,7 @@
           lastCarriage = seat.carriage_no;
           bodyHtml += `<tr class="bg-pkp-navy/60 text-white font-bold text-left border-y border-pkp-border">
             <td colspan="${segments.length + 1}" class="px-3 py-1.5 text-xs tracking-wider">
-              WAGON ${seat.carriage_no} &bull; Klasa 2
+              WAGON ${escapeHtml(seat.carriage_no)} &bull; Klasa ${escapeHtml(currentTicketClass)}
             </td>
           </tr>`;
         }
@@ -954,7 +996,7 @@
         bodyHtml += `<tr class="hover:bg-pkp-surfaceHover/50 transition-colors">`;
         bodyHtml += `<td class="p-2.5 border border-pkp-border font-medium text-left bg-pkp-surface/90 text-slate-200">
           <div class="flex items-center justify-between">
-            <span>W${seat.carriage_no} / Miejsce <strong>${seat.seat_no}</strong></span>
+            <span>W${escapeHtml(seat.carriage_no)} / Miejsce <strong>${escapeHtml(seat.seat_no)}</strong></span>
             <span class="text-[10px] text-slate-400 font-mono">Przedział ${compartment}</span>
           </div>
         </td>`;
@@ -1013,7 +1055,7 @@ W6 m14/m16`;
 
     let currentAnalysisData = null;
     let selectedStrategyIndex = 0;
-    let customPath = {};
+    let currentTicketClass = 2;
     let filterOnlyRecommended = false;
 
     // --- Interactive Polish Calendar Picker with manual typing support ---
@@ -1130,7 +1172,21 @@ W6 m14/m16`;
 
       if (tDate) tDate.value = iso;
       if (tDisp) tDisp.value = display;
-      if (tTime) tTime.value = `${hh}:${mm}`;
+      if (tTime) {
+        tTime.value = `${hh}:${mm}`;
+        // Clamp past time if user enters an earlier hour on today's date
+        tTime.addEventListener('blur', () => {
+          const curDateVal = document.getElementById('travelDate')?.value;
+          const nowCheck = new Date();
+          const todayIso = `${nowCheck.getFullYear()}-${String(nowCheck.getMonth() + 1).padStart(2, '0')}-${String(nowCheck.getDate()).padStart(2, '0')}`;
+          if (curDateVal === todayIso && tTime.value) {
+            const nowMin = nowCheck.getHours() * 60 + nowCheck.getMinutes();
+            if (timeToMinutesJS(tTime.value) < nowMin) {
+              tTime.value = `${String(nowCheck.getHours()).padStart(2, '0')}:${String(nowCheck.getMinutes()).padStart(2, '0')}`;
+            }
+          }
+        });
+      }
     }
 
     function parseAndSetDateFromInput(raw) {

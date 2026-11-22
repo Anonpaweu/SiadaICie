@@ -4,7 +4,6 @@
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688.svg)](https://fastapi.tiangolo.com)
 [![Playwright](https://img.shields.io/badge/Playwright-Async-45ba4b.svg)](https://playwright.dev/python/)
-[![Tests: 61 passed](https://img.shields.io/badge/tests-61%20passed-brightgreen.svg)]()
 [![License: MIT](https://img.shields.io/badge/license-MIT-orange.svg)]()
 
 ---
@@ -26,15 +25,15 @@ System kolejowy przy próbie zakupu biletu na **całą relację** mówi „nie m
 ## Co potrafi aplikacja?
 
 - **Błyskawiczne skanowanie na żywo (Playwright + in-page V8 JS):**
-  Zamiast powolnego klikania, scraper wyciąga mapę wolnych foteli bezpośrednio w silniku JavaScript V8 przeglądarki. Parsowanie całego wagonu trwa **mniej niż 5 milisekund**, a wieloetapowa trasa przez pół kraju analizowana jest w około 40 sekund.
+  Zamiast powolnego klikania, scraper wyciąga mapę wolnych foteli bezpośrednio w silniku JavaScript V8 przeglądarki. Parsowanie całego wagonu trwa **mniej niż 5 milisekund**, a wieloetapowa trasa przez pół kraju analizowana jest równolegle w około 40 sekund. Obsługuje wagony **Klasy 2** oraz **Klasy 1**.
 - **Matematyczny silnik optymalizacji (DAG + Programowanie Dynamiczne):**
   Algorytm nie rzuca losowych foteli. Buduje skierowany graf acykliczny (DAG) i optymalizuje podróż według realnej wygody:
   - **Maksymalny bonus** za siedzenie na jednym fotelu przez całą trasę (zero przesiadek).
   - **Minimalny koszt spaceru:** gdy przesiadka jest konieczna, algorytm szuka wolnego miejsca w **tym samym przedziale** lub **tym samym wagonie**, żebyś nie musiał biegać z bagażami przez 8 wagonów.
+  - **3 profile optymalizacji do wyboru:** *Zrównoważona*, *Najmniej przesiadek* oraz *Najkrótsze spacery*.
   - Wykrywanie rozłącznych jednostek EZT (np. Dart / Flirt) – algorytm wie, kiedy przejście między członami jest fizycznie niemożliwe.
-  - Opcjonalny filtr preferencji: priorytet dla miejsc przy oknie.
 - **Gotowy „Plan Zakupu Biletów”:**
-  Aplikacja wyświetla jasną instrukcję krok po kroku:
+  Aplikacja wyświetla jasną instrukcję krok po kroku dla wybranego wariantu:
   *„Bilet 1: Warszawa -> Częstochowa (Wagon 5, Miejsce 82) • Bilet 2: Częstochowa -> Wrocław (Wagon 5, Miejsce 88) — przesiadka na sąsiedni fotel w tym samym wagonie”*.
 - **Wizualna tablica dostępności (Wykres Gantta):**
   Przejrzysta siatka wszystkich foteli i wagonów z podziałem na przedziały oraz odcinki trasy. Zobacz na własne oczy, gdzie były wolne miejsca i jak przebiega wybrany wariant.
@@ -51,15 +50,15 @@ System kolejowy przy próbie zakupu biletu na **całą relację** mówi „nie m
 IccBagno/
 ├── backend/
 │   ├── app/
-│   │   ├── engine/          # Parsowanie dostępności i modele topologii pociągu
+│   │   ├── engine/          # Parsowanie dostępności, profile wag i topologia pociągu
 │   │   ├── optimizer/       # Solwer grafowy DAG + Programowanie Dynamiczne
 │   │   ├── scraper/         # Playwright scraper (silnik V8 JS, radar błędów, cache)
-│   │   ├── db/              # Baza SQLite ze stacjami i rozkładami PKP
+│   │   ├── db/              # Baza SQLite (auto-inicjalizacja i seed stacji przy starcie)
 │   │   ├── models/          # Schematy Pydantic i modele domenowe
 │   │   └── main.py          # Aplikacja FastAPI (REST API + serwowanie UI)
 │   ├── static/
 │   │   └── index.html       # Nowoczesny, responsywny interfejs (Tailwind CSS, Vanilla JS)
-│   ├── tests/               # 61 testów jednostkowych i integracyjnych (pytest)
+│   ├── tests/               # Zestaw testów jednostkowych i integracyjnych (pytest)
 │   └── requirements.txt     # Zależności Pythona
 ├── start_server.bat         # Launcher serwera dla systemu Windows
 └── README.md
@@ -109,19 +108,18 @@ playwright install chromium
   python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
   ```
 
+Przy pierwszym uruchomieniu serwer automatycznie utworzy bazę SQLite i pobierze słownik oficjalnych stacji.
 Otwórz w przeglądarce: **[http://localhost:8000](http://localhost:8000)**.
 
 ---
 
 ## Uruchamianie testów
 
-Wszystkie kluczowe moduły (algorytm optymalizatora, topologia wagonów, parsowanie DOM, odporność na błędy serwera, cache SQLite) są w 100% przetestowane:
+Wszystkie kluczowe moduły (algorytm optymalizatora, profile, topologia wagonów, parsowanie DOM, odporność na błędy serwera, cache SQLite) są pokryte testami:
 
 ```bash
 pytest backend/tests/ -v
 ```
-
-Wynik: **61 passed**.
 
 ---
 
@@ -129,11 +127,11 @@ Wynik: **61 passed**.
 
 1. **Wpisz stację odjazdu i docelową** – np. *Koluszki* do *Opole Główne* (inteligentna wyszukiwarka podpowie oficjalne nazwy węzłów).
 2. **Wybierz datę i godzinę** – system domyślnie podpowiada aktualny czas z Twojego komputera i blokuje omyłkowy wybór dat z przeszłości.
-3. **Kliknij „Szukaj połączeń”** i wybierz pociąg z listy (np. 1646).
-4. Kliknij **„Wyszukaj i optymalizuj miejsca”**:
+3. **Kliknij „Szukaj połączeń”** – lista automatycznie wybierze najbliższy pociąg po wskazanej godzinie (np. 1646).
+4. **Wybierz klasę (2 lub 1) oraz strategię optymalizacji** i kliknij **„Wyszukaj i optymalizuj miejsca”**:
    - Aplikacja natychmiast pokaże listę stacji pośrednich z godzinami.
-   - Skaner sprawdzi wagony Klasy 2 na każdym etapie podróży.
-   - Na koniec otrzymasz 3 najlepsze strategie podróży, gotowy plan zakupu biletów oraz kolorową mapę zajętości miejsc.
+   - Skaner sprawdzi wagony wybranej klasy na każdym etapie podróży.
+   - Na koniec otrzymasz 3 zróżnicowane warianty podróży, gotowy plan zakupu biletów oraz kolorową mapę zajętości miejsc.
 5. Idziesz na oficjalną stronę przewoźnika lub do kasy biletowej, kupujesz bilety według wygenerowanej listy i podróżujesz na siedząco.
 
 ---

@@ -11,12 +11,12 @@ import logging
 import sys
 from datetime import date
 
-from backend.app.scraper.ebilet_seat_scraper import LiveTrainScanner
 from backend.app.engine.availability_parser import (
-    format_availability_map,
     availability_map_to_matrix,
+    format_availability_map,
 )
-from backend.app.optimizer.solver import solve_top_strategies, OptimizerConfig
+from backend.app.optimizer.solver import OptimizerConfig, parse_profile, solve_top_strategies
+from backend.app.scraper.ebilet_seat_scraper import LiveTrainScanner
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("cli_live_test")
@@ -28,19 +28,17 @@ async def main_async(args: argparse.Namespace):
     travel_date = args.date.strip()
     train_no = args.train.strip()
     dep_time = args.dep_time.strip() if args.dep_time else None
-    headless = not args.show_browser
 
     print("\n" + "=" * 60)
-    print("  PKP Intercity Live Seat & Transfer Optimizer")
+    print("  PKP Seat Optimizer - Live Scanner")
     print(f"  Trasa: {from_stn} -> {to_stn}")
-    print(f"  Data:  {travel_date} | Pociąg: {train_no} | Godz: {dep_time or 'wg rozkładu'}")
-    print(f"  Podgląd przeglądarki: {'WŁĄCZONY (Widoczne okno)' if not headless else 'WYŁĄCZONY (Tło)'}")
+    print(f"  Data:  {travel_date} | Pociąg: {train_no} | Klasa: {args.ticket_class} | Godz: {dep_time or 'wg rozkładu'}")
     print("=" * 60 + "\n")
 
     def on_progress(msg: str):
         print(f"[SCAN] {msg}")
 
-    scanner = LiveTrainScanner(headless=headless, on_progress=on_progress)
+    scanner = LiveTrainScanner(headless=True, on_progress=on_progress)
 
     try:
         avail_map = await scanner.scan_full_train(
@@ -49,6 +47,7 @@ async def main_async(args: argparse.Namespace):
             travel_date=travel_date,
             train_number=train_no,
             departure_time=dep_time,
+            ticket_class=args.ticket_class,
         )
     except Exception as e:
         print(f"\n[BŁĄD SKANERA] Nie udało się przeprowadzić pełnego skanowania: {e}")
@@ -66,7 +65,7 @@ async def main_async(args: argparse.Namespace):
         print("[INFO] Brak dostępnych miejsc do wyznaczenia ścieżki.")
         return 0
 
-    config = OptimizerConfig(prefer_window=args.prefer_window)
+    config = OptimizerConfig(profile=parse_profile(args.profile))
     strategies = solve_top_strategies(matrix, meta, station_names, segment_durations, config=config)
 
     if not strategies:
@@ -83,8 +82,8 @@ async def main_async(args: argparse.Namespace):
         if step.compartment:
             seat_desc += f" (Przedział {step.compartment})"
         print(f"  * {step.from_station_name} -> {step.to_station_name} ({step.duration_min} min): {seat_desc}")
-        if step.transfer_Instruction:
-            print(f"    -> {step.transfer_Instruction}")
+        if step.transfer_instruction:
+            print(f"    -> {step.transfer_instruction}")
 
     if best.purchase_instructions:
         print("\nPLAN ZAKUPU BILETÓW:")
@@ -95,14 +94,19 @@ async def main_async(args: argparse.Namespace):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Live test for PKP seat scraper and optimizer.")
+    parser = argparse.ArgumentParser(description="Live test for PKP Seat Optimizer.")
     parser.add_argument("--from", dest="from_station", default="Koluszki", help="Stacja początkowa")
     parser.add_argument("--to", dest="to_station", default="Opole Główne", help="Stacja końcowa")
     parser.add_argument("--date", default=date.today().strftime("%Y-%m-%d"), help="Data podróży YYYY-MM-DD")
-    parser.add_argument("--train", default="IC 16104", help="Numer pociągu (np. IC 16104)")
+    parser.add_argument("--train", default="IC 16104", help="Numer pociągu (np. 16104)")
     parser.add_argument("--dep-time", default=None, help="Godzina odjazdu HH:MM")
-    parser.add_argument("--show-browser", action="store_true", help="Otwórz widoczne okno przeglądarki Chromium")
-    parser.add_argument("--prefer-window", action="store_true", help="Preferuj miejsca przy oknie")
+    parser.add_argument("--class", dest="ticket_class", type=int, choices=[1, 2], default=2, help="Klasa wagonu (1 lub 2)")
+    parser.add_argument(
+        "--profile",
+        choices=["BALANCED", "MINIMAL_WALKING", "MINIMAL_TRANSFERS"],
+        default="BALANCED",
+        help="Profil optymalizacji",
+    )
 
     args = parser.parse_args()
     code = asyncio.run(main_async(args))

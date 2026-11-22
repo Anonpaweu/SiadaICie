@@ -1,6 +1,6 @@
 """Pydantic schemas for API request/response models."""
 from typing import List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class AnalyzeRequest(BaseModel):
@@ -10,7 +10,8 @@ class AnalyzeRequest(BaseModel):
     train_no: str = "IC 3520"
     dep_time: Optional[str] = None
     mode: str = "mock_classic"  # "mock_classic", "mock_overlap", "mock_standing", "live"
-    prefer_window: bool = False
+    profile: str = "BALANCED"  # "BALANCED", "MINIMAL_WALKING", "MINIMAL_TRANSFERS"
+    ticket_class: int = Field(default=2, ge=1, le=2)
     headless: Optional[bool] = None
     show_browser: Optional[bool] = None
 
@@ -25,7 +26,7 @@ class StepResponse(BaseModel):
     to_station_name: str
     duration_min: int
     is_standing: bool = False
-    transfer_Instruction: Optional[str] = None
+    transfer_instruction: Optional[str] = None
     compartment: Optional[int] = None
     alternative_seats_in_same_carriage: List[str] = []
 
@@ -69,7 +70,7 @@ OptimizationResponse = AnalyzeResponse
 
 class ManualMapRequest(BaseModel):
     raw_text: str
-    prefer_window: bool = False
+    profile: str = "BALANCED"
 
 
 class LiveOptimizeRequest(BaseModel):
@@ -78,9 +79,10 @@ class LiveOptimizeRequest(BaseModel):
     date: str
     time: Optional[str] = "12:00"
     train_number: Optional[str] = "IC 3520"
+    ticket_class: int = Field(default=2, ge=1, le=2)
+    profile: str = "BALANCED"
     headless: bool = True
     show_browser: Optional[bool] = None
-    prefer_window: bool = False
 
 
 class TrainStopItem(BaseModel):

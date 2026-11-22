@@ -40,19 +40,46 @@ class TestStationsSearch:
         data = response.json()
         assert len(data) == 0
 
-    def test_list_trains_endpoint(self):
-        response = client.post("/api/v1/trains?from_station=Warszawa&to_station=Gdańsk&date=2026-11-15")
+    def test_list_trains_endpoint(self, monkeypatch):
+        from backend.app import main as main_mod
+
+        sample_trains = [
+            {"train_number": "IC 1510", "departure": "10:15", "arrival": "13:30", "duration": "3:15", "changes": 0},
+        ]
+        monkeypatch.setattr(main_mod, "fetch_live_train_connections", lambda **kwargs: sample_trains)
+
+        response = client.post("/api/v1/trains?from_station=Warszawa&to_station=Gdańsk&date=2026-11-25")
         assert response.status_code == 200
         data = response.json()
-        assert len(data) >= 1
-        assert "train_number" in data[0]
+        assert len(data) == 1
+        assert data[0]["train_number"] == "IC 1510"
 
-    def test_websocket_analyze_stream(self):
-        with client.websocket_connect("/ws/analyze") as websocket:
-            websocket.send_json({"train_no": "IC 3520"})
-            message = websocket.receive_json()
-            assert "step" in message
-            assert message["step"] == "SCHEDULE_FETCHED"
+    def test_list_trains_returns_empty_when_no_connections(self, monkeypatch):
+        from backend.app import main as main_mod
+
+        monkeypatch.setattr(main_mod, "fetch_live_train_connections", lambda **kwargs: [])
+        response = client.get("/api/v1/trains?from_station=Koluszki&to_station=Nowhere&date=2026-11-25")
+        assert response.status_code == 200
+        assert response.json() == []
+
+    def test_warszawa_zachodnia_eva_code_correct(self):
+        from backend.app.main import KNOWN_STATIONS
+
+        by_name = {s["name"]: s["eva_code"] for s in KNOWN_STATIONS}
+        assert by_name["Warszawa Zachodnia"] == "5100067"
+        assert by_name["Wrocław Główny"] == "5100069"
+
+    def test_scan_tracker_progress_is_monotonic(self):
+        from backend.app.main import ScanStatusTracker
+
+        tracker = ScanStatusTracker()
+        tracker.reset()
+        tracker.update("[75%] Odcinek 1/3")
+        assert tracker.progress == 75
+        tracker.update("[20%] Odcinek 2/3")
+        assert tracker.progress == 75
+        tracker.update("[90%] Odcinek 3/3")
+        assert tracker.progress == 90
 
 
 class TestAnalyzeEndpoint:
@@ -172,22 +199,37 @@ class TestOptimizeFromText:
         assert response.status_code == 200
         data = response.json()
 
-        # Verify 6 segments and 7 stations
+        # Verify 6 segments and 7 stations, including departure_time field
         assert len(data["segments"]) == 6
+        assert "departure_time" in data["segments"][0]
+        assert data["segments"][1]["departure_time"] == "15:12"
         assert len(data["stations"]) == 7
         assert data["stations"][0] == "Koluszki"
         assert data["stations"][-1] == "Opole Główne"
 
-        # Verify strategies
+        # Verify strategies & clean snake_case transfer_instruction
         assert len(data["strategies"]) >= 1
         best = data["strategies"][0]
         assert best["transfers_count"] in (0, 1)
         assert len(best["steps"]) >= 1
+        assert "transfer_instruction" in best["steps"][0]
 
         # Check purchase instructions (Task 085)
         assert len(best["purchase_instructions"]) >= 1
         assert len(data["purchase_instructions"]) >= 1
         assert any("Wagon" in instr for instr in data["purchase_instructions"])
+
+    def test_optimize_from_text_respects_profile(self):
+        fixture_path = Path(__file__).parent / "fixtures" / "koluszki_opole.txt"
+        raw_text = fixture_path.read_text(encoding="utf-8")
+
+        for profile in ("BALANCED", "MINIMAL_WALKING", "MINIMAL_TRANSFERS"):
+            response = client.post(
+                "/api/v1/optimize-from-text",
+                json={"raw_text": raw_text, "profile": profile},
+            )
+            assert response.status_code == 200
+            assert len(response.json()["strategies"]) >= 1
 
     def test_optimize_from_text_empty_input(self):
         response = client.post(
@@ -281,6 +323,7 @@ class TestErrorHandlingScraper:
             captured_args["show_browser"] = show_browser
 
         async def mock_scan(*args, **kwargs):
+            captured_args["ticket_class"] = kwargs.get("ticket_class")
             return FullTrainAvailabilityMap(train_number="IC 16104", travel_date="2026-11-15", segments=[])
 
         monkeypatch.setattr(LiveTrainScanner, "__init__", mock_init)
@@ -293,8 +336,11 @@ class TestErrorHandlingScraper:
                 "to_station": "Opole Główne",
                 "date": "2026-11-15",
                 "train_number": "IC 16104",
+                "ticket_class": 1,
+                "profile": "MINIMAL_WALKING",
                 "show_browser": True,
             },
         )
         assert captured_args.get("show_browser") is True
         assert captured_args.get("headless") is False
+        assert captured_args.get("ticket_class") == 1

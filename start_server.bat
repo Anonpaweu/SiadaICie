@@ -1,8 +1,8 @@
 @echo off
-title IccBagno Server
+title PKP Seat Optimizer Server
 cd /d "%~dp0"
 echo ========================================================
-echo   IccBagno - System Optymalizacji Miejsc PKP Intercity
+echo   PKP Seat Optimizer - System Optymalizacji Miejsc
 echo   Uruchamianie serwera na http://127.0.0.1:8000 ...
 echo ========================================================
 set PYTHONPATH=.

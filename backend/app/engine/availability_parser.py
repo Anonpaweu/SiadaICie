@@ -256,16 +256,14 @@ def availability_map_to_matrix(
         s_int = int(s_no) if s_no.isdigit() else 1
         c_int = int(c_no) if c_no.isdigit() else 1
 
-        # PKP UIC seat numbering: compartment is first digit(s), position
+        # PKP UIC seat numbering: compartment is first digit(s)
         compartment = s_int // 10 if s_int >= 10 else 1
-        pos = "WINDOW" if s_no[-1] in ("1", "5", "2", "6") else "AISLE"
 
         seats_meta[seat_uid] = SeatMeta(
             seat_uid=seat_uid,
             carriage_no=c_int,
             seat_no=s_no,
             compartment_no=compartment,
-            position=pos,
         )
 
         # 2. Vector: 1 if seat is present in segment's carriage free list, else 0

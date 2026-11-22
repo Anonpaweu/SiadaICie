@@ -259,8 +259,22 @@ class TestEbiletV3RealDOM:
 
     def test_speedup_js_scripts_syntax(self):
         """Verifies that SVG_SEATS_EXTRACTOR_JS and CAROUSEL_METADATA_JS are valid non-empty scripts."""
-        from backend.app.scraper.ebilet_seat_scraper import SVG_SEATS_EXTRACTOR_JS, CAROUSEL_METADATA_JS
+        from backend.app.scraper.ebilet_seat_scraper import SVG_SEATS_EXTRACTOR_JS, CAROUSEL_METADATA_JS, sanitize_filename
         assert "wolne" in SVG_SEATS_EXTRACTOR_JS
         assert "klasa 1" in SVG_SEATS_EXTRACTOR_JS
+        assert "klasa 2" in SVG_SEATS_EXTRACTOR_JS
         assert "Carriage_carriageSlide" in CAROUSEL_METADATA_JS
         assert "swiper-slide-active" in CAROUSEL_METADATA_JS
+        assert sanitize_filename("Bielsko-Biała Gł. / IC 1646") == "Bielsko-Bia_a_G_._IC_1646"
+
+    def test_json_recursive_extractor_class_1(self, scraper):
+        """Verifies _extract_seats_from_json_list supports ticket_class=1."""
+        payload = [{
+            "carriages": [
+                {"number": "1", "class": "1", "seats": [{"number": "11", "status": "FREE"}]},
+                {"number": "3", "class": "2", "seats": [{"number": "22", "status": "FREE"}]},
+            ]
+        }]
+        res_c1 = scraper._extract_seats_from_json_list(payload, ticket_class=1)
+        assert "1" in res_c1 and res_c1["1"] == ["11"]
+        assert "3" not in res_c1

@@ -24,7 +24,7 @@ System kolejowy przy próbie zakupu biletu na **całą relację** mówi „nie m
 
 ## Co potrafi aplikacja?
 
-- **Błyskawiczne skanowanie na żywo (Playwright + in-page V8 JS):**
+- **Szybkie skanowanie na żywo (Playwright + in-page V8 JS):**
   Zamiast powolnego klikania, scraper wyciąga mapę wolnych foteli bezpośrednio w silniku JavaScript V8 przeglądarki. Parsowanie całego wagonu trwa **mniej niż 5 milisekund**, a wieloetapowa trasa przez pół kraju analizowana jest równolegle w około 40 sekund. Obsługuje wagony **Klasy 2** oraz **Klasy 1**.
 - **Matematyczny silnik optymalizacji (DAG + Programowanie Dynamiczne):**
   Algorytm nie rzuca losowych foteli. Buduje skierowany graf acykliczny (DAG) i optymalizuje podróż według realnej wygody:
@@ -57,7 +57,7 @@ IccBagno/
 │   │   ├── models/          # Schematy Pydantic i modele domenowe
 │   │   └── main.py          # Aplikacja FastAPI (REST API + serwowanie UI)
 │   ├── static/
-│   │   └── index.html       # Nowoczesny, responsywny interfejs (Tailwind CSS, Vanilla JS)
+│   │   └── index.html       # Interfejs (Tailwind CSS, Vanilla JS)
 │   ├── tests/               # Zestaw testów jednostkowych i integracyjnych (pytest)
 │   └── requirements.txt     # Zależności Pythona
 ├── start_server.bat         # Launcher serwera dla systemu Windows

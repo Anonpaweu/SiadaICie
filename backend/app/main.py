@@ -11,13 +11,15 @@ Endpoints:
 - GET  /api/v1/train-route — intermediate stops for a train
 - GET/POST /api/v1/trains — live train connections for a route and date
 """
+import asyncio
 import logging
 import re
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -32,6 +34,7 @@ from backend.app.engine.availability_parser import (
 from backend.app.models.schemas import (
     AnalyzeRequest,
     AnalyzeResponse,
+    CancelScanRequest,
     HealthResponse,
     LiveOptimizeRequest,
     ManualMapRequest,
@@ -44,6 +47,7 @@ from backend.app.models.schemas import (
 )
 from backend.app.optimizer.solver import OptimizerConfig, SeatMeta, parse_profile, solve_top_strategies
 from backend.app.scraper.ebilet_seat_scraper import LiveTrainScanner
+from backend.app.scraper.grm_parser import build_eic_search_url
 from backend.app.scraper.ic_client import GraphicReservationUnavailableError, PKPIntercityScraper
 from backend.app.scraper.mock_provider import (
     scenario_classic_b_c_block,
@@ -51,7 +55,11 @@ from backend.app.scraper.mock_provider import (
     scenario_standing_corridor_fallback,
 )
 from backend.app.scraper.route_resolver import build_route_segments, filter_and_merge_stops
-from backend.app.scraper.schedule_scraper import fetch_live_train_connections, resolve_real_route
+from backend.app.scraper.schedule_scraper import (
+    fetch_live_train_connections,
+    get_station_info,
+    resolve_real_route,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -114,14 +122,20 @@ class ScanStatusTracker:
         self.message: str = ""
         self.logs: List[str] = []
         self.is_running: bool = False
+        self.cancelled: bool = False
         self.last_error: Optional[str] = None
+        self.cancel_event: asyncio.Event = asyncio.Event()
+        self.task: Optional[asyncio.Task] = None
 
     def reset(self):
         self.progress = 0
         self.message = "Inicjalizacja skanowania..."
         self.logs = []
         self.is_running = True
+        self.cancelled = False
         self.last_error = None
+        self.cancel_event = asyncio.Event()
+        self.task = None
 
     def update(self, msg: str):
         self.logs.append(msg)
@@ -137,13 +151,61 @@ class ScanStatusTracker:
         self.message = "Zakończono pomyślnie!"
         self.is_running = False
 
+    def cancel(self):
+        self.cancelled = True
+        self.is_running = False
+        self.message = "Skanowanie anulowane przez użytkownika."
+        self.logs.append("[ANULOWANO] Przerwano skanowanie na żądanie użytkownika.")
+        self.cancel_event.set()
+        if self.task and not self.task.done():
+            self.task.cancel()
+
     def error(self, err: str):
         self.is_running = False
         self.last_error = err
         self.logs.append(f"[BŁĄD] {err}")
 
 
+class ScanJobManager:
+    """Manages per-scan trackers keyed by scan_id while retaining backwards-compatible latest lookup."""
+
+    def __init__(self, max_jobs: int = 50):
+        self.jobs: Dict[str, ScanStatusTracker] = {}
+        self.latest_scan_id: Optional[str] = None
+        self.max_jobs = max_jobs
+
+    def create_job(self, scan_id: str) -> ScanStatusTracker:
+        tracker = ScanStatusTracker()
+        tracker.reset()
+        self.jobs[scan_id] = tracker
+        self.latest_scan_id = scan_id
+        while len(self.jobs) > self.max_jobs:
+            oldest = next(iter(self.jobs))
+            if oldest != self.latest_scan_id:
+                self.jobs.pop(oldest, None)
+            else:
+                break
+        return tracker
+
+    def get_job(self, scan_id: Optional[str] = None):
+        if scan_id:
+            tracker = self.jobs.get(scan_id)
+            return (scan_id, tracker) if tracker is not None else None
+        if self.latest_scan_id and self.latest_scan_id in self.jobs:
+            return self.latest_scan_id, self.jobs[self.latest_scan_id]
+        return None
+
+    def cancel_job(self, scan_id: Optional[str] = None) -> Optional[str]:
+        found = self.get_job(scan_id)
+        if found is None:
+            return None
+        target_id, tracker = found
+        tracker.cancel()
+        return target_id
+
+
 global_scan_tracker = ScanStatusTracker()
+scan_manager = ScanJobManager()
 
 
 def _build_optimization_response(
@@ -155,6 +217,11 @@ def _build_optimization_response(
     departure_times: Optional[List[str]] = None,
     raw_availability_report: Optional[str] = None,
     segment_statuses: Optional[List[dict]] = None,
+    travel_date: Optional[str] = None,
+    station_evas: Optional[Dict[str, str]] = None,
+    segment_dates: Optional[List[str]] = None,
+    fast_path_used: bool = False,
+    total_route_segments: int = 0,
 ) -> OptimizationResponse:
     """Shared helper to solve optimal strategies and build the standardized API response."""
     config = OptimizerConfig(profile=parse_profile(profile))
@@ -190,20 +257,59 @@ def _build_optimization_response(
         for seat_uid, availability in avail.items()
     ]
 
-    strategy_responses = [
-        StrategyResponse(
-            rank=s.rank,
-            title=s.title,
-            total_score=s.total_score,
-            transfers_count=s.transfers_count,
-            total_standing_min=s.total_standing_min,
-            carriages_used=s.carriages_used,
-            steps=[step.model_dump() for step in s.steps],
-            purchase_instructions=s.purchase_instructions,
-            tickets_to_buy=s.tickets_to_buy,
+    strategy_responses = []
+    for s in strategies:
+        steps_payload = []
+        for step in s.steps:
+            step_dict = step.model_dump()
+            if not step.is_standing and travel_date:
+                from_eva = (station_evas or {}).get(step.from_station_name) or ""
+                to_eva = (station_evas or {}).get(step.to_station_name) or ""
+                if not from_eva:
+                    _, from_eva = get_station_info(step.from_station_name)
+                if not to_eva:
+                    _, to_eva = get_station_info(step.to_station_name)
+                if from_eva and to_eva:
+                    dep_time = (
+                        departure_times[step.from_station_idx]
+                        if (
+                            departure_times
+                            and 0 <= step.from_station_idx < len(departure_times)
+                            and departure_times[step.from_station_idx]
+                        )
+                        else "08:00"
+                    )
+                    step_date = (
+                        segment_dates[step.from_station_idx]
+                        if (
+                            segment_dates
+                            and 0 <= step.from_station_idx < len(segment_dates)
+                            and segment_dates[step.from_station_idx]
+                        )
+                        else travel_date
+                    )
+                    step_dict["booking_url"] = build_eic_search_url(
+                        from_eva=from_eva,
+                        to_eva=to_eva,
+                        date_str=step_date,
+                        departure_time=dep_time,
+                        direct_only=True,
+                    )
+            steps_payload.append(step_dict)
+
+        strategy_responses.append(
+            StrategyResponse(
+                rank=s.rank,
+                title=s.title,
+                total_score=s.total_score,
+                transfers_count=s.transfers_count,
+                total_standing_min=s.total_standing_min,
+                carriages_used=s.carriages_used,
+                steps=steps_payload,
+                purchase_instructions=s.purchase_instructions,
+                tickets_to_buy=s.tickets_to_buy,
+            )
         )
-        for s in strategies
-    ]
     top_purchase_instructions = strategy_responses[0].purchase_instructions if strategy_responses else []
 
     return OptimizationResponse(
@@ -213,6 +319,8 @@ def _build_optimization_response(
         seat_matrix=seat_matrix,
         raw_availability_report=raw_availability_report,
         purchase_instructions=top_purchase_instructions,
+        fast_path_used=fast_path_used,
+        total_route_segments=total_route_segments or len(segments_info),
     )
 
 
@@ -270,6 +378,8 @@ def search_stations(q: str = Query(..., min_length=1)):
 async def analyze(request: AnalyzeRequest):
     """Run seat optimization for mock scenarios or cached live mode."""
     departure_times: List[str] = []
+    station_evas: Optional[Dict[str, str]] = None
+    travel_date: Optional[str] = None
     if request.mode == "live":
         is_headless = (
             not request.show_browser
@@ -286,6 +396,8 @@ async def analyze(request: AnalyzeRequest):
                 dep_time=request.dep_time,
             )
             station_names = [s.name for s in stops]
+            station_evas = {s.name: s.eva_code for s in stops if getattr(s, "eva_code", "")}
+            travel_date = request.date
             segments = build_route_segments(stops)
             segment_durations = [seg.duration_min for seg in segments]
             departure_times = [seg.departure_time for seg in segments]
@@ -306,6 +418,8 @@ async def analyze(request: AnalyzeRequest):
         segment_durations=segment_durations,
         profile=request.profile,
         departure_times=departure_times,
+        travel_date=travel_date,
+        station_evas=station_evas,
     )
 
 
@@ -364,10 +478,24 @@ def optimize_from_text(request: ManualMapRequest):
 
 
 @app.get("/api/v1/scan-status")
-async def get_scan_status():
+async def get_scan_status(scan_id: Optional[str] = Query(None)):
     """Returns current live train scan progress and log entries."""
+    found = scan_manager.get_job(scan_id)
+    if found is not None:
+        resolved_id, tracker = found
+        return {
+            "scan_id": resolved_id,
+            "is_running": tracker.is_running,
+            "cancelled": tracker.cancelled,
+            "progress": tracker.progress,
+            "message": tracker.message,
+            "logs": tracker.logs[-25:],
+            "error": tracker.last_error,
+        }
     return {
+        "scan_id": None,
         "is_running": global_scan_tracker.is_running,
+        "cancelled": global_scan_tracker.cancelled,
         "progress": global_scan_tracker.progress,
         "message": global_scan_tracker.message,
         "logs": global_scan_tracker.logs[-25:],
@@ -375,36 +503,77 @@ async def get_scan_status():
     }
 
 
+@app.post("/api/v1/scan-cancel")
+async def cancel_scan(
+    request: Optional[CancelScanRequest] = Body(default=None),
+    scan_id: Optional[str] = Query(None),
+):
+    """Cancels a running scan by scan_id (or the latest active scan if omitted)."""
+    target_id = (request.scan_id if request else None) or scan_id
+    cancelled_id = scan_manager.cancel_job(target_id)
+    if cancelled_id is None:
+        if global_scan_tracker.is_running:
+            global_scan_tracker.cancel()
+            return {"status": "cancelled", "scan_id": None}
+        return {"status": "not_found", "scan_id": target_id}
+    if target_id is None or cancelled_id == scan_manager.latest_scan_id:
+        global_scan_tracker.cancel()
+    return {"status": "cancelled", "scan_id": cancelled_id}
+
+
 @app.post("/api/v1/optimize", response_model=OptimizationResponse)
 async def optimize_live(request: LiveOptimizeRequest):
     """
     Live optimization mode:
-    Scrapes real-time seat availability segment-by-segment using Playwright
+    Scrapes real-time seat availability (Fast-Path A->B with automatic fallback to all segments)
     and calculates optimal seating and transfer strategy.
     """
+    scan_id = (request.scan_id or "").strip() or uuid.uuid4().hex[:12]
+    tracker = scan_manager.create_job(scan_id)
     global_scan_tracker.reset()
+
     is_headless = (
         not request.show_browser
         if request.show_browser is not None
         else (request.headless if request.headless is not None else True)
     )
 
+    def _on_progress(msg: str) -> None:
+        tracker.update(msg)
+        global_scan_tracker.update(msg)
+
     scanner = LiveTrainScanner(
         headless=is_headless,
         show_browser=request.show_browser,
-        on_progress=lambda m: global_scan_tracker.update(m),
+        on_progress=_on_progress,
     )
+
+    scan_coro = scanner.scan_full_train(
+        from_station=request.from_station,
+        to_station=request.to_station,
+        travel_date=request.date,
+        train_number=request.train_number or "IC 3520",
+        departure_time=request.time,
+        ticket_class=request.ticket_class,
+        fast_path=not request.force_full_scan,
+        cancel_event=tracker.cancel_event,
+    )
+    scan_task = asyncio.create_task(scan_coro)
+    tracker.task = scan_task
+    global_scan_tracker.task = scan_task
+
     try:
-        avail_map = await scanner.scan_full_train(
-            from_station=request.from_station,
-            to_station=request.to_station,
-            travel_date=request.date,
-            train_number=request.train_number or "IC 3520",
-            departure_time=request.time,
-            ticket_class=request.ticket_class,
+        avail_map = await scan_task
+    except asyncio.CancelledError:
+        tracker.cancel()
+        global_scan_tracker.cancel()
+        raise HTTPException(
+            status_code=499,
+            detail="Skanowanie zostało anulowane przez użytkownika.",
         )
     except GraphicReservationUnavailableError as e:
         err_msg = f"Brak możliwości wyboru miejsca ze schematu na trasie {request.from_station} -> {request.to_station}: {str(e)}"
+        tracker.error(err_msg)
         global_scan_tracker.error(err_msg)
         raise HTTPException(
             status_code=502,
@@ -412,21 +581,30 @@ async def optimize_live(request: LiveOptimizeRequest):
         )
     except Exception as e:
         err_msg = f"Błąd połączenia z systemem rezerwacyjnym podczas skanowania odcinka: {str(e)}"
+        tracker.error(err_msg)
         global_scan_tracker.error(err_msg)
         raise HTTPException(
             status_code=502,
             detail=f"{err_msg}. Zapisano zrzut diagnostyczny do logs/debug_snapshots/error_85_percent.png.",
         )
 
+    if tracker.cancel_event.is_set() or tracker.cancelled:
+        raise HTTPException(
+            status_code=499,
+            detail="Skanowanie zostało anulowane przez użytkownika.",
+        )
+
     avail, meta, station_names, segment_durations = availability_map_to_matrix(avail_map)
     if not avail:
         err_msg = f"System rezerwacyjny nie udostępnił wolnych miejsc w Klasie {request.ticket_class} dla wybranego pociągu (brak miejsc ze schematu)."
+        tracker.error(err_msg)
         global_scan_tracker.error(err_msg)
         raise HTTPException(
             status_code=502,
             detail=f"{err_msg} Zapisano zrzut diagnostyczny do logs/debug_snapshots/error_85_percent.png.",
         )
 
+    tracker.complete()
     global_scan_tracker.complete()
     formatted_report = format_availability_map(avail_map)
     departure_times = [seg.departure_time for seg in avail_map.segments]
@@ -437,6 +615,16 @@ async def optimize_live(request: LiveOptimizeRequest):
         }
         for seg in avail_map.segments
     ]
+    station_evas: Dict[str, str] = {}
+    segment_dates: List[str] = []
+    for seg in avail_map.segments:
+        f_eva = (getattr(seg, "from_eva", "") or "").strip()
+        t_eva = (getattr(seg, "to_eva", "") or "").strip()
+        if f_eva:
+            station_evas[seg.from_station] = f_eva
+        if t_eva:
+            station_evas[seg.to_station] = t_eva
+        segment_dates.append((getattr(seg, "segment_date", "") or "").strip() or request.date)
 
     return _build_optimization_response(
         avail=avail,
@@ -447,6 +635,11 @@ async def optimize_live(request: LiveOptimizeRequest):
         departure_times=departure_times,
         raw_availability_report=formatted_report,
         segment_statuses=segment_statuses,
+        travel_date=request.date,
+        station_evas=station_evas,
+        segment_dates=segment_dates,
+        fast_path_used=bool(getattr(avail_map, "fast_path_used", False)),
+        total_route_segments=int(getattr(avail_map, "total_route_segments", 0) or len(avail_map.segments)),
     )
 
 

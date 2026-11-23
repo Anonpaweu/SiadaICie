@@ -29,6 +29,7 @@ class StepResponse(BaseModel):
     transfer_instruction: Optional[str] = None
     compartment: Optional[int] = None
     alternative_seats_in_same_carriage: List[str] = []
+    booking_url: Optional[str] = None
 
 
 SeatBlockSchema = StepResponse
@@ -63,6 +64,8 @@ class AnalyzeResponse(BaseModel):
     seat_matrix: List[SeatAvailability]
     raw_availability_report: Optional[str] = None
     purchase_instructions: List[str] = []
+    fast_path_used: bool = False
+    total_route_segments: int = 0
 
 
 OptimizationResponse = AnalyzeResponse
@@ -83,6 +86,12 @@ class LiveOptimizeRequest(BaseModel):
     profile: str = "BALANCED"
     headless: bool = True
     show_browser: Optional[bool] = None
+    force_full_scan: bool = False
+    scan_id: Optional[str] = None
+
+
+class CancelScanRequest(BaseModel):
+    scan_id: Optional[str] = None
 
 
 class TrainStopItem(BaseModel):

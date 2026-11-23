@@ -106,6 +106,10 @@ class SegmentAvailabilityMap(BaseModel):
     from_station: str
     to_station: str
     departure_time: str = ""
+    duration_min: Optional[int] = None
+    from_eva: str = ""
+    to_eva: str = ""
+    segment_date: str = ""
     carriages: Dict[str, List[str]] = Field(default_factory=dict)
     status: str = "OK"                       # "OK", "SOLD_OUT", "SCRAPE_ERROR"
     error_reason: Optional[str] = None
@@ -114,6 +118,8 @@ class SegmentAvailabilityMap(BaseModel):
 class FullTrainAvailabilityMap(BaseModel):
     train_number: str = ""
     travel_date: str = ""
+    fast_path_used: bool = False
+    total_route_segments: int = 0
     segments: List[SegmentAvailabilityMap] = Field(default_factory=list)
 
 

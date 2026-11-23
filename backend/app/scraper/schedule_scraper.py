@@ -222,6 +222,34 @@ def get_station_info(station_name: str) -> Tuple[str, str]:
         conn.close()
 
 
+def get_station_epa_map(eva_codes: List[str]) -> Dict[str, str]:
+    """Maps station EVA codes to internal Intercity EPA codes (stations.ic_id) from SQLite."""
+    clean_evas = sorted({str(c).strip() for c in (eva_codes or []) if c and str(c).strip()})
+    if not clean_evas:
+        return {}
+    try:
+        conn = get_connection()
+    except Exception:
+        return {}
+    try:
+        cur = conn.cursor()
+        placeholders = ",".join("?" for _ in clean_evas)
+        cur.execute(
+            f"SELECT eva_code, ic_id FROM stations WHERE eva_code IN ({placeholders}) "
+            f"AND ic_id IS NOT NULL AND trim(ic_id) != ''",
+            tuple(clean_evas),
+        )
+        return {
+            str(row["eva_code"]).strip(): str(row["ic_id"]).strip()
+            for row in cur.fetchall()
+            if row["eva_code"] and row["ic_id"]
+        }
+    except Exception:
+        return {}
+    finally:
+        conn.close()
+
+
 def _fetch_single_window_trains(
     from_name: str,
     from_eva: str,

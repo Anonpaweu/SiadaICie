@@ -275,13 +275,16 @@
         <div id="progressBar" class="bg-gradient-to-r from-blue-600 via-pkp-blue to-pkp-orange h-full w-0 transition-all duration-300"></div>
       </div>
 
-      <!-- Zwijany przełącznik szczegółów technicznych -->
-      <div class="pt-0.5 flex items-center justify-between">
+      <!-- Zwijany przełącznik szczegółów technicznych oraz przycisk Anuluj -->
+      <div class="pt-0.5 flex items-center justify-between gap-3">
         <button id="toggleConsoleBtn" type="button" onclick="toggleConsoleDetails()" class="text-[11px] text-slate-400 hover:text-slate-200 flex items-center gap-1.5 transition-colors focus:outline-none select-none">
           <svg id="consoleChevron" class="w-3.5 h-3.5 transform transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
           </svg>
           <span id="consoleToggleLabel">Pokaż szczegóły operacji (konsola)</span>
+        </button>
+        <button id="btnCancelScan" type="button" onclick="cancelLiveScan()" class="hidden text-[11px] font-semibold px-3 py-1 rounded bg-rose-950/70 hover:bg-rose-900/80 text-rose-300 border border-rose-700/70 transition-colors">
+          Anuluj skanowanie
         </button>
       </div>
 
@@ -313,6 +316,26 @@
         </div>
         <ul id="scrapeErrorSegmentsList" class="list-disc list-inside space-y-1 text-amber-200 font-mono text-[11px] pt-1"></ul>
       </div>
+    </div>
+
+    <!-- Informacja o szybkim skanowaniu (Fast-Path) -->
+    <div id="fastPathBanner" class="hidden bg-emerald-950/60 border border-emerald-700/60 text-emerald-100 p-4 rounded-xl text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xl">
+      <div class="flex items-start gap-3">
+        <svg class="w-5 h-5 text-emerald-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+        </svg>
+        <div class="space-y-1 leading-relaxed">
+          <div class="font-bold text-emerald-300">
+            Tryb Fast-Path: znaleziono bezpośrednie miejsca bez przesiadek na całą trasę
+          </div>
+          <div id="fastPathDesc" class="text-emerald-100/90">
+            Ponieważ na całej trasie są wolne fotele bez konieczności przesiadek, pominięto szczegółowe skanowanie odcinków pośrednich, aby przyspieszyć wynik.
+          </div>
+        </div>
+      </div>
+      <button type="button" onclick="runLiveScan({ forceFullScan: true })" class="flex-shrink-0 px-3.5 py-2 rounded-lg bg-emerald-900/70 hover:bg-emerald-800/80 border border-emerald-500/60 text-emerald-100 font-semibold text-xs transition-colors">
+        Przeskanuj wszystkie odcinki szczegółowo
+      </button>
     </div>
 
     <!-- Plan Zakupu Biletów i Przesiadek -->
@@ -617,7 +640,26 @@
       }
     }
 
-    async function runLiveScan() {
+    let activeScanController = null;
+    let activeScanId = null;
+
+    function cancelLiveScan() {
+      const scanIdToCancel = activeScanId;
+      if (scanIdToCancel) {
+        fetch('/api/v1/scan-cancel', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ scan_id: scanIdToCancel }),
+          keepalive: true,
+        }).catch(() => {});
+      }
+      if (activeScanController) {
+        activeScanController.abort();
+      }
+    }
+
+    async function runLiveScan(options = {}) {
+      const forceFullScan = Boolean(options && options.forceFullScan);
       const fromSt = document.getElementById('fromStation').value.trim();
       const toSt = document.getElementById('toStation').value.trim();
       const date = document.getElementById('travelDate').value;
@@ -628,6 +670,7 @@
 
       const btnScan = document.getElementById('btnScanSeats');
       const btnLabel = document.getElementById('btnScanSeatsLabel');
+      const btnCancel = document.getElementById('btnCancelScan');
       const progressSection = document.getElementById('progressSection');
       const progressBar = document.getElementById('progressBar');
       const progressMessage = document.getElementById('progressMessage');
@@ -641,8 +684,19 @@
         return;
       }
 
+      if (activeScanController) {
+        cancelLiveScan();
+      }
+
+      activeScanId = (window.crypto && typeof window.crypto.randomUUID === 'function')
+        ? window.crypto.randomUUID()
+        : ('scan_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8));
+      const currentScanId = activeScanId;
+      activeScanController = new AbortController();
+
       if (btnScan) btnScan.disabled = true;
       if (btnLabel) btnLabel.innerText = 'Skanowanie w toku...';
+      if (btnCancel) btnCancel.classList.remove('hidden');
 
       currentTicketClass = ticketClass;
       fetchTrainRoute(true);
@@ -650,10 +704,14 @@
       errorAlert.classList.add('hidden');
       const scrapeWarnBanner = document.getElementById('scrapeErrorWarningBanner');
       if (scrapeWarnBanner) scrapeWarnBanner.classList.add('hidden');
+      const fastPathBanner = document.getElementById('fastPathBanner');
+      if (fastPathBanner) fastPathBanner.classList.add('hidden');
       progressSection.classList.remove('hidden');
       progressBar.style.width = '5%';
       progressPercent.innerText = '5%';
-      progressMessage.innerText = 'Inicjalizacja silnika skanera...';
+      progressMessage.innerText = forceFullScan
+        ? 'Uruchamianie pełnego skanowania wszystkich odcinków...'
+        : 'Inicjalizacja silnika skanera...';
 
       if (liveConsole) {
         liveConsole.innerHTML = `
@@ -668,7 +726,7 @@
       try {
         statusInterval = setInterval(async () => {
           try {
-            const sRes = await fetch('/api/v1/scan-status');
+            const sRes = await fetch(`/api/v1/scan-status?scan_id=${encodeURIComponent(currentScanId)}`);
             if (sRes.ok) {
               const sData = await sRes.json();
               if (sData.progress > maxSeenPct) {
@@ -699,6 +757,7 @@
         const res = await fetch('/api/v1/optimize', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: activeScanController.signal,
           body: JSON.stringify({
             from_station: fromSt,
             to_station: toSt,
@@ -708,10 +767,17 @@
             ticket_class: ticketClass,
             profile: profile,
             headless: true,
+            force_full_scan: forceFullScan,
+            scan_id: currentScanId,
           }),
         });
 
         if (statusInterval) clearInterval(statusInterval);
+
+        if (res.status === 499) {
+          progressSection.classList.add('hidden');
+          return;
+        }
 
         if (!res.ok) {
           const errData = await res.json();
@@ -728,6 +794,11 @@
       } catch (err) {
         if (statusInterval) clearInterval(statusInterval);
         progressSection.classList.add('hidden');
+
+        if (err && err.name === 'AbortError') {
+          return;
+        }
+
         errorAlert.classList.remove('hidden');
 
         const isSnapshotError = err.message && (err.message.includes('error_85_percent.png') || err.message.includes('debug_85.html') || err.message.includes('85%'));
@@ -743,6 +814,11 @@
           ` : ''}
         `;
       } finally {
+        if (activeScanId === currentScanId) {
+          activeScanController = null;
+          activeScanId = null;
+        }
+        if (btnCancel) btnCancel.classList.add('hidden');
         if (btnScan) btnScan.disabled = false;
         if (btnLabel) btnLabel.innerText = 'Wyszukaj i optymalizuj miejsca';
       }
@@ -761,6 +837,8 @@
       errorAlert.classList.add('hidden');
       const scrapeWarnBanner = document.getElementById('scrapeErrorWarningBanner');
       if (scrapeWarnBanner) scrapeWarnBanner.classList.add('hidden');
+      const fastPathBanner = document.getElementById('fastPathBanner');
+      if (fastPathBanner) fastPathBanner.classList.add('hidden');
       progressSection.classList.remove('hidden');
       progressBar.style.width = '50%';
       progressMessage.innerText = 'Przeliczanie optymalnego grafu przesiadek...';
@@ -809,10 +887,29 @@
       }, 2000);
 
       renderScrapeErrorWarning(data.segments);
+      renderFastPathBanner(data);
       renderPurchaseInstructions(data);
       renderCarriageFilter(data.seat_matrix);
       renderStrategies(data.strategies);
       renderMatrix();
+    }
+
+    function renderFastPathBanner(data) {
+      const banner = document.getElementById('fastPathBanner');
+      const desc = document.getElementById('fastPathDesc');
+      if (!banner) return;
+
+      if (data && data.fast_path_used) {
+        const totalSegs = Number(data.total_route_segments || 0);
+        if (desc) {
+          desc.innerText = totalSegs > 1
+            ? `Znaleziono wolne miejsca bez przesiadek na całą trasę (${totalSegs} odcinków pośrednich pominiętych). Aby zobaczyć mapę wszystkich miejsc na krótszych fragmentach, możesz uruchomić pełne skanowanie.`
+            : 'Znaleziono wolne miejsca bez przesiadek na całą trasę.';
+        }
+        banner.classList.remove('hidden');
+      } else {
+        banner.classList.add('hidden');
+      }
     }
 
     function renderScrapeErrorWarning(segments) {
@@ -872,15 +969,35 @@
       list.innerHTML = '';
 
       instructions.forEach((instr, idx) => {
+        const step = activeStrategy && Array.isArray(activeStrategy.steps) ? activeStrategy.steps[idx] : null;
+        const bookingUrl = (
+          step
+          && !step.is_standing
+          && typeof step.booking_url === 'string'
+          && step.booking_url.startsWith('https://ebilet.intercity.pl/')
+        ) ? step.booking_url : '';
+
+        const linkHtml = bookingUrl
+          ? `<a href="${escapeHtml(bookingUrl)}" target="_blank" rel="noopener noreferrer" class="flex-shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-pkp-orange/15 hover:bg-pkp-orange/25 border border-pkp-orange/40 text-pkp-orange font-semibold text-[11px] transition-colors">
+              <span>Otwórz odcinek w e-IC</span>
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+              </svg>
+            </a>`
+          : '';
+
         const item = document.createElement('div');
-        item.className = 'bg-pkp-dark border border-pkp-borderLight rounded-lg p-3 text-xs text-slate-200 flex items-start gap-3 shadow';
+        item.className = 'bg-pkp-dark border border-pkp-borderLight rounded-lg p-3 text-xs text-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow';
         item.innerHTML = `
-          <div class="w-6 h-6 rounded-full bg-pkp-orange/20 text-pkp-orange font-bold flex items-center justify-center text-xs flex-shrink-0 mt-0.5">
-            ${idx + 1}
+          <div class="flex items-start gap-3 flex-1">
+            <div class="w-6 h-6 rounded-full bg-pkp-orange/20 text-pkp-orange font-bold flex items-center justify-center text-xs flex-shrink-0 mt-0.5">
+              ${idx + 1}
+            </div>
+            <div class="flex-1 leading-relaxed">
+              <span class="font-medium text-white">${escapeHtml(instr)}</span>
+            </div>
           </div>
-          <div class="flex-1 leading-relaxed">
-            <span class="font-medium text-white">${escapeHtml(instr)}</span>
-          </div>
+          ${linkHtml}
         `;
         list.appendChild(item);
       });

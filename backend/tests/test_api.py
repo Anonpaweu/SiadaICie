@@ -25,6 +25,9 @@ class TestHealthEndpoint:
         assert "BŁĄD ODCZYTU" in response.text
         assert "Błąd odczytu odcinka" in response.text
         assert "scrapeErrorWarningBanner" in response.text
+        assert "btnCancelScan" in response.text
+        assert "fastPathBanner" in response.text
+        assert "Otwórz odcinek w e-IC" in response.text
 
 
 class TestStationsSearch:
@@ -454,3 +457,122 @@ class TestErrorHandlingScraper:
         assert data["segments"][0]["error_reason"] == "Kod stacji spoza zakresu (timeout 35s)"
         assert data["segments"][1]["status"] == "OK"
         assert data["segments"][1]["error_reason"] is None
+
+
+class TestImprovementsApi:
+    """Tests for Fast-Path A->B, direct booking_url links, and per-scan cancellation endpoints."""
+
+    def test_optimize_live_fast_path_and_booking_url(self, monkeypatch):
+        from backend.app.models.domain import FullTrainAvailabilityMap, SegmentAvailabilityMap
+        from backend.app.scraper.ebilet_seat_scraper import LiveTrainScanner
+
+        captured = {}
+
+        async def mock_scan(self, **kwargs):
+            captured["fast_path"] = kwargs.get("fast_path")
+            return FullTrainAvailabilityMap(
+                train_number="IC 1644",
+                travel_date="2026-11-24",
+                fast_path_used=bool(kwargs.get("fast_path")),
+                total_route_segments=5,
+                segments=[
+                    SegmentAvailabilityMap(
+                        segment_index=0,
+                        from_station="Warszawa Centralna",
+                        to_station="Wrocław Główny",
+                        departure_time="15:20",
+                        duration_min=243,
+                        from_eva="5100065",
+                        to_eva="5100069",
+                        segment_date="2026-11-24",
+                        carriages={"8": ["11", "12"]},
+                        status="OK",
+                    )
+                ],
+            )
+
+        monkeypatch.setattr(LiveTrainScanner, "scan_full_train", mock_scan)
+
+        # Default: Fast-Path enabled (force_full_scan defaults to False)
+        resp = client.post(
+            "/api/v1/optimize",
+            json={
+                "from_station": "Warszawa Centralna",
+                "to_station": "Wrocław Główny",
+                "date": "2026-11-24",
+                "time": "15:20",
+                "train_number": "IC 1644",
+                "scan_id": "test-fp-1",
+            },
+        )
+        assert resp.status_code == 200
+        assert captured.get("fast_path") is True
+        data = resp.json()
+        assert data["fast_path_used"] is True
+        assert data["total_route_segments"] == 5
+        assert data["segments"][0]["duration_min"] == 243
+        booking_url = data["strategies"][0]["steps"][0]["booking_url"]
+        assert booking_url is not None
+        assert booking_url.startswith("https://ebilet.intercity.pl/wyszukiwanie?")
+        assert "swyj=5100065" in booking_url
+        assert "sprzy=5100069" in booking_url
+        assert "dwyj=2026-11-24" in booking_url
+        assert "time=15:10" in booking_url
+
+        # Force full scan: fast_path must be False
+        resp_full = client.post(
+            "/api/v1/optimize",
+            json={
+                "from_station": "Warszawa Centralna",
+                "to_station": "Wrocław Główny",
+                "date": "2026-11-24",
+                "time": "15:20",
+                "train_number": "IC 1644",
+                "force_full_scan": True,
+                "scan_id": "test-fp-2",
+            },
+        )
+        assert resp_full.status_code == 200
+        assert captured.get("fast_path") is False
+        assert resp_full.json()["fast_path_used"] is False
+
+    def test_scan_status_by_scan_id_and_cancel_endpoint(self):
+        from backend.app.main import scan_manager
+
+        tracker = scan_manager.create_job("job-cancel-123")
+        tracker.update("[45%] Skanowanie odcinka 2/4")
+
+        status_resp = client.get("/api/v1/scan-status", params={"scan_id": "job-cancel-123"})
+        assert status_resp.status_code == 200
+        s_data = status_resp.json()
+        assert s_data["scan_id"] == "job-cancel-123"
+        assert s_data["progress"] == 45
+        assert s_data["is_running"] is True
+        assert s_data["cancelled"] is False
+
+        cancel_resp = client.post("/api/v1/scan-cancel", json={"scan_id": "job-cancel-123"})
+        assert cancel_resp.status_code == 200
+        assert cancel_resp.json()["status"] == "cancelled"
+        assert cancel_resp.json()["scan_id"] == "job-cancel-123"
+        assert tracker.cancel_event.is_set() is True
+        assert tracker.cancelled is True
+
+        status_after = client.get("/api/v1/scan-status", params={"scan_id": "job-cancel-123"}).json()
+        assert status_after["cancelled"] is True
+        assert status_after["is_running"] is False
+
+        missing_cancel = client.post("/api/v1/scan-cancel", json={"scan_id": "does-not-exist"})
+        assert missing_cancel.status_code == 200
+        assert missing_cancel.json()["status"] == "not_found"
+
+    def test_optimize_from_text_has_no_booking_urls(self):
+        fixture_path = Path(__file__).parent / "fixtures" / "koluszki_opole.txt"
+        raw_text = fixture_path.read_text(encoding="utf-8")
+
+        response = client.post("/api/v1/optimize-from-text", json={"raw_text": raw_text})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["fast_path_used"] is False
+        for strat in data["strategies"]:
+            for step in strat["steps"]:
+                assert step.get("booking_url") is None

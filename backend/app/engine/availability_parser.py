@@ -220,9 +220,14 @@ def availability_map_to_matrix(
     for seg in avail_map.segments:
         station_names.append(seg.to_station)
 
-    # Approximate segment durations (defaulting to 30 min if times missing)
+    # Approximate segment durations (preferring explicit segment duration, then time delta, then 30 min)
     segment_durations: List[int] = []
     for i, seg in enumerate(avail_map.segments):
+        explicit_dur = getattr(seg, "duration_min", None)
+        if isinstance(explicit_dur, int) and explicit_dur > 0:
+            segment_durations.append(max(5, explicit_dur))
+            continue
+
         # Calculate duration if times are available
         if seg.departure_time and i + 1 < len(avail_map.segments) and avail_map.segments[i + 1].departure_time:
             try:

@@ -572,3 +572,283 @@ class TestEbiletV3RealDOM:
             assert by_from["Skierniewice"]["from_eva"] == "5100294"
             assert by_from["Skierniewice"]["to_eva"] == "5100028"
             assert by_from["Skierniewice"]["travel_date"] == "2026-11-25"
+
+    def test_modular_exports_and_grm_url_builders(self):
+        """Verifies modular split exports (dom_scripts, grm_parser) and GRM URL builders."""
+        from backend.app.scraper import dom_scripts, ebilet_seat_scraper, grm_parser
+
+        assert ebilet_seat_scraper.SVG_SEATS_EXTRACTOR_JS is dom_scripts.SVG_SEATS_EXTRACTOR_JS
+        assert ebilet_seat_scraper.CAROUSEL_METADATA_JS is dom_scripts.CAROUSEL_METADATA_JS
+        assert ebilet_seat_scraper.parse_grm_wagon_svg is grm_parser.parse_grm_wagon_svg
+        assert ebilet_seat_scraper.select_grm_target_wagons is grm_parser.select_grm_target_wagons
+        assert ebilet_seat_scraper.sanitize_filename is grm_parser.sanitize_filename
+
+        sklad_url = "https://api-gateway.intercity.pl/grm/sklad/wbnet/IC/1644/202611241923/5100136/202611241520/5100143"
+        svg_url = "https://api-gateway.intercity.pl/grm/wagon/svg/wbnet/IC/1644/8/1327,WITHOUT_COMPARTMENTS/202611241520/202611241923/5100136/5100143"
+        tmpl = grm_parser.parse_grm_url_template(sklad_url)
+        assert tmpl == {"host": "https://api-gateway.intercity.pl", "category": "IC", "train_no": "1644"}
+        assert grm_parser.parse_grm_url_template("", svg_url) == tmpl
+        assert grm_parser.parse_grm_url_template("https://example.com/other") is None
+
+        assert grm_parser.format_grm_datetime("2026-11-24", "9:05") == "202611240905"
+        assert grm_parser.format_grm_datetime("24.11.2026", "15:20") == "202611241520"
+        assert grm_parser.format_grm_datetime("bad-date", "15:20") is None
+        assert grm_parser.format_grm_datetime("2026-11-24", "25:99") is None
+
+        built_sklad = grm_parser.build_grm_sklad_url(
+            tmpl, from_epa="5100139", to_epa="5100811", dep_dt="202611241525", arr_dt="202611241545"
+        )
+        assert built_sklad == (
+            "https://api-gateway.intercity.pl/grm/sklad/wbnet/IC/1644/202611241545/5100139/202611241525/5100811"
+        )
+        built_svg = grm_parser.build_grm_svg_url(
+            tmpl,
+            wagon_no="3",
+            schema_id="1323",
+            from_epa="5100139",
+            to_epa="5100811",
+            dep_dt="202611241525",
+            arr_dt="202611241545",
+        )
+        assert built_svg == (
+            "https://api-gateway.intercity.pl/grm/wagon/svg/wbnet/IC/1644/3/1323/202611241525/202611241545/5100139/5100811"
+        )
+
+    def test_is_debug_scraper_enabled_flag(self, monkeypatch):
+        from backend.app.scraper.ebilet_seat_scraper import is_debug_scraper_enabled
+
+        monkeypatch.delenv("DEBUG_SCRAPER", raising=False)
+        assert is_debug_scraper_enabled() is False
+        monkeypatch.setenv("DEBUG_SCRAPER", "0")
+        assert is_debug_scraper_enabled() is False
+        monkeypatch.setenv("DEBUG_SCRAPER", "1")
+        assert is_debug_scraper_enabled() is True
+        monkeypatch.setenv("DEBUG_SCRAPER", "true")
+        assert is_debug_scraper_enabled() is True
+
+    @pytest.mark.asyncio
+    async def test_extract_seats_via_grm_api_parallel_missing_wagons(self, scraper):
+        """Verifies _extract_seats_via_grm_api concurrently fetches all missing Class 2 wagons."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        sklad_data = {
+            "klasa2": [3, 5, 8],
+            "wagonyNiedostepne": [],
+            "wagonySchemat": {"3": "1323", "5": "1325", "8": "1327"},
+        }
+        template = {
+            "prefix": "https://api-gateway.intercity.pl/grm/wagon/svg/wbnet/IC/1644",
+            "suffix": "/202611241525/202611241545/5100139/5100811",
+            "headers": {},
+        }
+
+        async def mock_fetch(page, url, extra_headers=None):
+            if "/3/1323/" in url:
+                return '<svg><g data-class="second class" aria-label="Miejsce 31 klasa 2, Wolne"><text>31</text></g></svg>'
+            if "/5/1325/" in url:
+                return '<svg><g data-class="second class" aria-label="Miejsce 52 klasa 2, Wolne"><text>52</text></g></svg>'
+            return None
+
+        svg_w8 = '<svg><g data-class="second class" aria-label="Miejsce 83 klasa 2, Wolne"><text>83</text></g></svg>'
+        mock_page = MagicMock()
+        scraper._fetch_grm_svg_in_session = AsyncMock(side_effect=mock_fetch)
+
+        result = await scraper._extract_seats_via_grm_api(
+            page=mock_page,
+            sklad_data=sklad_data,
+            wagon_svg_template=template,
+            intercepted_svg_by_wagon={"8": svg_w8},
+            ticket_class=2,
+        )
+        assert result == {"3": ["31"], "5": ["52"], "8": ["83"]}
+        assert scraper._fetch_grm_svg_in_session.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_scanner_fast_path_hit_and_sold_out_fallback(self):
+        """Verifies Fast-Path A->B short-circuit on available seats and fallback on SOLD_OUT."""
+        from unittest.mock import AsyncMock, patch
+        from backend.app.scraper.ebilet_seat_scraper import LiveTrainScanner
+        from backend.app.scraper.ic_client import GraphicReservationUnavailableError
+        from backend.app.scraper.route_resolver import StationStop
+
+        mock_stops = [
+            StationStop(seq=0, eva_code="5100065", name="Warszawa Centralna", arrival_min=0, departure_min=0, departure_time="15:20"),
+            StationStop(seq=1, eva_code="5104415", name="Żyrardów", arrival_min=25, departure_min=26, departure_time="15:46"),
+            StationStop(seq=2, eva_code="5100024", name="Koluszki", arrival_min=60, departure_min=61, departure_time="16:21"),
+            StationStop(seq=3, eva_code="5100069", name="Wrocław Główny", arrival_min=240, departure_min=240, arrival_time="19:20"),
+        ]
+
+        # Subcase A: Fast-Path succeeds on A->B directly
+        scanner_a = LiveTrainScanner(headless=True)
+        calls_a = []
+
+        async def mock_scan_hit(**kwargs):
+            calls_a.append((kwargs["from_station"], kwargs["to_station"]))
+            return {"8": ["11", "12"]}
+
+        scanner_a.scraper.scan_segment = AsyncMock(side_effect=mock_scan_hit)
+
+        with patch("backend.app.scraper.ebilet_seat_scraper.resolve_real_route", return_value=mock_stops), \
+             patch("backend.app.scraper.ebilet_seat_scraper.filter_and_merge_stops", return_value=mock_stops), \
+             patch("backend.app.scraper.ebilet_seat_scraper.async_playwright") as mock_pw:
+            mock_browser = AsyncMock()
+            mock_ctx = AsyncMock()
+            mock_page = AsyncMock()
+            mock_browser.new_context.return_value = mock_ctx
+            mock_ctx.new_page.return_value = mock_page
+            mock_pw_inst = AsyncMock()
+            mock_pw_inst.chromium.connect_over_cdp.side_effect = Exception("No CDP")
+            mock_pw_inst.chromium.launch.return_value = mock_browser
+            mock_pw.return_value.__aenter__.return_value = mock_pw_inst
+
+            fast_map = await scanner_a.scan_full_train(
+                from_station="Warszawa Centralna",
+                to_station="Wrocław Główny",
+                travel_date="2026-11-24",
+                train_number="IC 1644",
+                fast_path=True,
+            )
+
+        assert fast_map.fast_path_used is True
+        assert fast_map.total_route_segments == 3
+        assert len(fast_map.segments) == 1
+        assert fast_map.segments[0].duration_min == 240
+        assert fast_map.segments[0].carriages == {"8": ["11", "12"]}
+        assert calls_a == [("Warszawa Centralna", "Wrocław Główny")]
+
+        # Subcase B: Fast-Path sees SOLD_OUT -> falls back to all 3 intermediate segments
+        scanner_b = LiveTrainScanner(headless=True)
+        calls_b = []
+
+        async def mock_scan_fallback(**kwargs):
+            calls_b.append((kwargs["from_station"], kwargs["to_station"]))
+            if kwargs["from_station"] == "Warszawa Centralna" and kwargs["to_station"] == "Wrocław Główny":
+                raise GraphicReservationUnavailableError("BRAK_MIEJSC_KLASA_2: wyprzedane")
+            return {"3": ["14"]}
+
+        scanner_b.scraper.scan_segment = AsyncMock(side_effect=mock_scan_fallback)
+
+        with patch("backend.app.scraper.ebilet_seat_scraper.resolve_real_route", return_value=mock_stops), \
+             patch("backend.app.scraper.ebilet_seat_scraper.filter_and_merge_stops", return_value=mock_stops), \
+             patch("backend.app.scraper.ebilet_seat_scraper.async_playwright") as mock_pw:
+            mock_browser = AsyncMock()
+            mock_ctx = AsyncMock()
+            mock_page = AsyncMock()
+            mock_browser.new_context.return_value = mock_ctx
+            mock_ctx.new_page.return_value = mock_page
+            mock_pw_inst = AsyncMock()
+            mock_pw_inst.chromium.connect_over_cdp.side_effect = Exception("No CDP")
+            mock_pw_inst.chromium.launch.return_value = mock_browser
+            mock_pw.return_value.__aenter__.return_value = mock_pw_inst
+
+            full_map = await scanner_b.scan_full_train(
+                from_station="Warszawa Centralna",
+                to_station="Wrocław Główny",
+                travel_date="2026-11-24",
+                train_number="IC 1644",
+                fast_path=True,
+            )
+
+        assert full_map.fast_path_used is False
+        assert full_map.total_route_segments == 3
+        assert len(full_map.segments) == 3
+        assert ("Warszawa Centralna", "Wrocław Główny") in calls_b
+        assert ("Warszawa Centralna", "Żyrardów") in calls_b
+        assert ("Koluszki", "Wrocław Główny") in calls_b
+
+    @pytest.mark.asyncio
+    async def test_scanner_respects_cancel_event(self):
+        """Verifies scan_full_train aborts with CancelledError when cancel_event is set."""
+        import asyncio
+        from backend.app.scraper.ebilet_seat_scraper import LiveTrainScanner
+
+        scanner = LiveTrainScanner(headless=True)
+        cancel_ev = asyncio.Event()
+        cancel_ev.set()
+
+        with pytest.raises(asyncio.CancelledError):
+            await scanner.scan_full_train(
+                from_station="Warszawa Centralna",
+                to_station="Wrocław Główny",
+                travel_date="2026-11-24",
+                train_number="IC 1644",
+                cancel_event=cancel_ev,
+            )
+
+    def test_zero_connections_detector_ignores_after_hour_footer(self, scraper):
+        """Verifies pagination footer 'Brak połączeń ... po godzinie 19:22' does not trigger false error."""
+        footer_text = "tlk 53171 karpaty 19:22 > 06:04 brak połączeń w dniu 23.11.2026 po godzinie 19:22."
+        assert scraper._body_indicates_zero_connections(footer_text) is False
+        assert scraper._body_indicates_zero_connections("brak połączeń przed godziną 05:00.") is False
+        assert scraper._body_indicates_zero_connections("brak połączeń dla wybranej relacji.") is True
+        assert scraper._body_indicates_zero_connections("nie znaleziono połączeń w wybranym dniu.") is True
+
+    @pytest.mark.asyncio
+    async def test_fast_path_progress_caps_at_22_and_fallback_scans_all_segments(self):
+        """
+        Verifies Fast-Path progress reports stay <= 22% so fallback scanning
+        across all elementary segments progresses smoothly without jumping backwards.
+        """
+        import re as _re
+        from unittest.mock import AsyncMock, patch
+        from backend.app.scraper.ebilet_seat_scraper import LiveTrainScanner
+        from backend.app.scraper.ic_client import GraphicReservationUnavailableError
+        from backend.app.scraper.route_resolver import StationStop
+
+        mock_stops = [
+            StationStop(seq=0, eva_code="5100065", name="Warszawa Centralna", arrival_min=0, departure_min=0, departure_time="15:20"),
+            StationStop(seq=1, eva_code="5100067", name="Warszawa Zachodnia", arrival_min=5, departure_min=6, arrival_time="15:25", departure_time="15:26"),
+            StationStop(seq=2, eva_code="5104415", name="Żyrardów", arrival_min=25, departure_min=26, arrival_time="15:45", departure_time="15:46"),
+            StationStop(seq=3, eva_code="5100294", name="Skierniewice", arrival_min=40, departure_min=41, arrival_time="16:00", departure_time="16:01"),
+            StationStop(seq=4, eva_code="5100024", name="Koluszki", arrival_min=60, departure_min=61, arrival_time="16:20", departure_time="16:21"),
+        ]
+
+        progress_msgs = []
+        scanner = LiveTrainScanner(headless=True, on_progress=lambda m: progress_msgs.append(m))
+
+        pw_calls = []
+
+        async def mock_scan_segment(**kwargs):
+            cb = kwargs.get("progress_cb")
+            if cb:
+                cb(90, "Odczytywanie wolnych miejsc...")
+            pw_calls.append((kwargs["from_station"], kwargs["to_station"]))
+            if kwargs["from_station"] == "Warszawa Centralna" and kwargs["to_station"] == "Koluszki":
+                raise GraphicReservationUnavailableError("BRAK_MIEJSC_KLASA_2: wyprzedane")
+            return {"3": ["14"]}
+
+        scanner.scraper.scan_segment = AsyncMock(side_effect=mock_scan_segment)
+
+        with patch("backend.app.scraper.ebilet_seat_scraper.resolve_real_route", return_value=mock_stops), \
+             patch("backend.app.scraper.ebilet_seat_scraper.filter_and_merge_stops", return_value=mock_stops), \
+             patch("backend.app.scraper.ebilet_seat_scraper.async_playwright") as mock_pw:
+            mock_browser = AsyncMock()
+            mock_ctx = AsyncMock()
+            mock_page = AsyncMock()
+            mock_browser.new_context.return_value = mock_ctx
+            mock_ctx.new_page.return_value = mock_page
+            mock_pw_inst = AsyncMock()
+            mock_pw_inst.chromium.connect_over_cdp.side_effect = Exception("No CDP")
+            mock_pw_inst.chromium.launch.return_value = mock_browser
+            mock_pw.return_value.__aenter__.return_value = mock_pw_inst
+
+            full_map = await scanner.scan_full_train(
+                from_station="Warszawa Centralna",
+                to_station="Koluszki",
+                travel_date="2026-11-24",
+                train_number="IC 1644",
+                fast_path=True,
+            )
+
+        assert full_map.fast_path_used is False
+        assert len(full_map.segments) == 4
+        assert all(s.status == "OK" for s in full_map.segments)
+
+        fp_pcts = [
+            int(_re.search(r"\[(\d+)%\]", m).group(1))
+            for m in progress_msgs
+            if "Fast-Path" in m and _re.search(r"\[(\d+)%\]", m)
+        ]
+        assert fp_pcts and max(fp_pcts) <= 22
+
+        assert len(pw_calls) == 5

@@ -852,3 +852,185 @@ class TestEbiletV3RealDOM:
         assert fp_pcts and max(fp_pcts) <= 22
 
         assert len(pw_calls) == 5
+
+    @pytest.mark.asyncio
+    async def test_metro_hub_tail_recovery_merges_unsellable_final_hop(self):
+        """
+        Verifies that when a final short metropolitan hop (e.g. Warszawa Zachodnia -> Warszawa Centralna)
+        is unsellable as a standalone ticket ('Nie znaleziono pociągu'), the scanner automatically merges
+        it with the previous segment (Pabianice -> Warszawa Centralna) instead of leaving SCRAPE_ERROR.
+        """
+        from unittest.mock import AsyncMock, patch
+        from backend.app.scraper.ebilet_seat_scraper import LiveTrainScanner
+        from backend.app.scraper.ic_client import GraphicReservationUnavailableError
+        from backend.app.scraper.route_resolver import StationStop
+
+        mock_stops = [
+            StationStop(seq=0, eva_code="5100188", name="Pabianice", arrival_min=0, departure_min=0, departure_time="20:13"),
+            StationStop(seq=1, eva_code="5100067", name="Warszawa Zachodnia", arrival_min=90, departure_min=91, arrival_time="21:43", departure_time="21:44"),
+            StationStop(seq=2, eva_code="5100065", name="Warszawa Centralna", arrival_min=96, departure_min=96, arrival_time="21:49"),
+        ]
+
+        scanner = LiveTrainScanner(headless=True)
+        calls = []
+
+        async def mock_scan_segment(**kwargs):
+            calls.append((kwargs["from_station"], kwargs["to_station"]))
+            if kwargs["from_station"] == "Pabianice" and kwargs["to_station"] == "Warszawa Zachodnia":
+                return {"5": ["48"]}
+            if kwargs["from_station"] == "Warszawa Zachodnia" and kwargs["to_station"] == "Warszawa Centralna":
+                raise GraphicReservationUnavailableError(
+                    "SCRAPE_ERROR: Nie znaleziono pociągu IC 6122 na liście połączeń dla relacji Warszawa Zachodnia -> Warszawa Centralna."
+                )
+            if kwargs["from_station"] == "Pabianice" and kwargs["to_station"] == "Warszawa Centralna":
+                return {"5": ["48"]}
+            return {}
+
+        scanner.scraper.scan_segment = AsyncMock(side_effect=mock_scan_segment)
+
+        with patch("backend.app.scraper.ebilet_seat_scraper.resolve_real_route", return_value=mock_stops), \
+             patch("backend.app.scraper.ebilet_seat_scraper.filter_and_merge_stops", return_value=mock_stops), \
+             patch("backend.app.scraper.ebilet_seat_scraper.async_playwright") as mock_pw:
+            mock_browser = AsyncMock()
+            mock_ctx = AsyncMock()
+            mock_page = AsyncMock()
+            mock_browser.new_context.return_value = mock_ctx
+            mock_ctx.new_page.return_value = mock_page
+            mock_pw_inst = AsyncMock()
+            mock_pw_inst.chromium.connect_over_cdp.side_effect = Exception("No CDP")
+            mock_pw_inst.chromium.launch.return_value = mock_browser
+            mock_pw.return_value.__aenter__.return_value = mock_pw_inst
+
+            full_map = await scanner.scan_full_train(
+                from_station="Pabianice",
+                to_station="Warszawa Centralna",
+                travel_date="2026-11-29",
+                train_number="IC 6122",
+                fast_path=False,
+            )
+
+        assert len(full_map.segments) == 1
+        seg = full_map.segments[0]
+        assert seg.status == "OK"
+        assert seg.error_reason is None
+        assert seg.from_station == "Pabianice"
+        assert seg.to_station == "Warszawa Centralna"
+        assert seg.duration_min == 96
+        assert seg.carriages == {"5": ["48"]}
+        assert ("Pabianice", "Warszawa Centralna") in calls
+
+    @pytest.mark.asyncio
+    async def test_split_fast_path_recovers_blocked_overnight_route(self):
+        """
+        Verifies adaptive divide-and-conquer split Fast-Path:
+        - When full route fails with 'Brak dostępnych wagonów Klasy 2' and split halves share a free seat,
+          returns fast_path_used=True with 2 macro segments without scanning all elementary segments.
+        - When one half is genuinely SOLD_OUT, falls back to elementary segments cleanly.
+        """
+        from unittest.mock import AsyncMock, patch
+        from backend.app.scraper.ebilet_seat_scraper import LiveTrainScanner
+        from backend.app.scraper.ic_client import GraphicReservationUnavailableError
+        from backend.app.scraper.route_resolver import StationStop
+
+        mock_stops = [
+            StationStop(
+                seq=i,
+                eva_code=f"51000{i:02d}",
+                name=f"Stacja_{i}",
+                arrival_min=i * 20,
+                departure_min=i * 20,
+                departure_time=f"{8 + i // 3:02d}:{(i % 3) * 20:02d}",
+                arrival_time=f"{8 + i // 3:02d}:{(i % 3) * 20:02d}",
+            )
+            for i in range(10)  # 9 elementary segments (>= 8 threshold)
+        ]
+
+        # Case A: Split halves share seat ("12", "11")
+        scanner_a = LiveTrainScanner(headless=True)
+        calls_a = []
+
+        async def mock_split_hit(**kwargs):
+            calls_a.append((kwargs["from_station"], kwargs["to_station"]))
+            if kwargs["from_station"] == "Stacja_0" and kwargs["to_station"] == "Stacja_9":
+                raise GraphicReservationUnavailableError(
+                    "BRAK_MIEJSC_KLASA_2: Brak dostępnych wagonów Klasy 2 w składzie."
+                )
+            if kwargs["from_station"] == "Stacja_0" and kwargs["to_station"] == "Stacja_4":
+                return {"12": ["11", "15"]}
+            if kwargs["from_station"] == "Stacja_4" and kwargs["to_station"] == "Stacja_9":
+                return {"12": ["11", "22"]}
+            return {"12": ["11"]}
+
+        scanner_a.scraper.scan_segment = AsyncMock(side_effect=mock_split_hit)
+
+        with patch("backend.app.scraper.ebilet_seat_scraper.resolve_real_route", return_value=mock_stops), \
+             patch("backend.app.scraper.ebilet_seat_scraper.filter_and_merge_stops", return_value=mock_stops), \
+             patch("backend.app.scraper.ebilet_seat_scraper.async_playwright") as mock_pw:
+            mock_browser = AsyncMock()
+            mock_ctx = AsyncMock()
+            mock_page = AsyncMock()
+            mock_browser.new_context.return_value = mock_ctx
+            mock_ctx.new_page.return_value = mock_page
+            mock_pw_inst = AsyncMock()
+            mock_pw_inst.chromium.connect_over_cdp.side_effect = Exception("No CDP")
+            mock_pw_inst.chromium.launch.return_value = mock_browser
+            mock_pw.return_value.__aenter__.return_value = mock_pw_inst
+
+            fast_map = await scanner_a.scan_full_train(
+                from_station="Stacja_0",
+                to_station="Stacja_9",
+                travel_date="2026-11-24",
+                train_number="TLK 83170",
+                fast_path=True,
+            )
+
+        assert fast_map.fast_path_used is True
+        assert fast_map.total_route_segments == 9
+        assert len(fast_map.segments) == 2
+        assert fast_map.segments[0].from_station == "Stacja_0"
+        assert fast_map.segments[0].to_station == "Stacja_4"
+        assert fast_map.segments[1].from_station == "Stacja_4"
+        assert fast_map.segments[1].to_station == "Stacja_9"
+        assert len(calls_a) == 3
+
+        # Case B: Second half genuinely SOLD_OUT -> falls back to 9 elementary segments
+        scanner_b = LiveTrainScanner(headless=True)
+        calls_b = []
+
+        async def mock_split_miss(**kwargs):
+            calls_b.append((kwargs["from_station"], kwargs["to_station"]))
+            if kwargs["from_station"] == "Stacja_0" and kwargs["to_station"] == "Stacja_9":
+                raise GraphicReservationUnavailableError(
+                    "BRAK_MIEJSC_KLASA_2: Brak dostępnych wagonów Klasy 2 w składzie."
+                )
+            if kwargs["from_station"] == "Stacja_4" and kwargs["to_station"] == "Stacja_9":
+                raise GraphicReservationUnavailableError(
+                    "BRAK_MIEJSC_KLASA_2: Wszystkie dostępne wagony Klasy 2 mają 0 wolnych miejsc."
+                )
+            return {"12": ["11"]}
+
+        scanner_b.scraper.scan_segment = AsyncMock(side_effect=mock_split_miss)
+
+        with patch("backend.app.scraper.ebilet_seat_scraper.resolve_real_route", return_value=mock_stops), \
+             patch("backend.app.scraper.ebilet_seat_scraper.filter_and_merge_stops", return_value=mock_stops), \
+             patch("backend.app.scraper.ebilet_seat_scraper.async_playwright") as mock_pw:
+            mock_browser = AsyncMock()
+            mock_ctx = AsyncMock()
+            mock_page = AsyncMock()
+            mock_browser.new_context.return_value = mock_ctx
+            mock_ctx.new_page.return_value = mock_page
+            mock_pw_inst = AsyncMock()
+            mock_pw_inst.chromium.connect_over_cdp.side_effect = Exception("No CDP")
+            mock_pw_inst.chromium.launch.return_value = mock_browser
+            mock_pw.return_value.__aenter__.return_value = mock_pw_inst
+
+            fallback_map = await scanner_b.scan_full_train(
+                from_station="Stacja_0",
+                to_station="Stacja_9",
+                travel_date="2026-11-24",
+                train_number="TLK 83170",
+                fast_path=True,
+            )
+
+        assert fallback_map.fast_path_used is False
+        assert len(fallback_map.segments) == 9

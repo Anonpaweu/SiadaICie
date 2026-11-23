@@ -54,7 +54,7 @@ from backend.app.scraper.grm_parser import (
     shift_query_time,
 )
 from backend.app.scraper.schedule_scraper import resolve_real_route, get_station_info
-from backend.app.scraper.route_resolver import filter_and_merge_stops
+from backend.app.scraper.route_resolver import METROPOLITAN_HUBS, filter_and_merge_stops
 from backend.app.scraper.ic_client import GraphicReservationUnavailableError
 
 logger = logging.getLogger(__name__)
@@ -79,6 +79,19 @@ BLOCKED_TRACKER_DOMAINS = (
 def is_debug_scraper_enabled() -> bool:
     """Returns True only when DEBUG_SCRAPER env flag enables happy-path HTML/PNG dumps and JSONL logging."""
     return os.getenv("DEBUG_SCRAPER", "").strip().lower() in ("1", "true", "yes")
+
+
+def is_same_metro_hub(station_a: str, station_b: str) -> bool:
+    """Returns True when both stations belong to the same metropolitan hub (Warszawa, Trójmiasto, GOP)."""
+    info_a = METROPOLITAN_HUBS.get((station_a or "").strip())
+    info_b = METROPOLITAN_HUBS.get((station_b or "").strip())
+    return bool(info_a and info_b and info_a[0] == info_b[0])
+
+
+def is_seatmap_wagons_unavailable_error(reason: str) -> bool:
+    """Returns True when e-IC blocked all class wagons on the graphical seatmap (wagonyNiedostepne)."""
+    low = (reason or "").lower()
+    return "brak dostępnych wagonów" in low or "brak dostepnych wagonow" in low
 
 
 def log_network_api_call(url: str, status: int, data: Any) -> None:
@@ -898,8 +911,8 @@ class EbiletSeatScraper:
                     except Exception:
                         pass
 
-                # Jeśli e-IC zawiesiło ładowanie na dłużej niż 16s bez kart, odśwież stronę
-                if time.time() - start_wait > 16.0 and not reloaded and card_count == 0:
+                # Jeśli e-IC zawiesiło ładowanie na dłużej niż 10s bez kart, odśwież stronę
+                if time.time() - start_wait > 10.0 and not reloaded and card_count == 0:
                     logger.warning(f"[CONNECTION LIST] Długie ładowanie ({time.time() - start_wait:.1f}s), odświeżam stronę...")
                     reloaded = True
                     try:
@@ -1746,7 +1759,14 @@ class EbiletSeatScraper:
                 except GraphicReservationUnavailableError as e:
                     last_error = e
                     logger.warning(f"[SCAN] Rezerwacja graficzna niedostępna dla {from_station} -> {to_station}: {e}")
+                    err_low = str(e).lower()
                     if is_sold_out_reason(str(e)):
+                        raise
+                    if (
+                        "nie znaleziono pociągu" in err_low
+                        and "po 35s" not in err_low
+                        and is_same_metro_hub(from_station, to_station)
+                    ):
                         raise
                     if attempt == 0:
                         await asyncio.sleep(2.0)
@@ -1979,6 +1999,7 @@ class LiveTrainScanner:
                     fp_context = await self.scraper.create_context(browser, storage_state=warmup_storage_state)
                     fp_page = await self.scraper.init_page(fp_context)
                     full_carriages: Dict[str, List[str]] = {}
+                    fp_wagons_unavailable = False
                     try:
                         def fp_cb(pct: int, msg: str):
                             global_pct = min(22, 13 + int(pct * 0.09))
@@ -2008,10 +2029,11 @@ class LiveTrainScanner:
                             f"[22%] Szybkie sprawdzanie przekroczyło limit czasu — skanuję wszystkie {num_segments} odcinków..."
                         )
                     except GraphicReservationUnavailableError as e:
+                        fp_wagons_unavailable = is_seatmap_wagons_unavailable_error(str(e))
                         if is_sold_out_reason(str(e)):
                             self._notify(
                                 f"[22%] Brak wolnego miejsca na całą trasę ({s_first.name} -> {s_last.name}) "
-                                f"— przechodzę do skanowania {num_segments} odcinków pośrednich..."
+                                f"— przechodzę dalej..."
                             )
                         else:
                             logger.warning(f"[FAST-PATH] Fallback do pełnego skanowania: {e}")
@@ -2063,6 +2085,141 @@ class LiveTrainScanner:
 
                         self._notify("[100%] Szybkie sprawdzanie: znaleziono wolne miejsca na 100% trasy bez przesiadek!")
                         return fast_map
+
+                    # Adaptive Split Fast-Path when e-IC blocks full-route graphical seatmap on long routes
+                    if fp_wagons_unavailable and num_segments >= 8:
+                        self._notify(
+                            "[23%] Schemat zablokowany dla całej relacji — sprawdzam Fast-Path połówkami trasy..."
+                        )
+                        probe_budget = [6]
+
+                        async def _scan_subrange(a_idx: int, b_idx: int) -> Tuple[Optional[SegmentAvailabilityMap], bool]:
+                            if probe_budget[0] <= 0:
+                                return None, False
+                            probe_budget[0] -= 1
+                            _check_cancelled()
+
+                            sa = stops[a_idx]
+                            sb = stops[b_idx]
+                            sub_dep = sa.departure_time or sa.arrival_time or departure_time or "12:00"
+                            sub_date = self.compute_segment_date(travel_date, int(getattr(sa, "day_offset", 0) or 0))
+                            sub_from_eva = (getattr(sa, "eva_code", "") or "").strip()
+                            sub_to_eva = (getattr(sb, "eva_code", "") or "").strip()
+
+                            sub_ctx = await self.scraper.create_context(browser, storage_state=warmup_storage_state)
+                            sub_page = await self.scraper.init_page(sub_ctx)
+                            try:
+                                sub_carriages = await asyncio.wait_for(
+                                    self.scraper.scan_segment(
+                                        from_station=sa.name,
+                                        to_station=sb.name,
+                                        travel_date=sub_date,
+                                        departure_time=sub_dep,
+                                        train_number=train_number,
+                                        ticket_class=ticket_class,
+                                        page=sub_page,
+                                        has_warmed_session=bool(warmup_storage_state),
+                                        from_eva=sub_from_eva,
+                                        to_eva=sub_to_eva,
+                                    ),
+                                    timeout=60.0,
+                                )
+                                if sub_carriages and any(len(v) > 0 for v in sub_carriages.values()):
+                                    return (
+                                        SegmentAvailabilityMap(
+                                            segment_index=0,
+                                            from_station=sa.name,
+                                            to_station=sb.name,
+                                            departure_time=sub_dep,
+                                            duration_min=_compute_duration_min(
+                                                sa, sb, fallback_min=30 * max(1, b_idx - a_idx)
+                                            ),
+                                            from_eva=sub_from_eva,
+                                            to_eva=sub_to_eva,
+                                            segment_date=sub_date,
+                                            carriages=sub_carriages,
+                                            status="OK",
+                                            error_reason=None,
+                                        ),
+                                        False,
+                                    )
+                                return None, False
+                            except asyncio.CancelledError:
+                                raise
+                            except GraphicReservationUnavailableError as sub_err:
+                                return None, is_seatmap_wagons_unavailable_error(str(sub_err))
+                            except Exception:
+                                return None, False
+                            finally:
+                                try:
+                                    await sub_page.close()
+                                except Exception:
+                                    pass
+                                try:
+                                    await sub_ctx.close()
+                                except Exception:
+                                    pass
+
+                        async def _try_split_fast_path(
+                            start_idx: int,
+                            end_idx: int,
+                            depth: int = 1,
+                        ) -> Optional[List[SegmentAvailabilityMap]]:
+                            if (end_idx - start_idx) < 2 or probe_budget[0] < 2:
+                                return None
+                            mid_idx = (start_idx + end_idx) // 2
+
+                            async def _resolve_half(a_idx: int, b_idx: int) -> Optional[List[SegmentAvailabilityMap]]:
+                                seg, wagons_unavail = await _scan_subrange(a_idx, b_idx)
+                                if seg is not None:
+                                    return [seg]
+                                if wagons_unavail and depth < 2 and (b_idx - a_idx) >= 4 and probe_budget[0] >= 2:
+                                    return await _try_split_fast_path(a_idx, b_idx, depth + 1)
+                                return None
+
+                            left_segs = await _resolve_half(start_idx, mid_idx)
+                            if left_segs is None:
+                                return None
+                            right_segs = await _resolve_half(mid_idx, end_idx)
+                            if right_segs is None:
+                                return None
+                            return left_segs + right_segs
+
+                        macro_segments = await _try_split_fast_path(0, num_segments, depth=1)
+                        if macro_segments:
+                            common_seats = set.intersection(
+                                *[
+                                    {(w, s) for w, seats in seg.carriages.items() for s in seats}
+                                    for seg in macro_segments
+                                ]
+                            )
+                            if common_seats:
+                                for seg_i, seg in enumerate(macro_segments):
+                                    seg.segment_index = seg_i
+                                split_fast_map = FullTrainAvailabilityMap(
+                                    train_number=train_number,
+                                    travel_date=travel_date,
+                                    fast_path_used=True,
+                                    total_route_segments=num_segments,
+                                    segments=macro_segments,
+                                )
+                                try:
+                                    LAST_SCAN_FILE.write_text(
+                                        format_availability_map(split_fast_map), encoding="utf-8"
+                                    )
+                                    logger.info(f"[SCANNER] Saved split fast-path scan map to {LAST_SCAN_FILE}")
+                                except Exception as e:
+                                    logger.warning(f"Failed to write last scan map: {e}")
+
+                                self._notify(
+                                    f"[100%] Szybkie sprawdzanie (podział trasy na {len(macro_segments)} odcinki/ów): "
+                                    f"znaleziono wolne miejsca na 100% trasy bez przesiadek!"
+                                )
+                                return split_fast_map
+
+                        self._notify(
+                            f"[24%] Podział trasy nie znalazł jednego miejsca na całość — skanuję wszystkie {num_segments} odcinków..."
+                        )
 
                 _check_cancelled()
 
@@ -2207,6 +2364,125 @@ class LiveTrainScanner:
                 tasks = [scan_single_segment(i) for i in range(num_segments)]
                 segments_map = list(await asyncio.gather(*tasks))
 
+                def _is_unsellable_metro_boundary(seg: SegmentAvailabilityMap) -> bool:
+                    if seg.status != "SCRAPE_ERROR":
+                        return False
+                    err_low = (seg.error_reason or "").lower()
+                    if "nie znaleziono pociągu" not in err_low or "po 35s" in err_low:
+                        return False
+                    if not is_same_metro_hub(seg.from_station, seg.to_station):
+                        return False
+                    return (seg.duration_min or 0) <= 15
+
+                async def _scan_merged_boundary(
+                    first_seg: SegmentAvailabilityMap,
+                    second_seg: SegmentAvailabilityMap,
+                    stop_from,
+                    stop_to,
+                ) -> Optional[SegmentAvailabilityMap]:
+                    merged_dur = _compute_duration_min(
+                        stop_from,
+                        stop_to,
+                        fallback_min=(first_seg.duration_min or 30) + (second_seg.duration_min or 5),
+                    )
+                    m_ctx = await self.scraper.create_context(browser, storage_state=warmup_storage_state)
+                    m_page = await self.scraper.init_page(m_ctx)
+                    try:
+                        m_carriages = await asyncio.wait_for(
+                            self.scraper.scan_segment(
+                                from_station=first_seg.from_station,
+                                to_station=second_seg.to_station,
+                                travel_date=first_seg.segment_date or travel_date,
+                                departure_time=first_seg.departure_time or departure_time or "12:00",
+                                train_number=train_number,
+                                ticket_class=ticket_class,
+                                page=m_page,
+                                has_warmed_session=bool(warmup_storage_state),
+                                from_eva=first_seg.from_eva or (getattr(stop_from, "eva_code", "") or "").strip(),
+                                to_eva=second_seg.to_eva or (getattr(stop_to, "eva_code", "") or "").strip(),
+                            ),
+                            timeout=75.0,
+                        )
+                        if m_carriages and any(len(s) > 0 for s in m_carriages.values()):
+                            return SegmentAvailabilityMap(
+                                segment_index=first_seg.segment_index,
+                                from_station=first_seg.from_station,
+                                to_station=second_seg.to_station,
+                                departure_time=first_seg.departure_time,
+                                duration_min=merged_dur,
+                                from_eva=first_seg.from_eva,
+                                to_eva=second_seg.to_eva,
+                                segment_date=first_seg.segment_date,
+                                carriages=m_carriages,
+                                status="OK",
+                                error_reason=None,
+                            )
+                        return SegmentAvailabilityMap(
+                            segment_index=first_seg.segment_index,
+                            from_station=first_seg.from_station,
+                            to_station=second_seg.to_station,
+                            departure_time=first_seg.departure_time,
+                            duration_min=merged_dur,
+                            from_eva=first_seg.from_eva,
+                            to_eva=second_seg.to_eva,
+                            segment_date=first_seg.segment_date,
+                            carriages={},
+                            status="SOLD_OUT",
+                            error_reason=f"Brak wolnych miejsc w Klasie {ticket_class}.",
+                        )
+                    except asyncio.CancelledError:
+                        raise
+                    except GraphicReservationUnavailableError as m_err:
+                        if is_sold_out_reason(str(m_err)):
+                            return SegmentAvailabilityMap(
+                                segment_index=first_seg.segment_index,
+                                from_station=first_seg.from_station,
+                                to_station=second_seg.to_station,
+                                departure_time=first_seg.departure_time,
+                                duration_min=merged_dur,
+                                from_eva=first_seg.from_eva,
+                                to_eva=second_seg.to_eva,
+                                segment_date=first_seg.segment_date,
+                                carriages={},
+                                status="SOLD_OUT",
+                                error_reason=str(m_err),
+                            )
+                        return None
+                    except Exception:
+                        return None
+                    finally:
+                        try:
+                            await m_page.close()
+                        except Exception:
+                            pass
+                        try:
+                            await m_ctx.close()
+                        except Exception:
+                            pass
+
+                if len(segments_map) >= 2 and _is_unsellable_metro_boundary(segments_map[-1]):
+                    prev_seg, tail_seg = segments_map[-2], segments_map[-1]
+                    self._notify(
+                        f"[96%] Odcinek końcowy aglomeracji ({tail_seg.from_station} -> {tail_seg.to_station}) "
+                        f"nie jest sprzedawany osobno — łączę z poprzednim odcinkiem ({prev_seg.from_station} -> {tail_seg.to_station})..."
+                    )
+                    merged_tail = await _scan_merged_boundary(prev_seg, tail_seg, stops[-3], stops[-1])
+                    if merged_tail is not None:
+                        segments_map[-2:] = [merged_tail]
+
+                if len(segments_map) >= 2 and _is_unsellable_metro_boundary(segments_map[0]):
+                    head_seg, next_seg = segments_map[0], segments_map[1]
+                    self._notify(
+                        f"[97%] Odcinek początkowy aglomeracji ({head_seg.from_station} -> {head_seg.to_station}) "
+                        f"nie jest sprzedawany osobno — łączę z kolejnym odcinkiem ({head_seg.from_station} -> {next_seg.to_station})..."
+                    )
+                    merged_head = await _scan_merged_boundary(head_seg, next_seg, stops[0], stops[2])
+                    if merged_head is not None:
+                        segments_map[:2] = [merged_head]
+
+                for seg_idx, seg in enumerate(segments_map):
+                    seg.segment_index = seg_idx
+
             finally:
                 if unhide_task:
                     unhide_task.cancel()
@@ -2217,7 +2493,7 @@ class LiveTrainScanner:
             train_number=train_number,
             travel_date=travel_date,
             fast_path_used=False,
-            total_route_segments=num_segments,
+            total_route_segments=len(segments_map),
             segments=segments_map,
         )
 

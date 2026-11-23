@@ -82,6 +82,37 @@ def parse_profile(raw_profile: Optional[str]) -> OptimizationProfile:
         return OptimizationProfile.BALANCED
 
 
+def format_transfers_pl(count: int) -> str:
+    """Formats transfer count with proper Polish pluralization."""
+    n = int(count)
+    if n <= 0:
+        return "bez przesiadek"
+    if n == 1:
+        return "1 przesiadka"
+    if 2 <= (n % 10) <= 4 and not (12 <= (n % 100) <= 14):
+        return f"{n} przesiadki"
+    return f"{n} przesiadek"
+
+
+def _merge_consecutive_standing_blocks(path: List[AvailabilityBlock]) -> List[AvailabilityBlock]:
+    """Merges adjacent STANDING corridor blocks into a single continuous corridor leg."""
+    merged: List[AvailabilityBlock] = []
+    for block in path:
+        if block.is_standing and merged and merged[-1].is_standing and merged[-1].end_seg == block.start_seg:
+            prev = merged[-1]
+            merged[-1] = AvailabilityBlock(
+                block_id=f"STANDING_{prev.start_seg}_{block.end_seg}",
+                seat=prev.seat,
+                start_seg=prev.start_seg,
+                end_seg=block.end_seg,
+                duration_min=prev.duration_min + block.duration_min,
+                is_standing=True,
+            )
+        else:
+            merged.append(block)
+    return merged
+
+
 def calculate_transfer_penalty(
     seat_a: SeatMeta,
     seat_b: SeatMeta,
@@ -98,6 +129,9 @@ def calculate_transfer_penalty(
     """
     dist_mult, transfer_mult = get_profile_multipliers(config.profile)
     base_transfer = config.p_base_transfer * transfer_mult
+
+    if seat_a.seat_uid == "STANDING" and (is_standing_b or seat_b.seat_uid == "STANDING"):
+        return 0.0
 
     if is_standing_b or seat_a.seat_uid == "STANDING" or seat_b.seat_uid == "STANDING":
         return base_transfer + 100.0
@@ -361,6 +395,7 @@ def solve_top_strategies(
             break
 
         total_score, path = res
+        path = _merge_consecutive_standing_blocks(path)
         sig = tuple((b.seat.seat_uid, b.start_seg, b.end_seg) for b in path)
         if sig in seen_signatures:
             break
@@ -431,13 +466,17 @@ def solve_top_strategies(
         else:
             break
 
-        transfers_count = max(0, len(path) - 1)
+        transfers_count = max(0, len(non_standing_blocks) - 1)
         if transfers_count == 0 and standing_min == 0:
             title = "100% Trasy bez przesiadek (Złoty Strzał)"
         elif len(carriages_used) == 1 and standing_min == 0:
-            title = f"Przesiadka w tym samym wagonie (Wagon {carriages_used[0]})"
+            title = f"Przesiadka w tym samym wagonie (Wagon {carriages_used[0]}, {format_transfers_pl(transfers_count)})"
+        elif standing_min > 0 and transfers_count == 0:
+            title = f"1 miejsce siedzące + korytarz ({standing_min} min)"
+        elif standing_min > 0:
+            title = f"Optymalna kombinacja ({format_transfers_pl(transfers_count)}, korytarz {standing_min} min)"
         else:
-            title = f"Optymalna kombinacja ({transfers_count} przesiadka/i)"
+            title = f"Optymalna kombinacja ({format_transfers_pl(transfers_count)})"
 
         tickets_to_buy: List[str] = []
         purchase_instructions: List[str] = []

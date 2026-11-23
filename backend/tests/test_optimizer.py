@@ -222,3 +222,70 @@ class TestProfilesAndCarriageDiversity:
 
         assert p_walk > p_bal * 2.5
         assert p_trans != p_bal
+
+
+class TestStandingMergingAndPluralization:
+    """Tests for merging adjacent standing blocks, accurate transfer counting, and Polish pluralization."""
+
+    def test_consecutive_standing_segments_merged_and_transfers_count_accurate(self):
+        from backend.app.optimizer.solver import calculate_transfer_penalty
+
+        # 5 segments across 6 stations: segments 1, 2, 3 (Wrzesnia->Slupca->Konin->Kolo) completely booked
+        station_names = [
+            "Poznań Główny",
+            "Września",
+            "Słupca",
+            "Konin",
+            "Koło",
+            "Warszawa Centralna",
+        ]
+        segment_durations = [44, 13, 15, 14, 95]  # 13+15+14 = 42m continuous corridor
+        avail = {
+            "11_14": [1, 0, 0, 0, 0],
+            "12_36": [0, 0, 0, 0, 1],
+        }
+        meta = {
+            "11_14": SeatMeta(seat_uid="11_14", carriage_no=11, seat_no="14", compartment_no=1),
+            "12_36": SeatMeta(seat_uid="12_36", carriage_no=12, seat_no="36", compartment_no=3),
+        }
+
+        strategies = solve_top_strategies(avail, meta, station_names, segment_durations)
+        assert len(strategies) >= 1
+        best = strategies[0]
+
+        # Must merge segments 1, 2, 3 into ONE standing step Wrzesnia -> Kolo (42 min)
+        assert len(best.steps) == 3
+        assert best.steps[0].seat_uid == "11_14"
+        assert best.steps[1].is_standing is True
+        assert best.steps[1].from_station_name == "Września"
+        assert best.steps[1].to_station_name == "Koło"
+        assert best.steps[1].duration_min == 42
+        assert best.steps[2].seat_uid == "12_36"
+
+        # 2 seated steps -> 1 transfer (not inflated by standing intermediate hops)
+        assert best.transfers_count == 1
+        assert best.total_standing_min == 42
+        assert "1 przesiadka" in best.title
+        assert "42 min" in best.title
+        assert len(best.purchase_instructions) == 3
+        assert len(best.tickets_to_buy) == 2
+
+        # Standing -> Standing transition carries zero penalty
+        st_meta = SeatMeta(seat_uid="STANDING", carriage_no=0, seat_no="KORYTARZ")
+        assert calculate_transfer_penalty(st_meta, st_meta, True, OptimizerConfig()) == 0.0
+
+    def test_format_transfers_pl_all_cases(self):
+        from backend.app.optimizer.solver import format_transfers_pl
+
+        assert format_transfers_pl(0) == "bez przesiadek"
+        assert format_transfers_pl(1) == "1 przesiadka"
+        assert format_transfers_pl(2) == "2 przesiadki"
+        assert format_transfers_pl(3) == "3 przesiadki"
+        assert format_transfers_pl(4) == "4 przesiadki"
+        assert format_transfers_pl(5) == "5 przesiadek"
+        assert format_transfers_pl(11) == "11 przesiadek"
+        assert format_transfers_pl(12) == "12 przesiadek"
+        assert format_transfers_pl(14) == "14 przesiadek"
+        assert format_transfers_pl(21) == "21 przesiadek"
+        assert format_transfers_pl(22) == "22 przesiadki"
+        assert format_transfers_pl(25) == "25 przesiadek"

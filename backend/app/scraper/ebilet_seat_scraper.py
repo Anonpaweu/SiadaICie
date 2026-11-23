@@ -986,13 +986,31 @@ class EbiletSeatScraper:
                     f"SCRAPE_ERROR: Nie znaleziono pociągu {train_number} na liście połączeń dla relacji {from_station} -> {to_station}. Zapisano {snap_png.name}"
                 )
 
-            # Expand train card
+            # Wait for per-card price/offer loader ("Ładowanie ceny") to finish so the real
+            # "Kup bilet" / class button appears (never click "DODATKOWE INFORMACJE" instead!)
+            action_ready_selector = (
+                "button[aria-label*='Kup bilet'], button:has-text('Kup bilet'), "
+                "button:has-text('Wybierz'), button[data-testid='OutlineButton'], "
+                "button[aria-label*='2 klas'], button[aria-label*='1 klas']"
+            )
+            price_wait_start = time.time()
+            while time.time() - price_wait_start < 12.0:
+                try:
+                    if await chosen_card.locator(action_ready_selector).count() > 0:
+                        break
+                    card_txt_low = (await chosen_card.inner_text() or "").lower()
+                    if "ładowanie ceny" not in card_txt_low and "ladowanie ceny" not in card_txt_low:
+                        break
+                except Exception:
+                    break
+                await asyncio.sleep(0.25)
+
+            # Expand train card (strictly buy/select buttons — never bare 'button' which hits 'DODATKOWE INFORMACJE')
             expand_buttons = [
                 chosen_card.locator("button[data-testid='OutlineButton']").first,
                 chosen_card.locator("button[aria-label*='Kup bilet']").first,
                 chosen_card.locator("button:has-text('Kup bilet')").first,
                 chosen_card.locator("button:has-text('Wybierz')").first,
-                chosen_card.locator("button").first,
             ]
             for exp_btn in expand_buttons:
                 try:

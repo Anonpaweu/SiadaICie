@@ -299,6 +299,22 @@
       <div id="errorMessage" class="flex-1 leading-relaxed">Wystąpił błąd podczas analizy.</div>
     </div>
 
+    <!-- Ostrzeżenie o błędach odczytu odcinków -->
+    <div id="scrapeErrorWarningBanner" class="hidden bg-amber-950/80 border border-amber-600/70 text-amber-200 p-4 rounded-xl text-xs flex items-start gap-3 shadow-xl">
+      <svg class="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+      </svg>
+      <div class="flex-1 space-y-1.5 leading-relaxed">
+        <div id="scrapeErrorWarningTitle" class="font-bold text-amber-300">
+          Uwaga: nie udało się odczytać dostępności na części odcinków
+        </div>
+        <div class="text-amber-100/90">
+          Odcinki oznaczone w tabeli jako <strong>BŁĄD ODCZYTU</strong> nie zostały pomyślnie pobrane z systemu rezerwacyjnego i <strong>nie muszą być wyprzedane</strong>. Sprawdź je bezpośrednio w systemie e-IC lub ponów skanowanie.
+        </div>
+        <ul id="scrapeErrorSegmentsList" class="list-disc list-inside space-y-1 text-amber-200 font-mono text-[11px] pt-1"></ul>
+      </div>
+    </div>
+
     <!-- Plan Zakupu Biletów i Przesiadek -->
     <section id="purchasePlanSection" class="hidden bg-pkp-surface border border-pkp-orange/40 rounded-xl p-5 shadow-2xl space-y-3.5">
       <div class="flex items-center justify-between border-b border-pkp-border pb-3">
@@ -369,6 +385,10 @@
         <div class="flex items-center gap-2">
           <span class="w-3.5 h-3.5 rounded bg-rose-950/80 border border-rose-800 inline-block"></span>
           <span>Zajęte</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="w-3.5 h-3.5 rounded bg-amber-950/60 border border-amber-700/70 inline-block"></span>
+          <span>Błąd odczytu odcinka</span>
         </div>
         <div class="flex items-center gap-2">
           <span class="w-3.5 h-3.5 rounded bg-pkp-navy border-2 border-pkp-orange shadow-sm inline-block"></span>
@@ -628,6 +648,8 @@
       fetchTrainRoute(true);
 
       errorAlert.classList.add('hidden');
+      const scrapeWarnBanner = document.getElementById('scrapeErrorWarningBanner');
+      if (scrapeWarnBanner) scrapeWarnBanner.classList.add('hidden');
       progressSection.classList.remove('hidden');
       progressBar.style.width = '5%';
       progressPercent.innerText = '5%';
@@ -737,6 +759,8 @@
 
       currentTicketClass = 2;
       errorAlert.classList.add('hidden');
+      const scrapeWarnBanner = document.getElementById('scrapeErrorWarningBanner');
+      if (scrapeWarnBanner) scrapeWarnBanner.classList.add('hidden');
       progressSection.classList.remove('hidden');
       progressBar.style.width = '50%';
       progressMessage.innerText = 'Przeliczanie optymalnego grafu przesiadek...';
@@ -784,10 +808,42 @@
         progressSection.classList.add('hidden');
       }, 2000);
 
+      renderScrapeErrorWarning(data.segments);
       renderPurchaseInstructions(data);
       renderCarriageFilter(data.seat_matrix);
       renderStrategies(data.strategies);
       renderMatrix();
+    }
+
+    function renderScrapeErrorWarning(segments) {
+      const banner = document.getElementById('scrapeErrorWarningBanner');
+      const titleEl = document.getElementById('scrapeErrorWarningTitle');
+      const listEl = document.getElementById('scrapeErrorSegmentsList');
+      if (!banner || !listEl) return;
+
+      const allSegments = Array.isArray(segments) ? segments : [];
+      const failedSegments = allSegments.filter(seg => seg && seg.status === 'SCRAPE_ERROR');
+
+      if (!failedSegments.length) {
+        banner.classList.add('hidden');
+        listEl.innerHTML = '';
+        return;
+      }
+
+      if (titleEl) {
+        titleEl.innerText = `Uwaga: nie udało się odczytać dostępności dla ${failedSegments.length} z ${allSegments.length} odcinków (te kolumny nie muszą być wyprzedane)`;
+      }
+
+      listEl.innerHTML = '';
+      failedSegments.forEach(seg => {
+        const li = document.createElement('li');
+        const timePart = seg.departure_time ? ` (${seg.departure_time})` : '';
+        const reason = seg.error_reason || 'nieznany błąd odczytu';
+        li.innerHTML = `<span class="font-bold text-amber-300">${escapeHtml(seg.from_station)} → ${escapeHtml(seg.to_station)}${escapeHtml(timePart)}</span>: ${escapeHtml(reason)}`;
+        listEl.appendChild(li);
+      });
+
+      banner.classList.remove('hidden');
     }
 
     function renderPurchaseInstructions(data) {
@@ -973,7 +1029,15 @@
         const metaParts = [];
         if (seg.departure_time) metaParts.push(escapeHtml(seg.departure_time));
         metaParts.push(`${escapeHtml(seg.duration_min)} min`);
-        headerHtml += `<th class="p-2.5 border border-pkp-border font-bold text-xs">${escapeHtml(seg.from_station)} → ${escapeHtml(seg.to_station)}<div class="text-[10px] text-pkp-orange font-mono">${metaParts.join(' &bull; ')}</div></th>`;
+        const isScrapeError = seg && seg.status === 'SCRAPE_ERROR';
+        const errorTooltip = isScrapeError
+          ? ` title="${escapeHtml(seg.error_reason || 'Błąd odczytu dostępności odcinka')}"`
+          : '';
+        const errorBadgeHtml = isScrapeError
+          ? `<div class="mt-1 inline-block px-1.5 py-0.5 rounded bg-amber-950/80 border border-amber-600/70 text-amber-300 text-[10px] font-semibold">Błąd odczytu</div>`
+          : '';
+        const thExtraClass = isScrapeError ? ' bg-amber-950/40 border-amber-700/70' : '';
+        headerHtml += `<th class="p-2.5 border border-pkp-border${thExtraClass} font-bold text-xs"${errorTooltip}>${escapeHtml(seg.from_station)} → ${escapeHtml(seg.to_station)}<div class="text-[10px] text-pkp-orange font-mono">${metaParts.join(' &bull; ')}</div>${errorBadgeHtml}</th>`;
       });
       headerHtml += '</tr></thead>';
 
@@ -1002,11 +1066,18 @@
         </td>`;
 
         seat.availability.forEach((isFree, segIdx) => {
+          const seg = segments[segIdx];
+          const isScrapeError = seg && seg.status === 'SCRAPE_ERROR';
           const isAlgorithmSelected = selectedCells.has(`${seat.seat_uid}_${segIdx}`);
           let cellClass = '';
           let cellText = '';
+          let cellTitleAttr = '';
 
-          if (isAlgorithmSelected) {
+          if (isScrapeError) {
+            cellClass = 'bg-amber-950/60 text-amber-300 border border-amber-700/70 font-semibold';
+            cellText = 'BŁĄD ODCZYTU';
+            cellTitleAttr = ` title="${escapeHtml(seg.error_reason || 'Błąd odczytu dostępności odcinka')}"`;
+          } else if (isAlgorithmSelected) {
             cellClass = 'cell-selected';
             cellText = 'WYBRANE';
           } else if (isFree === 1) {
@@ -1017,7 +1088,7 @@
             cellText = 'ZAJĘTE';
           }
 
-          bodyHtml += `<td class="p-2.5 border border-pkp-border ${cellClass} transition-all">${cellText}</td>`;
+          bodyHtml += `<td class="p-2.5 border border-pkp-border ${cellClass} transition-all"${cellTitleAttr}>${cellText}</td>`;
         });
         bodyHtml += '</tr>';
       });

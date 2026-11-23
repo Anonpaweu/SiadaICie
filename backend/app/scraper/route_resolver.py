@@ -18,6 +18,7 @@ class StationStop(BaseModel):
     departure_time: str = "" # e.g. "15:12"
     metropolitan_group: Optional[str] = None
     is_main_hub: bool = False
+    day_offset: int = 0
 
 
 RouteStop = StationStop

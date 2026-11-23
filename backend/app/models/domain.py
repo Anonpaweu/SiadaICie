@@ -107,6 +107,8 @@ class SegmentAvailabilityMap(BaseModel):
     to_station: str
     departure_time: str = ""
     carriages: Dict[str, List[str]] = Field(default_factory=dict)
+    status: str = "OK"                       # "OK", "SOLD_OUT", "SCRAPE_ERROR"
+    error_reason: Optional[str] = None
 
 
 class FullTrainAvailabilityMap(BaseModel):

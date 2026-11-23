@@ -23,10 +23,12 @@ import time
 import logging
 import asyncio
 import random
-from datetime import datetime
+import xml.etree.ElementTree as ET
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Callable, Tuple, Union
 
+import bs4
 from playwright.async_api import async_playwright, Page, BrowserContext, Response, Frame
 
 from backend.app.db.database import (
@@ -51,6 +53,121 @@ NETWORK_API_LOG = DEBUG_SNAPSHOTS_DIR / "network_api_log.jsonl"
 LAST_SCAN_FILE = Path("logs/last_scan_map.txt")
 TARGET_CLASS = 2  # Hardcoded default: 2nd class sitting carriages per Plan V2/V3
 
+PRM_WHEELCHAIR_MARKERS = (
+    "na wózku",
+    "na wozku",
+    "wózku inwalidzkim",
+    "wozku inwalidzkim",
+    "opiekuna osoby na wózku",
+    "opiekuna osoby na wozku",
+    "wózek inwalidzki",
+    "wozek inwalidzki",
+)
+
+SOLD_OUT_MARKERS = (
+    "brak_miejsc",
+    "brak miejsc",
+    "brak wolnych miejsc",
+    "brak dostępnych wagonów",
+    "wyprzedan",
+    "wyczerpano pulę miejsc",
+)
+
+
+def is_prm_wheelchair_label(aria_label: str) -> bool:
+    """Returns True if an aria-label describes a wheelchair-only or wheelchair-companion PRM seat."""
+    low = (aria_label or "").lower()
+    return any(marker in low for marker in PRM_WHEELCHAIR_MARKERS)
+
+
+def is_sold_out_reason(reason: str) -> bool:
+    """Distinguishes true sold-out errors from scrape/network/matching failures."""
+    low = (reason or "").lower()
+    return any(marker in low for marker in SOLD_OUT_MARKERS)
+
+
+def parse_grm_wagon_svg(svg_xml: str, ticket_class: int = TARGET_CLASS) -> List[str]:
+    """
+    Deterministically parses a GRM wagon SVG XML payload from /grm/wagon/svg/wbnet/...
+    Extracts free seat numbers matching ticket_class (1 or 2) and excludes wheelchair-only PRM seats.
+    """
+    if not svg_xml or not svg_xml.strip():
+        return []
+
+    is_class1 = int(ticket_class) == 1
+    seats: set[str] = set()
+
+    def should_skip_class(aria_l: str, d_class_l: str) -> bool:
+        if is_class1:
+            return (
+                "second class" in d_class_l
+                or (("klasa 2" in aria_l or "kl. 2" in aria_l) and "klasa 1" not in aria_l and "kl. 1" not in aria_l)
+            )
+        return (
+            "first class" in d_class_l
+            or (("klasa 1" in aria_l or "kl. 1" in aria_l) and "klasa 2" not in aria_l and "kl. 2" not in aria_l)
+        )
+
+    def extract_from_g_attrs(aria: str, d_class: str, text_num: str) -> None:
+        aria_l = (aria or "").lower()
+        d_class_l = (d_class or "").lower()
+        if "wolne" not in aria_l:
+            return
+        if "niedostepne" in aria_l or "niedostępne" in aria_l:
+            return
+        if should_skip_class(aria_l, d_class_l):
+            return
+        if is_prm_wheelchair_label(aria_l):
+            return
+
+        num = (text_num or "").strip()
+        if not num or not num.isdigit():
+            m = re.search(r"miejsce\s+(\d+)", aria, re.IGNORECASE)
+            if m:
+                num = m.group(1)
+        if num and num.isdigit():
+            seats.add(num)
+
+    parsed_via_xml = False
+    try:
+        # Strip optional leading XML junk before <svg or <?xml
+        cleaned = svg_xml.strip()
+        if "<svg" in cleaned and not cleaned.startswith("<svg") and not cleaned.startswith("<?xml"):
+            svg_start = cleaned.find("<svg")
+            svg_end = cleaned.rfind("</svg>")
+            if svg_start != -1 and svg_end != -1:
+                cleaned = cleaned[svg_start : svg_end + len("</svg>")]
+
+        root = ET.fromstring(cleaned)
+        parsed_via_xml = True
+        for elem in root.iter():
+            tag = elem.tag.split("}", 1)[-1].lower() if isinstance(elem.tag, str) else ""
+            if tag != "g":
+                continue
+            aria = elem.attrib.get("aria-label", "")
+            d_class = elem.attrib.get("data-class", "")
+            text_num = ""
+            for child in elem:
+                c_tag = child.tag.split("}", 1)[-1].lower() if isinstance(child.tag, str) else ""
+                if c_tag == "text" and child.text:
+                    text_num = child.text.strip()
+                    break
+            extract_from_g_attrs(aria, d_class, text_num)
+    except ET.ParseError:
+        parsed_via_xml = False
+
+    if not parsed_via_xml:
+        soup = bs4.BeautifulSoup(svg_xml, "html.parser")
+        for g in soup.find_all("g"):
+            aria = str(g.get("aria-label") or "")
+            d_class = str(g.get("data-class") or "")
+            t_el = g.find("text")
+            text_num = t_el.get_text(strip=True) if t_el else ""
+            extract_from_g_attrs(aria, d_class, text_num)
+
+    return sorted(seats, key=lambda x: int(x))
+
+
 SVG_SEATS_EXTRACTOR_JS = r"""
 (targetClass = 2) => {
     const seats = new Set();
@@ -63,12 +180,25 @@ SVG_SEATS_EXTRACTOR_JS = r"""
         return dClass.includes('first class') || (aria.includes('klasa 1') && !aria.includes('klasa 2'));
     };
 
+    const isPrmWheelchair = (aria) => {
+        return (
+            aria.includes('na wózku') ||
+            aria.includes('na wozku') ||
+            aria.includes('wózku inwalidzkim') ||
+            aria.includes('wozku inwalidzkim') ||
+            aria.includes('opiekuna osoby na wózku') ||
+            aria.includes('opiekuna osoby na wozku') ||
+            aria.includes('wózek inwalidzki') ||
+            aria.includes('wozek inwalidzki')
+        );
+    };
+
     // 1. Primary: SVG <g> groups with aria-label containing 'wolne'
     const gElements = document.querySelectorAll("g[aria-label*='wolne' i], g[aria-label*='Wolne' i]");
     for (const g of gElements) {
         const aria = (g.getAttribute('aria-label') || '').toLowerCase();
         const dClass = (g.getAttribute('data-class') || '').toLowerCase();
-        if (shouldSkipClass(aria, dClass)) {
+        if (shouldSkipClass(aria, dClass) || isPrmWheelchair(aria)) {
             continue;
         }
 
@@ -94,7 +224,7 @@ SVG_SEATS_EXTRACTOR_JS = r"""
         for (const b of btns) {
             const aria = (b.getAttribute('aria-label') || '').toLowerCase();
             if (!aria.includes('wolne')) continue;
-            if (shouldSkipClass(aria, '')) continue;
+            if (shouldSkipClass(aria, '') || isPrmWheelchair(aria)) continue;
 
             const placeVal = b.getAttribute('data-place') || '';
             if (placeVal && /^\d+$/.test(placeVal)) {
@@ -119,6 +249,11 @@ SVG_SEATS_EXTRACTOR_JS = r"""
                 } catch(e) {}
             }
             if (parentG) {
+                const aria = (parentG.getAttribute('aria-label') || '').toLowerCase();
+                const dClass = (parentG.getAttribute('data-class') || '').toLowerCase();
+                if (shouldSkipClass(aria, dClass) || isPrmWheelchair(aria)) {
+                    continue;
+                }
                 const textEl = parentG.querySelector('text');
                 if (textEl && textEl.textContent) {
                     const num = textEl.textContent.trim();
@@ -181,7 +316,12 @@ CAROUSEL_METADATA_JS = r"""
             if (m) cNo = m[1];
         }
 
-        const isActive = s.classList.contains('swiper-slide-active');
+        // Do NOT use swiper-slide-active (marks leftmost visible viewport slide, not the selected carriage).
+        // e-IC 2.0 marks the currently selected carriage with 'current-' in Carriage_carriageBox background-image.
+        const styleBox = s.querySelector("div[class*='Carriage_carriageBox']") || boxEl;
+        const boxStyle = (styleBox ? (styleBox.getAttribute('style') || '') : '').toLowerCase();
+        const boxBg = (styleBox && styleBox.style && styleBox.style.backgroundImage ? styleBox.style.backgroundImage : '').toLowerCase();
+        const isActive = boxStyle.includes('current-') || boxBg.includes('current-');
 
         result.push({
             index: idx,
@@ -378,15 +518,22 @@ class EbiletSeatScraper:
                 logger.debug(f"[SAFE_CLICK] JS click fallback also failed: {e_js}")
                 return False
 
-    async def check_and_handle_error_radar(self, page: Page, context_label: str = "") -> bool:
+    async def check_and_handle_error_radar(
+        self,
+        page: Page,
+        context_label: str = "",
+        allow_reload: bool = True,
+    ) -> bool:
         """
         Error radar inspired by Kocur.py.
         Detects PKP server error states ('Ups...', 'poszło nie tak', 'Wystąpił nieoczekiwany błąd').
-        If detected, waits with jitter (2.5 - 4.0s), reloads the page, and dismisses banners.
-        Returns True if an error was detected and handled.
+        When allow_reload=True (Step 1/2), waits with jitter (2.5 - 4.0s), reloads the page, and dismisses banners.
+        When allow_reload=False (Step 4/5 seatmap modal), raises GraphicReservationUnavailableError instead of
+        destroying the open seatmap modal with a page reload.
+        Returns True if an error was detected and handled via reload.
         """
         error_patterns = [
-            "text=/Ups/i",
+            "text=/\\bUps\\b/i",
             "text=/poszło nie tak/i",
             "text=/nieoczekiwany błąd/i",
             "text=/Wystąpił błąd/i",
@@ -403,6 +550,14 @@ class EbiletSeatScraper:
                         err_text = (await loc.text_content() or "").strip()[:80]
                     except Exception:
                         pass
+                    if not allow_reload:
+                        logger.warning(
+                            f"[RADAR] Wykryto błąd serwera PKP ('{err_text or pattern}') "
+                            f"w kroku '{context_label}' (allow_reload=False). Przerywam odczyt do czystej powtórki."
+                        )
+                        raise GraphicReservationUnavailableError(
+                            f"SCRAPE_ERROR: Błąd serwera PKP ('{err_text or pattern}') w kroku '{context_label}'."
+                        )
                     wait_time = random.uniform(2.5, 4.0)
                     logger.warning(
                         f"[RADAR] Wykryto błąd serwera PKP ('{err_text or pattern}') "
@@ -414,6 +569,8 @@ class EbiletSeatScraper:
                     await self.close_cookie_banners(page)
                     await self.dismiss_intermediate_modals(page)
                     return True
+            except GraphicReservationUnavailableError:
+                raise
             except Exception:
                 pass
         return False
@@ -509,6 +666,68 @@ class EbiletSeatScraper:
             logger.warning(f"Could not save debug snapshot: {e}")
             return DEBUG_SNAPSHOTS_DIR / "error.png", DEBUG_SNAPSHOTS_DIR / "error.html"
 
+    @staticmethod
+    def _shift_query_time(departure_time: str, offset_minutes: int = -10) -> str:
+        """Shifts HH:MM departure time by offset_minutes (default -10 min), clamped at 00:00."""
+        clean_time = (departure_time or "").strip() or "12:00"
+        m_time = re.match(r"^(\d{1,2}):(\d{2})$", clean_time)
+        if not m_time:
+            return clean_time
+        hh, mm = int(m_time.group(1)), int(m_time.group(2))
+        total_min = max(0, min(23 * 60 + 59, hh * 60 + mm + offset_minutes))
+        return f"{total_min // 60:02d}:{total_min % 60:02d}"
+
+    @staticmethod
+    def _select_grm_target_wagons(
+        sklad_data: Dict[str, Any],
+        ticket_class: int = TARGET_CLASS,
+    ) -> Tuple[List[Tuple[str, str]], bool]:
+        """
+        Extracts authoritative available (wagon_no, schema_id) pairs for ticket_class from
+        /grm/sklad/wbnet/ JSON, skipping wagonyNiedostepne, wrong class, and WARS/sleepers.
+        Returns (targets, had_class_wagons_key).
+        """
+        class_key = "klasa1" if int(ticket_class) == 1 else "klasa2"
+        has_key = class_key in sklad_data
+        raw_class_wagons = sklad_data.get(class_key) or []
+        unavailable = {str(w).strip() for w in (sklad_data.get("wagonyNiedostepne") or [])}
+        raw_schemat = sklad_data.get("wagonySchemat") or {}
+        schemat_map = (
+            {str(k).strip(): str(v).strip() for k, v in raw_schemat.items()}
+            if isinstance(raw_schemat, dict)
+            else {}
+        )
+
+        # Filter out pure WARS/sleeper wagons if detailed metadata is present in 'wagony'
+        service_wagons = set()
+        raw_wagony = sklad_data.get("wagony")
+        if isinstance(raw_wagony, list):
+            for w in raw_wagony:
+                if isinstance(w, dict):
+                    w_no = str(w.get("nr", w.get("number", ""))).strip()
+                    w_type = str(w.get("typ", w.get("type", ""))).upper()
+                    if w_no and any(skip in w_type for skip in ["WR", "WARS", "WL", "BC"]):
+                        service_wagons.add(w_no)
+
+        targets: List[Tuple[str, str]] = []
+        seen = set()
+        for w in raw_class_wagons:
+            w_no = str(w).strip()
+            if not w_no or w_no in seen or w_no in unavailable or w_no in service_wagons:
+                continue
+            schema_id = schemat_map.get(w_no, "")
+            if not schema_id:
+                continue
+            seen.add(w_no)
+            targets.append((w_no, schema_id))
+
+        return targets, has_key
+
+    @staticmethod
+    def parse_grm_wagon_svg(svg_xml: str, ticket_class: int = TARGET_CLASS) -> List[str]:
+        """Instance/static wrapper for parse_grm_wagon_svg."""
+        return parse_grm_wagon_svg(svg_xml, ticket_class=ticket_class)
+
     def build_direct_search_url(
         self,
         from_station: str,
@@ -516,18 +735,27 @@ class EbiletSeatScraper:
         date_str: str,
         departure_time: str,
         direct_only: bool = True,
+        from_eva: str = "",
+        to_eva: str = "",
     ) -> str:
         """
         Buduje bezpośredni adres URL wyszukiwania połączeń w e-IC 2.0 (Krok 2)
         na podstawie identyfikatorów EVA stacji, omijając formularz wyszukiwania.
+        Godzina zapytania jest cofana o 10 min (z ograniczeniem do 00:00), aby 1-minutowe
+        przesunięcia rozkładu nie wyrzucały pociągu ze strony 1.
         """
-        _, from_eva = get_station_info(from_station)
-        _, to_eva = get_station_info(to_station)
+        resolved_from_eva = (from_eva or "").strip()
+        resolved_to_eva = (to_eva or "").strip()
 
-        if not from_eva or not to_eva:
+        if not resolved_from_eva:
+            _, resolved_from_eva = get_station_info(from_station)
+        if not resolved_to_eva:
+            _, resolved_to_eva = get_station_info(to_station)
+
+        if not resolved_from_eva or not resolved_to_eva:
             logger.warning(
-                f"[DIRECT URL] Brak kodu EVA w bazie SQLite dla stacji: "
-                f"from='{from_station}' (eva='{from_eva}'), to='{to_station}' (eva='{to_eva}')."
+                f"[DIRECT URL] Brak kodu EVA dla stacji: "
+                f"from='{from_station}' (eva='{resolved_from_eva}'), to='{to_station}' (eva='{resolved_to_eva}')."
             )
 
         clean_date = date_str.strip()
@@ -536,14 +764,191 @@ class EbiletSeatScraper:
             if len(parts) == 3 and len(parts[2]) == 4:
                 clean_date = f"{parts[2]}-{parts[1]}-{parts[0]}"
 
-        clean_time = departure_time.strip() if departure_time else "12:00"
+        query_time = self._shift_query_time(departure_time, offset_minutes=-10)
         polbez = "1" if direct_only else "0"
 
         return (
             f"https://ebilet.intercity.pl/wyszukiwanie?"
-            f"dwyj={clean_date}&swyj={from_eva}&sprzy={to_eva}&"
-            f"time={clean_time}&przy=0&sprzez=&ticket100=1010&ticket50=&polbez={polbez}"
+            f"dwyj={clean_date}&swyj={resolved_from_eva}&sprzy={resolved_to_eva}&"
+            f"time={query_time}&przy=0&sprzez=&ticket100=1010&ticket50=&polbez={polbez}"
         )
+
+    @staticmethod
+    def _card_matches_train(card_id: str, card_text: str, train_clean_num: str) -> bool:
+        """
+        Strict train card matcher: checks outer card id (e.g. '..._1644_76') or exact
+        word-boundary match on card text. Never matches partial substrings like '164' in '1644'.
+        """
+        if not train_clean_num:
+            return False
+        if card_id:
+            if f"_{train_clean_num}_" in card_id or re.search(
+                rf"(?:_|\|){re.escape(train_clean_num)}(?:_|\||$)", card_id
+            ):
+                return True
+        if card_text:
+            if re.search(rf"\b{re.escape(train_clean_num)}\b", card_text):
+                return True
+        return False
+
+    async def _find_matching_train_card(self, page: Page, train_clean_num: str):
+        """
+        Finds the outer connection card strictly matching train_clean_num.
+        Targets ONLY outer connection cards with [id] (or fallback connection classes),
+        matching first by card id, then by strict \\b{train_clean_num}\\b regex on card text.
+        Returns the matching Locator or None (NEVER falls back to first card).
+        """
+        if not train_clean_num:
+            return None
+
+        outer_selector = (
+            "li[class*='TripPropositionDesktop_tripPropositionDesktop__container'][id], "
+            ".connection-card, .connection-row, tr.connection"
+        )
+        connection_cards = page.locator(outer_selector)
+        card_count = await connection_cards.count()
+        if card_count == 0:
+            return None
+
+        # Pass 1: authoritative match on outer card `id` attribute
+        for idx in range(card_count):
+            card = connection_cards.nth(idx)
+            try:
+                card_id = (await card.get_attribute("id")) or ""
+                if card_id and self._card_matches_train(card_id, "", train_clean_num):
+                    logger.info(f"[TRAIN MATCH] Dopasowano pociąg po ID karty '{card_id}' (kafelek #{idx+1})")
+                    return card
+            except Exception:
+                continue
+
+        # Pass 2: strict word-boundary match on card inner text
+        for idx in range(card_count):
+            card = connection_cards.nth(idx)
+            try:
+                card_text = (await card.inner_text()) or ""
+                if self._card_matches_train("", card_text, train_clean_num):
+                    logger.info(f"[TRAIN MATCH] Dopasowano pociąg po \\b{train_clean_num}\\b w tekście kafelka #{idx+1}")
+                    return card
+            except Exception:
+                continue
+
+        return None
+
+    async def _fetch_grm_svg_in_session(
+        self,
+        page: Page,
+        url: str,
+        extra_headers: Optional[Dict[str, str]] = None,
+    ) -> Optional[str]:
+        """Fetches a /grm/wagon/svg/wbnet/ XML URL using the authenticated browser page session."""
+        safe_headers: Dict[str, str] = {}
+        if extra_headers:
+            for k, v in extra_headers.items():
+                kl = k.lower()
+                if kl in ("authorization", "accept", "accept-language") or kl.startswith("x-"):
+                    safe_headers[k] = v
+
+        try:
+            res = await page.evaluate(
+                """async ([targetUrl, hdrs]) => {
+                    const r = await fetch(targetUrl, { method: 'GET', credentials: 'include', headers: hdrs || {} });
+                    const txt = await r.text();
+                    return { ok: r.ok, status: r.status, text: txt };
+                }""",
+                [url, safe_headers],
+            )
+            if isinstance(res, dict) and res.get("ok") and res.get("text"):
+                return str(res["text"])
+            logger.debug(f"[GRM API] in-page fetch returned status={res.get('status') if isinstance(res, dict) else res} for {url}")
+        except Exception as e:
+            logger.debug(f"[GRM API] in-page fetch failed for {url}: {e}")
+
+        # Secondary fallback: Playwright APIRequestContext sharing browser context cookies
+        try:
+            resp = await page.context.request.get(url, headers=safe_headers, timeout=8000)
+            if resp.ok:
+                return await resp.text()
+        except Exception as e:
+            logger.debug(f"[GRM API] context.request.get failed for {url}: {e}")
+
+        return None
+
+    async def _extract_seats_via_grm_api(
+        self,
+        page: Page,
+        sklad_data: Dict[str, Any],
+        wagon_svg_template: Dict[str, Any],
+        intercepted_svg_by_wagon: Dict[str, str],
+        ticket_class: int = TARGET_CLASS,
+    ) -> Optional[Dict[str, List[str]]]:
+        """
+        Authoritative seat extraction using intercepted /grm/sklad/wbnet/ JSON and
+        /grm/wagon/svg/wbnet/ XML payloads for every available carriage of ticket_class.
+        Returns:
+          - Dict[wagon_no, List[seat_no]] if all target wagons were authoritatively fetched/parsed
+          - None if template is unavailable or fetching failed (caller should fall back to DOM)
+        Raises GraphicReservationUnavailableError with BRAK_MIEJSC_KLASA_* if authoritatively sold out.
+        """
+        targets, has_class_key = self._select_grm_target_wagons(sklad_data, ticket_class=ticket_class)
+
+        if not targets:
+            if has_class_key:
+                raise GraphicReservationUnavailableError(
+                    f"BRAK_MIEJSC_KLASA_{ticket_class}: Brak dostępnych wagonów Klasy {ticket_class} w składzie."
+                )
+            return None
+
+        prefix = wagon_svg_template.get("prefix", "")
+        suffix = wagon_svg_template.get("suffix", "")
+        headers = wagon_svg_template.get("headers") or {}
+
+        if not prefix and not all(w_no in intercepted_svg_by_wagon for w_no, _ in targets):
+            return None
+
+        carriages: Dict[str, List[str]] = {}
+        fetched_count = 0
+        for w_no, schema_id in targets:
+            svg_xml = intercepted_svg_by_wagon.get(w_no)
+            if not svg_xml and prefix:
+                svg_url = f"{prefix}/{w_no}/{schema_id}{suffix}"
+                svg_xml = await self._fetch_grm_svg_in_session(page, svg_url, extra_headers=headers)
+                if svg_xml:
+                    intercepted_svg_by_wagon[w_no] = svg_xml
+
+            if svg_xml and "<svg" in svg_xml.lower():
+                seats = self.parse_grm_wagon_svg(svg_xml, ticket_class=ticket_class)
+                carriages[w_no] = seats
+                fetched_count += 1
+                logger.info(f"[GRM API] Wagon {w_no} (schema={schema_id}, Klasa {ticket_class}): {len(seats)} wolnych miejsc")
+            else:
+                logger.warning(f"[GRM API] Nie udało się pobrać SVG dla wagonu {w_no} (schema={schema_id})")
+
+        if fetched_count < len(targets):
+            logger.warning(
+                f"[GRM API] Pobrano tylko {fetched_count}/{len(targets)} wagonów przez API GRM — przełączam na fallback DOM."
+            )
+            return None
+
+        if not any(len(s) > 0 for s in carriages.values()):
+            raise GraphicReservationUnavailableError(
+                f"BRAK_MIEJSC_KLASA_{ticket_class}: Wszystkie dostępne wagony Klasy {ticket_class} "
+                f"({', '.join(carriages.keys())}) mają 0 wolnych miejsc."
+            )
+
+        return carriages
+
+    async def _close_seatmap_modal(self, page: Page) -> None:
+        """Best-effort dismissal of the open seatmap modal."""
+        try:
+            close_btn = page.locator(
+                "button[class*='css-nk1pxf']:has-text('Zamknij'), button[aria-label='Zamknij'], button:has-text('Zamknij')"
+            ).first
+            if await close_btn.is_visible(timeout=400):
+                await self.safe_click(close_btn, timeout=600)
+            else:
+                await page.keyboard.press("Escape")
+        except Exception:
+            pass
 
     async def search_segment_on_intercity(
         self,
@@ -556,12 +961,15 @@ class EbiletSeatScraper:
         ticket_class: int = TARGET_CLASS,
         progress_cb: Optional[Callable[[int, str], None]] = None,
         has_warmed_session: bool = False,
+        from_eva: str = "",
+        to_eva: str = "",
     ) -> Dict[str, List[str]]:
         """
         Realizuje odczyt miejsc ze schematu wagonów na trasie from_station -> to_station.
-        Otwiera bezpośrednio listę połączeń (Krok 2), rozwija pociąg ('Kup bilet'),
-        wybiera wskazaną klasę (1 lub 2), klika 'Wybierz miejsce', odczytuje wolne miejsca
-        ze wszystkich wagonów wybranej klasy i zamyka modal ('Zamknij').
+        Otwiera bezpośrednio listę połączeń (Krok 2), ściśle dopasowuje pociąg (z paginacją
+        Później/Wcześniej, bez fallbacku na inny pociąg), wybiera klasę (1 lub 2), otwiera
+        schemat i odczytuje wolne miejsca autorytatywnie przez GRM API (/grm/sklad/wbnet/ +
+        /grm/wagon/svg/wbnet/), z poprawionym fallbackiem karuzeli DOM.
         """
         clean_dep_time = departure_time.strip() if departure_time else "12:00"
 
@@ -573,32 +981,80 @@ class EbiletSeatScraper:
                 except Exception:
                     pass
 
-        captured_network_json: List[Dict[str, Any]] = []
-        intercepted_carriages: Dict[str, List[str]] = {}
+        sklad_info: Dict[str, Any] = {"data": None, "url": ""}
+        wagon_svg_template: Dict[str, Any] = {"url": "", "prefix": "", "suffix": "", "headers": {}}
+        intercepted_svg_by_wagon: Dict[str, str] = {}
+        wagon_svg_events: Dict[str, asyncio.Event] = {}
 
         async def on_response(response: Response):
             url = response.url
-            ct = response.headers.get("content-type", "")
-            if "application/json" in ct and "intercity.pl" in url.lower():
-                try:
+            url_lower = url.lower()
+            if "intercity.pl" not in url_lower:
+                return
+            try:
+                if "/grm/sklad/wbnet/" in url_lower and response.status == 200:
                     data = await response.json()
                     log_network_api_call(url, response.status, data)
-                    extracted = self._extract_seats_from_json_list([data], ticket_class=ticket_class)
-                    if extracted:
-                        intercepted_carriages.update(extracted)
-                        logger.info(f"[NETWORK] Intercepted seatmap JSON from {url} with {len(extracted)} carriages: {list(extracted.keys())}")
-                    if any(k in url.lower() for k in ["seat", "schemat", "wagon", "carriage", "uklad", "places"]):
-                        captured_network_json.append(data)
-                        logger.debug(f"[NETWORK] Intercepted seatmap JSON from: {url}")
-                except Exception:
-                    pass
+                    if isinstance(data, dict) and any(
+                        k in data for k in ("klasa1", "klasa2", "wagonySchemat", "wagony")
+                    ):
+                        sklad_info["data"] = data
+                        sklad_info["url"] = url
+                        logger.info(
+                            f"[GRM API] Przechwycono /grm/sklad/wbnet/: "
+                            f"klasa1={data.get('klasa1')}, klasa2={data.get('klasa2')}, "
+                            f"niedostepne={data.get('wagonyNiedostepne')}"
+                        )
+                    return
+
+                if "/grm/wagon/svg/wbnet/" in url_lower and response.status == 200:
+                    m = re.match(
+                        r"^(https?://[^/]+/grm/wagon/svg/wbnet/[^/]+/[^/]+)/([^/]+)/([^/]+)(/.*)$",
+                        url,
+                    )
+                    if m:
+                        wagon_svg_template["prefix"] = m.group(1)
+                        wagon_svg_template["suffix"] = m.group(4)
+                        wagon_svg_template["url"] = url
+                        try:
+                            wagon_svg_template["headers"] = dict(response.request.headers or {})
+                        except Exception:
+                            pass
+                        w_no = m.group(2)
+                        svg_text = await response.text()
+                        if svg_text and "<svg" in svg_text.lower():
+                            intercepted_svg_by_wagon[w_no] = svg_text
+                            ev = wagon_svg_events.get(w_no)
+                            if ev:
+                                ev.set()
+                            logger.debug(f"[GRM API] Przechwycono SVG wagonu {w_no} z {url}")
+                    return
+
+                ct = response.headers.get("content-type", "")
+                if "application/json" in ct:
+                    data = await response.json()
+                    log_network_api_call(url, response.status, data)
+            except Exception:
+                pass
 
         page.on("response", on_response)
 
         try:
             # Krok 1 & 2: Otwarcie bezpośredniego adresu wyszukiwania połączeń
             report(20, f"Otwieranie listy połączeń dla trasy {from_station} -> {to_station}...")
-            direct_url = self.build_direct_search_url(from_station, to_station, date_str, departure_time)
+            direct_url = self.build_direct_search_url(
+                from_station,
+                to_station,
+                date_str,
+                departure_time,
+                from_eva=from_eva,
+                to_eva=to_eva,
+            )
+            if "swyj=&" in direct_url or "sprzy=&" in direct_url:
+                raise GraphicReservationUnavailableError(
+                    f"SCRAPE_ERROR: Brak kodu EVA dla trasy {from_station} -> {to_station} (url={direct_url})."
+                )
+
             logger.info(f"[DIRECT URL] Nawigacja bezpośrednia do listy połączeń: {direct_url}")
 
             # Jeśli kontekst nie był jeszcze rozgrzany (brak cookies sesyjnych), odwiedź stronę główną
@@ -613,32 +1069,54 @@ class EbiletSeatScraper:
             await page.goto(direct_url, wait_until="domcontentloaded", timeout=25000)
             await asyncio.sleep(0.1)
             await self.close_cookie_banners(page)
-            await self.check_and_handle_error_radar(page, "otwarcie_wyszukiwania")
+            await self.check_and_handle_error_radar(page, "otwarcie_wyszukiwania", allow_reload=True)
 
             if not self.headless:
                 force_unhide_chrome_windows()
 
             # Oczekiwanie na kafelki pociągów na liście połączeń (Krok 2)
+            # Czekamy WYŁĄCZNIE na loader listy połączeń (nie na per-card loadery cen!)
             report(35, f"Oczekiwanie na listę połączeń dla relacji {from_station} -> {to_station}...")
             start_wait = time.time()
             reloaded = False
             cards_found = False
 
+            outer_cards_selector = (
+                "li[class*='TripPropositionDesktop_tripPropositionDesktop__container'][id], "
+                ".connection-card, .connection-row, tr.connection"
+            )
+            page_loader_selector = "[class*='trainLoaderWithText'], [class*='TrainLoaderWithText']"
+
             while time.time() - start_wait < 35.0:
-                if await self.check_and_handle_error_radar(page, "lista_polaczen"):
+                if await self.check_and_handle_error_radar(page, "lista_polaczen", allow_reload=True):
                     continue
 
-                loader_count = await page.locator(
-                    "[class*='trainLoaderWithText'], [class*='TrainLoaderWithText'], .Loader_linear__OpQ5L, [class*='Loader']"
-                ).count()
-                cards = page.locator(
-                    "li[class*='TripPropositionDesktop_tripPropositionDesktop__container'], li[class*='TripProposition'], .connection-card, .connection-row, tr.connection"
-                )
+                loader_count = await page.locator(page_loader_selector).count()
+                cards = page.locator(outer_cards_selector)
                 card_count = await cards.count()
 
                 if card_count > 0 and loader_count == 0:
                     cards_found = True
                     break
+
+                # Szybkie wykrycie błędu kodu stacji (kod: 303) lub braku połączeń bez czekania 35s
+                if loader_count == 0 and time.time() - start_wait > 2.5 and card_count == 0:
+                    try:
+                        body_low = (await page.locator("body").inner_text()).lower()
+                        if "kod stacji spoza zakresu" in body_low:
+                            snap_png, _ = await self.save_debug_snapshot(page, f"err_kod303_{train_number}_{from_station}_{to_station}")
+                            raise GraphicReservationUnavailableError(
+                                f"SCRAPE_ERROR: Kod stacji spoza zakresu (kod 303) dla {from_station} -> {to_station}. Zapisano {snap_png.name}"
+                            )
+                        if "brak połączeń" in body_low or "nie znaleziono połączeń" in body_low:
+                            snap_png, _ = await self.save_debug_snapshot(page, f"err_no_trains_{train_number}_{from_station}_{to_station}")
+                            raise GraphicReservationUnavailableError(
+                                f"SCRAPE_ERROR: System PKP Intercity nie znalazł żadnych połączeń dla relacji {from_station} -> {to_station} w dniu {date_str} o godz. {clean_dep_time}."
+                            )
+                    except GraphicReservationUnavailableError:
+                        raise
+                    except Exception:
+                        pass
 
                 # Jeśli e-IC zawiesiło ładowanie na dłużej niż 16s bez kart, odśwież stronę
                 if time.time() - start_wait > 16.0 and not reloaded and card_count == 0:
@@ -652,15 +1130,20 @@ class EbiletSeatScraper:
                         pass
                     continue
 
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(0.4)
 
             if not cards_found:
                 try:
                     body_text = (await page.locator("body").inner_text()).lower()
+                    if "kod stacji spoza zakresu" in body_text:
+                        snap_png, _ = await self.save_debug_snapshot(page, f"err_kod303_{train_number}_{from_station}_{to_station}")
+                        raise GraphicReservationUnavailableError(
+                            f"SCRAPE_ERROR: Kod stacji spoza zakresu (kod 303) dla {from_station} -> {to_station}. Zapisano {snap_png.name}"
+                        )
                     if "brak połączeń" in body_text or "nie znaleziono połączeń" in body_text:
                         snap_png, _ = await self.save_debug_snapshot(page, f"err_no_trains_{train_number}_{from_station}_{to_station}")
                         raise GraphicReservationUnavailableError(
-                            f"System PKP Intercity nie znalazł żadnych połączeń dla relacji {from_station} -> {to_station} w dniu {date_str} o godz. {clean_dep_time}."
+                            f"SCRAPE_ERROR: System PKP Intercity nie znalazł żadnych połączeń dla relacji {from_station} -> {to_station} w dniu {date_str} o godz. {clean_dep_time}."
                         )
                 except GraphicReservationUnavailableError:
                     raise
@@ -669,13 +1152,12 @@ class EbiletSeatScraper:
 
                 snap_png, _ = await self.save_debug_snapshot(page, f"err_no_train_{train_number}_{from_station}_{to_station}")
                 raise GraphicReservationUnavailableError(
-                    f"Nie znaleziono pociągu {train_number} na liście połączeń dla relacji {from_station} -> {to_station} po 35s oczekiwania. Zapisano {snap_png.name}"
+                    f"SCRAPE_ERROR: Nie znaleziono pociągu {train_number} na liście połączeń dla relacji {from_station} -> {to_station} po 35s oczekiwania. Zapisano {snap_png.name}"
                 )
 
-            # Step 2: Connection list (Tasks V3-17 to V3-20)
-            report(70, f"Dopasowywanie pociągu {train_number} i wybór Klasy 2...")
+            # Step 2: Connection list — strict matching + pagination (NO fallback to wrong train!)
+            report(70, f"Dopasowywanie pociągu {train_number} i wybór Klasy {ticket_class}...")
 
-            # Save step2 snapshot if first query (Task V3-18)
             step2_snap = DEBUG_SNAPSHOTS_DIR / "step2_connections_list.html"
             if not step2_snap.exists():
                 try:
@@ -683,39 +1165,44 @@ class EbiletSeatScraper:
                 except Exception:
                     pass
 
-            # Locate matching connection card
-            train_clean_num = re.sub(r'^[A-Z]+\s*', '', train_number).strip()
-            connection_cards = page.locator(
-                "li[class*='TripPropositionDesktop_tripPropositionDesktop__container'], li[class*='TripProposition'], .connection-row, tr.connection, .connection-card"
-            )
-            card_count = await connection_cards.count()
+            train_clean_num = re.sub(r"^[A-Z]+\s*", "", train_number).strip()
+            chosen_card = await self._find_matching_train_card(page, train_clean_num)
 
-            chosen_card = None
-            if card_count > 0:
-                for idx in range(card_count):
-                    card = connection_cards.nth(idx)
-                    card_text = await card.inner_text()
-                    if train_clean_num in card_text:
-                        chosen_card = card
-                        logger.info(f"[TRAIN MATCH] Dopasowano pociąg po numerze {train_clean_num} w kafelku #{idx+1}")
-                        break
-                if not chosen_card:
-                    for idx in range(card_count):
-                        card = connection_cards.nth(idx)
-                        card_text = await card.inner_text()
-                        if clean_dep_time in card_text:
-                            chosen_card = card
-                            logger.info(f"[TRAIN MATCH] Dopasowano pociąg po godzinie {clean_dep_time} w kafelku #{idx+1}")
+            # Pagination: if target train isn't on page 1, try "Później" (up to 2x) then "Wcześniej" (up to 2x)
+            if not chosen_card:
+                for direction_label in ("Później", "Wcześniej"):
+                    for step_idx in range(2):
+                        btn = page.locator(f"button:has-text('{direction_label}')").first
+                        try:
+                            if not await btn.is_visible(timeout=800) or not await btn.is_enabled():
+                                break
+                            prev_count = await page.locator(outer_cards_selector).count()
+                            logger.info(
+                                f"[TRAIN MATCH] Pociąg {train_number} nieobecny na bieżącej liście — klikam '{direction_label}' ({step_idx + 1}/2)..."
+                            )
+                            if not await self.safe_click(btn, timeout=1500):
+                                break
+                            # Wait briefly for pagination results to load
+                            wait_pg = time.time()
+                            while time.time() - wait_pg < 5.0:
+                                await asyncio.sleep(0.3)
+                                if await page.locator(page_loader_selector).count() == 0:
+                                    curr_count = await page.locator(outer_cards_selector).count()
+                                    if curr_count != prev_count or time.time() - wait_pg > 1.2:
+                                        break
+                            chosen_card = await self._find_matching_train_card(page, train_clean_num)
+                            if chosen_card:
+                                break
+                        except Exception:
                             break
-                if not chosen_card:
-                    chosen_card = connection_cards.first
-                    logger.info("[TRAIN MATCH] Używam pierwszego kafelka z listy połączeń")
+                    if chosen_card:
+                        break
 
             if not chosen_card:
-                # Task V3-03: STRICTLY NO fallback to body!
+                # STRICT: NEVER fall back to connection_cards.first (scraping the wrong train corrupts results!)
                 snap_png, _ = await self.save_debug_snapshot(page, f"err_no_train_{train_number}_{from_station}_{to_station}")
                 raise GraphicReservationUnavailableError(
-                    f"Nie znaleziono pociągu {train_number} na liście połączeń dla relacji {from_station} -> {to_station}. Zapisano {snap_png.name}"
+                    f"SCRAPE_ERROR: Nie znaleziono pociągu {train_number} na liście połączeń dla relacji {from_station} -> {to_station}. Zapisano {snap_png.name}"
                 )
 
             # Expand train card
@@ -736,7 +1223,7 @@ class EbiletSeatScraper:
                     pass
 
             # Step 3: Class 1 or 2 selection
-            await self.check_and_handle_error_radar(page, f"wybor_klasy_{ticket_class}")
+            await self.check_and_handle_error_radar(page, f"wybor_klasy_{ticket_class}", allow_reload=True)
             if ticket_class == 1:
                 class_buttons = [
                     chosen_card.locator("button[aria-label*='1 klas']").first,
@@ -775,19 +1262,11 @@ class EbiletSeatScraper:
                 except Exception:
                     pass
 
-            # Early exit check if network JSON already returned seatmap
-            if intercepted_carriages or (captured_network_json and self._extract_seats_from_json_list(captured_network_json, ticket_class=ticket_class)):
-                carriages_data = intercepted_carriages or self._extract_seats_from_json_list(captured_network_json, ticket_class=ticket_class)
-                logger.info(f"[NETWORK EARLY EXIT] Przechwycono dane z API JSON dla {len(carriages_data)} wagonów przed schematem! Pomijam karuzelę DOM.")
-                report(95, f"[JSON] Odczytano wolne miejsca w {len(carriages_data)} wagonach.")
-                return carriages_data
-
-            # Step 4: Your Journey & open seatmap (Tasks V3-22 to V3-25)
+            # Step 4: Your Journey & open seatmap (allow_reload=False from here onward!)
             report(75, "Konfiguracja podróży i otwieranie schematu wagonów...")
             await self.dismiss_intermediate_modals(page)
-            await self.check_and_handle_error_radar(page, "twoja_podroz")
+            await self.check_and_handle_error_radar(page, "twoja_podroz", allow_reload=False)
 
-            # Save step3 snapshot (Task V3-22)
             step3_snap = DEBUG_SNAPSHOTS_DIR / "step3_your_journey.html"
             if not step3_snap.exists():
                 try:
@@ -795,7 +1274,6 @@ class EbiletSeatScraper:
                 except Exception:
                     pass
 
-            # Click button opening seatmap (Task V3-23)
             schema_btn_selectors = [
                 "button[class*='PreferedPlace_PreferedPlace_grmButton']",
                 "button[class*='PreferedPlace_PreferedPlace_groupButton']",
@@ -809,7 +1287,6 @@ class EbiletSeatScraper:
             ]
 
             schema_clicked = False
-            # Wait for Step 4 "Twoja podróż" to render and button to become visible
             for sel in schema_btn_selectors:
                 elem = page.locator(sel).first
                 try:
@@ -825,17 +1302,9 @@ class EbiletSeatScraper:
             if not schema_clicked:
                 logger.warning("[SEATMAP] Żaden z selektorów otwarcia schematu nie stał się widoczny.")
 
-            # Early exit check right after clicking seatmap button
-            if intercepted_carriages or (captured_network_json and self._extract_seats_from_json_list(captured_network_json)):
-                carriages_data = intercepted_carriages or self._extract_seats_from_json_list(captured_network_json)
-                logger.info(f"[NETWORK EARLY EXIT] Przechwycono dane z API JSON dla {len(carriages_data)} wagonów po kliknięciu schematu! Pomijam karuzelę DOM.")
-                report(95, f"[JSON] Odczytano wolne miejsca w {len(carriages_data)} wagonach.")
-                return carriages_data
+            # Step 5: Wait for GRM API (/grm/sklad/wbnet/ + /grm/wagon/svg/wbnet/) or DOM seatmap render
+            report(85, "Oczekiwanie na dane GRM / wyrenderowanie schematu wagonów...")
 
-            # Step 5: Wait for seatmap render or JSON interception (85%)
-            report(85, "Oczekiwanie na wyrenderowanie grafiki wagonu / odpowiedzi JSON...")
-
-            # Save step4 snapshots (Task V3-25)
             step4_snap_html = DEBUG_SNAPSHOTS_DIR / "step4_seatmap_modal.html"
             step4_snap_png = DEBUG_SNAPSHOTS_DIR / "step4_seatmap_modal.png"
             try:
@@ -844,85 +1313,93 @@ class EbiletSeatScraper:
             except Exception:
                 pass
 
-            # Detect seatmap container / frame (strictly exclude cookiebot/consent/blank frames)
             target_container: Union[Page, Frame] = page
-            for frame in page.frames:
-                f_url = frame.url.lower()
-                if frame != page and not any(skip in f_url for skip in ["cookiebot", "consent", "blank", "google", "doubleclick"]):
-                    f_title = ""
-                    try:
-                        f_title = (await frame.title()).lower()
-                    except Exception:
-                        pass
-                    if any(k in f_title for k in ["schemat", "miejsce", "wagon", "klasa"]) or any(k in f_url for k in ["schemat", "seat", "wagon", "carriage", "resource", "srcdoc"]):
-                        target_container = frame
-                        logger.info(f"[IFRAME] Wykryto ramkę schematu wagonu: title='{f_title}' url='{frame.url}'")
-                        break
-
-            # Fast wait for seatmap elements or JSON response (max 8s)
             start_wait = time.time()
-            seatmap_found = False
-            while time.time() - start_wait < 8.0:
-                if intercepted_carriages or (captured_network_json and self._extract_seats_from_json_list(captured_network_json)):
-                    carriages_data = intercepted_carriages or self._extract_seats_from_json_list(captured_network_json)
-                    logger.info(f"[NETWORK EARLY EXIT] Odebrano JSON miejsc podczas oczekiwania ({len(carriages_data)} wagonów). Natychmiastowe zakończenie!")
-                    report(95, f"[JSON] Odczytano wolne miejsca w {len(carriages_data)} wagonach.")
-                    return carriages_data
+            seatmap_dom_seen_at: Optional[float] = None
+            while time.time() - start_wait < 10.0:
+                # Authoritative GRM API ready (sklad JSON + SVG URL template captured)
+                if sklad_info["data"] is not None and wagon_svg_template["prefix"]:
+                    break
+
+                # If sklad JSON arrived and there are 0 available wagons for this class, stop waiting early
+                if sklad_info["data"] is not None:
+                    targets_chk, has_key_chk = self._select_grm_target_wagons(
+                        sklad_info["data"], ticket_class=ticket_class
+                    )
+                    if has_key_chk and not targets_chk:
+                        break
 
                 for f in page.frames:
                     f_url = f.url.lower()
                     if f != page and not any(skip in f_url for skip in ["cookiebot", "consent", "blank", "google", "doubleclick"]):
                         if await f.locator("rect.place-rect, image.place, g[data-class], g[aria-label*='miejsce' i], button.seat-overlay-button").count() > 0:
                             target_container = f
-                            seatmap_found = True
+                            if seatmap_dom_seen_at is None:
+                                seatmap_dom_seen_at = time.time()
                             break
-                if seatmap_found:
-                    break
 
-                test_seats = page.locator("div[class*='Carriage_carriageSlide'], button.carriagesBtnNext")
-                if await test_seats.count() > 0:
-                    seatmap_found = True
+                if seatmap_dom_seen_at is None:
+                    test_seats = page.locator("div[class*='Carriage_carriageSlide'], button.carriagesBtnNext")
+                    if await test_seats.count() > 0:
+                        seatmap_dom_seen_at = time.time()
+
+                # Give GRM API responses up to 1.5s after DOM renders before falling back to DOM
+                if seatmap_dom_seen_at is not None and (time.time() - seatmap_dom_seen_at) > 1.5:
                     break
 
                 await self.dismiss_intermediate_modals(page)
-                if await self.check_and_handle_error_radar(page, "render_schematu"):
-                    continue
+                await self.check_and_handle_error_radar(page, "render_schematu", allow_reload=False)
                 await asyncio.sleep(0.1)
 
             # Step 5: Seat extraction across target class carriages (90%)
             report(90, f"Odczytywanie wolnych miejsc z wagonów Klasy {ticket_class}...")
             carriages_data: Dict[str, List[str]] = {}
 
-            # Priority 1: JSON interception (Task V3-26 & Speedup #4)
-            if intercepted_carriages:
-                carriages_data = intercepted_carriages
-            elif captured_network_json:
-                carriages_data = self._extract_seats_from_json_list(captured_network_json, ticket_class=ticket_class)
+            # Priority 1: Authoritative GRM API (/grm/sklad/wbnet/ + /grm/wagon/svg/wbnet/ XML)
+            if sklad_info["data"] is not None:
+                api_carriages = await self._extract_seats_via_grm_api(
+                    page=page,
+                    sklad_data=sklad_info["data"],
+                    wagon_svg_template=wagon_svg_template,
+                    intercepted_svg_by_wagon=intercepted_svg_by_wagon,
+                    ticket_class=ticket_class,
+                )
+                if api_carriages is not None:
+                    carriages_data = api_carriages
+                    await self._close_seatmap_modal(page)
+                    report(95, f"[GRM API] Odczytano wolne miejsca w {len(carriages_data)} wagonach.")
+                    return carriages_data
 
-            if carriages_data:
-                logger.info(f"[NETWORK EARLY EXIT] Znaleziono {len(carriages_data)} wagonów w API JSON. Pomijam karuzelę DOM!")
-                report(95, f"[JSON] Odczytano wolne miejsca w {len(carriages_data)} wagonach.")
-                return carriages_data
-
-            # Priority 2: DOM & Iframe parsing across target class carriages
+            # Priority 2: Fixed DOM & Iframe carousel fallback (only if GRM API wasn't intercepted/complete)
             if not carriages_data:
-                carriages_data = await self._extract_seats_from_eic2_dom(page, target_container, ticket_class=ticket_class)
+                carriages_data = await self._extract_seats_from_eic2_dom(
+                    page,
+                    target_container,
+                    ticket_class=ticket_class,
+                    intercepted_svg_by_wagon=intercepted_svg_by_wagon,
+                    wagon_svg_events=wagon_svg_events,
+                )
 
-            if not carriages_data:
+            if not carriages_data or not any(len(s) > 0 for s in carriages_data.values()):
                 content = await page.content()
                 content_lower = content.lower()
-                reason = "Nie znaleziono dostępnych miejsc na schemacie."
-                if "brak miejsc" in content_lower:
-                    reason = "Brak wolnych miejsc w pociągu (wyprzedane)."
+                if "brak miejsc" in content_lower or "wyprzedane" in content_lower:
+                    reason = f"BRAK_MIEJSC_KLASA_{ticket_class}: Brak wolnych miejsc w pociągu (wyprzedane)."
+                elif carriages_data and all(len(s) == 0 for s in carriages_data.values()):
+                    reason = (
+                        f"BRAK_MIEJSC_KLASA_{ticket_class}: Wszystkie sprawdzone wagony "
+                        f"({', '.join(carriages_data.keys())}) mają 0 wolnych miejsc."
+                    )
                 elif "przerwa techniczna" in content_lower:
-                    reason = "Przerwa techniczna systemu PKP Intercity."
+                    reason = "SCRAPE_ERROR: Przerwa techniczna systemu PKP Intercity."
                 elif "cloudflare" in content_lower or "challenge" in content_lower:
-                    reason = "Blokada WAF / Cloudflare."
+                    reason = "SCRAPE_ERROR: Blokada WAF / Cloudflare."
+                else:
+                    reason = "SCRAPE_ERROR: Nie udało się odczytać schematu wagonu na 85%."
 
                 snap_png, _ = await self.save_debug_snapshot(page, f"error_85_percent_{from_station}_{to_station}")
                 raise GraphicReservationUnavailableError(
-                    f"Nie udało się otworzyć schematu wagonu na 85% dla trasy {from_station} -> {to_station}. "
-                    f"Powód: {reason} (Zapisano zrzut do {snap_png.name})"
+                    f"{reason} (trasa {from_station} -> {to_station}, zrzut {snap_png.name})"
                 )
 
             # Step 6: Complete (95%)
@@ -934,7 +1411,14 @@ class EbiletSeatScraper:
         except Exception as e:
             logger.warning(f"[SCRAPER] Error during scraping {from_station} -> {to_station}: {e}")
             await self.save_debug_snapshot(page, f"err_{from_station}_{to_station}")
-            return {}
+            raise GraphicReservationUnavailableError(
+                f"SCRAPE_ERROR: Błąd podczas skanowania {from_station} -> {to_station}: {e}"
+            ) from e
+        finally:
+            try:
+                page.remove_listener("response", on_response)
+            except Exception:
+                pass
 
     def _extract_seats_from_json_list(
         self,
@@ -964,22 +1448,22 @@ class EbiletSeatScraper:
                         if c_class == wrong_class_str or any(skip in c_type for skip in ["WR", "WARS", "WL", "BC"]):
                             continue
 
-                        seats = carriage.get("seats", carriage.get("miejsca", carriage.get("places", [])))
+                        seats = carriage.get("seats", carriage.get("miejsca", carriage.get("places")))
+                        if not isinstance(seats, list) or len(seats) == 0:
+                            continue
+
                         free_seats = []
-                        if isinstance(seats, list):
-                            for s in seats:
-                                if not isinstance(s, dict):
-                                    continue
-                                s_no = str(s.get("number", s.get("nr", "")))
-                                status = str(s.get("status", s.get("state", "FREE"))).upper()
-                                if status in ("FREE", "AVAILABLE", "WOLNE", "1") and s_no.isdigit():
-                                    free_seats.append(s_no)
+                        for s in seats:
+                            if not isinstance(s, dict):
+                                continue
+                            s_no = str(s.get("number", s.get("nr", "")))
+                            status = str(s.get("status", s.get("state", "FREE"))).upper()
+                            if status in ("FREE", "AVAILABLE", "WOLNE", "1") and s_no.isdigit():
+                                free_seats.append(s_no)
 
                         if free_seats:
                             sorted_seats = sorted(list(set(free_seats)), key=lambda x: int(x))
                             carriages[c_no] = sorted_seats
-                        elif c_no not in carriages:
-                            carriages[c_no] = []
 
                 for k, v in obj.items():
                     if isinstance(v, (dict, list)):
@@ -993,21 +1477,161 @@ class EbiletSeatScraper:
 
         return carriages
 
+    async def _get_seatmap_frame_signature(self, page: Page, fallback_container: Union[Page, Frame]) -> Tuple[Optional[Frame], str]:
+        """Locates the active seatmap iframe and returns (frame, content_signature) to detect wagon switches."""
+        seat_frame = None
+        for f in page.frames:
+            f_url = f.url.lower()
+            if f != page and not any(skip in f_url for skip in ["cookiebot", "consent", "blank", "google", "doubleclick"]):
+                if any(k in f_url for k in ["resource", "schemat", "seat", "wagon", "srcdoc"]):
+                    seat_frame = f
+                    break
+        target = seat_frame or fallback_container
+        sig = ""
+        try:
+            if hasattr(target, "evaluate"):
+                sig = await target.evaluate(
+                    """() => {
+                        const svg = document.querySelector('svg');
+                        if (!svg) return '';
+                        const schema = svg.getAttribute('schema') || '';
+                        const gCount = svg.querySelectorAll('g[aria-label]').length;
+                        const firstG = svg.querySelector('g[id]');
+                        return schema + '|' + gCount + '|' + (firstG ? firstG.id : '') + '|' + svg.innerHTML.length;
+                    }"""
+                )
+        except Exception:
+            sig = ""
+        return seat_frame, str(sig or "")
+
+    async def _scroll_slide_into_carousel_viewport(self, page: Page, slide) -> None:
+        """Scrolls Swiper carousel left or right across >10 wagons until the slide is inside the viewport."""
+        btn_next = page.locator("button.carriagesBtnNext, button[aria-label*='w prawo']").first
+        btn_prev = page.locator("button.carriagesBtnPrev, button[aria-label*='w lewo']").first
+
+        for _ in range(15):
+            try:
+                pos = await slide.evaluate(
+                    """el => {
+                        const rect = el.getBoundingClientRect();
+                        const swiper = el.closest('.swiper, .swiper-container, [class*="Carriage_carriages"]') || el.parentElement;
+                        const sRect = swiper ? swiper.getBoundingClientRect() : { left: 0, right: window.innerWidth };
+                        if (rect.width === 0) return 'hidden';
+                        if (rect.right > sRect.right + 4) return 'right';
+                        if (rect.left < sRect.left - 4) return 'left';
+                        return 'visible';
+                    }"""
+                )
+            except Exception:
+                break
+
+            if pos == "visible":
+                break
+            nav_btn = btn_prev if pos == "left" else btn_next
+            try:
+                if await nav_btn.is_visible(timeout=200) and await nav_btn.is_enabled():
+                    await self.safe_click(nav_btn, timeout=500)
+                    await asyncio.sleep(0.1)
+                else:
+                    break
+            except Exception:
+                break
+
     async def _extract_seats_from_eic2_dom(
         self,
         page: Page,
         container: Union[Page, Frame],
         ticket_class: int = TARGET_CLASS,
+        intercepted_svg_by_wagon: Optional[Dict[str, str]] = None,
+        wagon_svg_events: Optional[Dict[str, asyncio.Event]] = None,
     ) -> Dict[str, List[str]]:
         """
-        Extracts available seats across all carriages matching ticket_class using snappy carousel switching
-        and <5ms in-page SVG evaluation.
+        DOM carousel fallback (used ONLY when /grm/sklad/wbnet/ API was not intercepted).
+        Never checks swiper-slide-active; inspects Carriage_carriageBox background-image for 'current-',
+        scrolls right/left across long trains, and waits for the specific wagon's SVG response or
+        iframe SVG schema/content change before reading seats.
         """
         carriages: Dict[str, List[str]] = {}
+        is_class1 = int(ticket_class) == 1
 
-        # Look for wagon slides in e-IC 2.0 carousel
         slide_locators = page.locator("div[class*='Carriage_carriageSlide']")
         slide_count = await slide_locators.count()
+
+        async def _switch_and_read_slide(slide, c_no: str, idx: int, already_active: bool) -> List[str]:
+            logger.info(f"[CAROUSEL] Przetwarzanie wagonu Klasy {ticket_class}: Nr {c_no} (slajd #{idx+1})...")
+
+            if not already_active:
+                _, prev_sig = await self._get_seatmap_frame_signature(page, container)
+                await self._scroll_slide_into_carousel_viewport(page, slide)
+
+                # Prepare event to await exact /grm/wagon/svg/wbnet/.../{c_no}/ response if network fires it
+                ev = None
+                if wagon_svg_events is not None:
+                    ev = asyncio.Event()
+                    wagon_svg_events[c_no] = ev
+                    if intercepted_svg_by_wagon is not None:
+                        intercepted_svg_by_wagon.pop(c_no, None)
+
+                try:
+                    await slide.evaluate(
+                        """el => {
+                            el.scrollIntoView({ inline: 'center', block: 'nearest' });
+                            const btn = el.querySelector('div[aria-label*="Wybierz wagon numer"], div[class*="Carriage_carriageBox"], div[role="button"]') || el;
+                            btn.click();
+                        }"""
+                    )
+                except Exception:
+                    click_target = slide.locator(
+                        "div[aria-label*='Wybierz wagon numer'], div[class*='Carriage_carriageBox'], div[role='button']"
+                    ).first
+                    if await click_target.count() == 0:
+                        click_target = slide
+                    await self.safe_click(click_target, timeout=1200)
+
+                # Wait up to 3.0s for wagon SVG response OR (current- style AND iframe SVG signature change)
+                switch_start = time.time()
+                while time.time() - switch_start < 3.0:
+                    if ev is not None and ev.is_set():
+                        await asyncio.sleep(0.08)
+                        break
+
+                    is_now_current = False
+                    try:
+                        is_now_current = await slide.evaluate(
+                            """el => {
+                                const box = el.querySelector("div[class*='Carriage_carriageBox']") || el;
+                                const s = ((box.getAttribute('style') || '') + ' ' + (box.style && box.style.backgroundImage ? box.style.backgroundImage : '')).toLowerCase();
+                                return s.includes('current-');
+                            }"""
+                        )
+                    except Exception:
+                        pass
+
+                    _, curr_sig = await self._get_seatmap_frame_signature(page, container)
+                    if is_now_current and curr_sig and curr_sig != prev_sig:
+                        break
+                    await asyncio.sleep(0.08)
+
+            # Prefer intercepted SVG XML for this exact wagon if it arrived during click
+            if intercepted_svg_by_wagon and c_no in intercepted_svg_by_wagon:
+                return self.parse_grm_wagon_svg(intercepted_svg_by_wagon[c_no], ticket_class=ticket_class)
+
+            seat_frame, _ = await self._get_seatmap_frame_signature(page, container)
+            if seat_frame:
+                try:
+                    await seat_frame.locator("rect.place-rect, image.place, g[data-class]").first.wait_for(
+                        state="attached", timeout=1200
+                    )
+                except Exception:
+                    pass
+            else:
+                await asyncio.sleep(0.15)
+
+            seats = await self._find_seats_in_iframe(seat_frame or container, ticket_class=ticket_class)
+            if not seats:
+                await self.check_and_handle_error_radar(page, context_label=f"wagon_{c_no}", allow_reload=False)
+                seats = await self._find_seats_in_iframe(seat_frame or container, ticket_class=ticket_class)
+            return seats
 
         if slide_count > 0:
             slides_meta = []
@@ -1019,7 +1643,6 @@ class EbiletSeatScraper:
             except Exception as e:
                 logger.debug(f"[CAROUSEL] evaluate metadata failed ({e})")
 
-            # Fast path: in-page extracted metadata for all slides
             if slides_meta and isinstance(slides_meta, list):
                 for item in slides_meta:
                     if item.get("skip"):
@@ -1029,75 +1652,13 @@ class EbiletSeatScraper:
                     if not c_no:
                         continue
 
-                    logger.info(f"[CAROUSEL] Przetwarzanie wagonu Klasy 2: Nr {c_no} (slajd #{idx+1})...")
                     slide = slide_locators.nth(idx)
-
-                    # Snappy slide navigation: scroll & click in single JS call if not already active
-                    is_active = item.get("isActive", False)
-                    if not is_active:
-                        if not await slide.is_visible():
-                            carousel_next = page.locator("button.carriagesBtnNext, button[aria-label*='w prawo']").first
-                            for _ in range(3):
-                                try:
-                                    if await carousel_next.is_visible(timeout=200) and await carousel_next.is_enabled():
-                                        await self.safe_click(carousel_next, timeout=500)
-                                        await asyncio.sleep(0.08)
-                                        if await slide.is_visible():
-                                            break
-                                except Exception:
-                                    pass
-
-                        try:
-                            await slide.evaluate("el => { el.scrollIntoView({ inline: 'center', block: 'nearest' }); const btn = el.querySelector('div[aria-label*=\"Wybierz wagon numer\"], div[class*=\"Carriage_carriageBox\"], div[role=\"button\"]') || el; btn.click(); }")
-                        except Exception:
-                            await self.safe_click(slide, timeout=1200)
-
-                        # Quick wait for active class (up to 500ms, polling every 50ms)
-                        activated = False
-                        for _ in range(10):
-                            cls = (await slide.get_attribute("class")) or ""
-                            if "swiper-slide-active" in cls:
-                                activated = True
-                                break
-                            await asyncio.sleep(0.05)
-
-                        if not activated:
-                            click_target = slide.locator(
-                                "div[aria-label*='Wybierz wagon numer'], div[class*='Carriage_carriageBox'], div[role='button']"
-                            ).first
-                            if await click_target.count() == 0:
-                                click_target = slide
-                            await self.safe_click(click_target, timeout=1000)
-
-                        await asyncio.sleep(0.15)
-
-                    # Locate current seatmap iframe (strictly exclude Cookiebot, Consent, and Blank frames)
-                    seat_frame = None
-                    for f in page.frames:
-                        f_url = f.url.lower()
-                        if f != page and not any(skip in f_url for skip in ["cookiebot", "consent", "blank", "google", "doubleclick"]):
-                            if any(k in f_url for k in ["resource", "schemat", "seat", "wagon", "srcdoc"]):
-                                seat_frame = f
-                                break
-
-                    if seat_frame:
-                        try:
-                            await seat_frame.locator("rect.place-rect, image.place, g[data-class]").first.wait_for(state="attached", timeout=1200)
-                        except Exception:
-                            pass
-                    else:
-                        await asyncio.sleep(0.15)
-
-                    # Extract seats in < 5ms via in-page evaluate()
-                    seats = await self._find_seats_in_iframe(seat_frame or container, ticket_class=ticket_class)
-                    if not seats:
-                        await self.check_and_handle_error_radar(page, context_label=f"wagon_{c_no}")
-                        seats = await self._find_seats_in_iframe(seat_frame or container, ticket_class=ticket_class)
-
+                    is_active = bool(item.get("isActive", False))
+                    seats = await _switch_and_read_slide(slide, c_no, idx, already_active=is_active)
                     logger.info(f"[SEATS] Wagon {c_no}: odczytano {len(seats)} wolnych miejsc: {seats[:10]}...")
                     carriages[c_no] = seats
             else:
-                # Fallback: sequential DOM parsing for slides
+                # Fallback: sequential DOM parsing for slides (supports both Class 1 and Class 2)
                 for idx in range(slide_count):
                     slide = slide_locators.nth(idx)
                     klasa_el = slide.locator("p[class*='Carriage_carriageKlasa']").first
@@ -1113,9 +1674,17 @@ class EbiletSeatScraper:
                     except Exception:
                         pass
 
-                    is_class_1 = ("klasa 1" in klasa_txt or "kl. 1" in klasa_txt or "klasa 1" in slide_txt) and ("klasa 2" not in klasa_txt and "klasa 2" not in slide_txt)
-                    is_service_car = any(skip in klasa_txt or skip in slide_txt for skip in ["wars", "restaurac", "sypialn", "kuszet"])
-                    if is_class_1 or is_service_car:
+                    is_class_1_only = (
+                        "klasa 1" in klasa_txt or "kl. 1" in klasa_txt or "klasa 1" in slide_txt
+                    ) and ("klasa 2" not in klasa_txt and "klasa 2" not in slide_txt)
+                    is_class_2_only = (
+                        "klasa 2" in klasa_txt or "kl. 2" in klasa_txt or "klasa 2" in slide_txt
+                    ) and ("klasa 1" not in klasa_txt and "klasa 1" not in slide_txt)
+                    is_wrong_class = is_class_2_only if is_class1 else is_class_1_only
+                    is_service_car = any(
+                        skip in klasa_txt or skip in slide_txt for skip in ["wars", "restaurac", "sypialn", "kuszet"]
+                    )
+                    if is_wrong_class or is_service_car:
                         continue
 
                     c_no = ""
@@ -1123,7 +1692,9 @@ class EbiletSeatScraper:
                         box_el = slide.locator("div[aria-label*='wagon numer'], div[aria-label*='Wagon'], [aria-label*='wagon']").first
                         if await box_el.count() > 0:
                             box_aria = (await box_el.get_attribute("aria-label")) or ""
-                            m = re.search(r'wagon\s+(?:numer\s+)?(\d+)', box_aria, re.IGNORECASE) or re.search(r'numer\s+(\d+)', box_aria, re.IGNORECASE)
+                            m = re.search(r"wagon\s+(?:numer\s+)?(\d+)", box_aria, re.IGNORECASE) or re.search(
+                                r"numer\s+(\d+)", box_aria, re.IGNORECASE
+                            )
                             if m:
                                 c_no = m.group(1)
                     except Exception:
@@ -1136,58 +1707,37 @@ class EbiletSeatScraper:
                             ).first
                             if await num_el.count() > 0:
                                 num_txt = (await num_el.text_content() or "").strip()
-                                m = re.search(r'\d+', num_txt)
+                                m = re.search(r"\d+", num_txt)
                                 if m:
                                     c_no = m.group(0)
                         except Exception:
                             pass
 
                     if not c_no and slide_txt:
-                        m = re.search(r'wagon\s*(\d+)', slide_txt, re.IGNORECASE) or re.search(r'\b(\d+)\b', slide_txt)
+                        m = re.search(r"wagon\s*(\d+)", slide_txt, re.IGNORECASE) or re.search(r"\b(\d+)\b", slide_txt)
                         if m:
                             c_no = m.group(1)
 
                     if not c_no:
                         continue
 
-                    logger.info(f"[CAROUSEL] Przetwarzanie wagonu Klasy 2: Nr {c_no} (slajd #{idx+1})...")
+                    is_active = False
                     try:
-                        await slide.evaluate("el => el.scrollIntoView({ inline: 'center', block: 'nearest' })")
+                        box_style = (
+                            await slide.locator("div[class*='Carriage_carriageBox']").first.get_attribute("style")
+                        ) or ""
+                        is_active = "current-" in box_style.lower()
                     except Exception:
                         pass
 
-                    click_target = slide.locator(
-                        "div[aria-label*='Wybierz wagon numer'], div[class*='Carriage_carriageBox'], div[role='button']"
-                    ).first
-                    if await click_target.count() == 0:
-                        click_target = slide
-                    await self.safe_click(click_target, timeout=1200)
-
-                    seat_frame = None
-                    for f in page.frames:
-                        f_url = f.url.lower()
-                        if f != page and not any(skip in f_url for skip in ["cookiebot", "consent", "blank", "google", "doubleclick"]):
-                            if any(k in f_url for k in ["resource", "schemat", "seat", "wagon", "srcdoc"]):
-                                seat_frame = f
-                                break
-
-                    seats = await self._find_seats_in_iframe(seat_frame or container)
+                    seats = await _switch_and_read_slide(slide, c_no, idx, already_active=is_active)
                     carriages[c_no] = seats
         else:
-            seats = await self._find_seats_in_iframe(container)
+            seats = await self._find_seats_in_iframe(container, ticket_class=ticket_class)
             if seats:
                 carriages["2"] = seats
 
-        # Dismiss modal
-        try:
-            close_btn = page.locator("button[class*='css-nk1pxf']:has-text('Zamknij'), button[aria-label='Zamknij'], button:has-text('Zamknij')").first
-            if await close_btn.is_visible(timeout=400):
-                await self.safe_click(close_btn, timeout=600)
-            else:
-                await page.keyboard.press("Escape")
-        except Exception:
-            pass
-
+        await self._close_seatmap_modal(page)
         return carriages
 
     async def _find_seats_in_iframe(
@@ -1200,7 +1750,7 @@ class EbiletSeatScraper:
         1. Primary: SVG <g> groups with aria-label containing 'wolne'
         2. Secondary: button.seat-overlay-button with aria-label containing 'wolne' or data-place
         3. Tertiary: image.place with status="1" (free seat graphics)
-        Filters out wrong-class seats if wagon is a mixed-class carriage.
+        Filters out wrong-class seats and PRM wheelchair-only seats.
         Falls back to resilient Python locators if evaluate() is not available.
         """
         target_frames: List[Union[Page, Frame]] = []
@@ -1246,7 +1796,14 @@ class EbiletSeatScraper:
             except Exception as e:
                 logger.debug(f"[EVALUATE] In-page seat evaluation error in frame: {e}")
 
-        # Fallback: Python locator iteration if evaluate() yielded nothing
+        # Fallback: Python locator iteration if evaluate() yielded nothing (handles both Class 1 and Class 2 + PRM)
+        is_class1 = int(ticket_class) == 1
+
+        def _skip_wrong_class(aria_l: str, d_class_l: str) -> bool:
+            if is_class1:
+                return "second class" in d_class_l or ("klasa 2" in aria_l and "klasa 1" not in aria_l)
+            return "first class" in d_class_l or ("klasa 1" in aria_l and "klasa 2" not in aria_l)
+
         free_seats: List[str] = []
         for cf in target_frames:
             try:
@@ -1257,14 +1814,14 @@ class EbiletSeatScraper:
                         g_elem = g_locs.nth(idx)
                         aria = (await g_elem.get_attribute("aria-label")) or ""
                         d_class = (await g_elem.get_attribute("data-class")) or ""
-                        if "first class" in d_class.lower() or ("klasa 1" in aria.lower() and "klasa 2" not in aria.lower()):
+                        if _skip_wrong_class(aria.lower(), d_class.lower()) or is_prm_wheelchair_label(aria):
                             continue
                         text_el = g_elem.locator("text").first
                         num = ""
                         if await text_el.count() > 0:
                             num = (await text_el.text_content() or "").strip()
                         if not num:
-                            m = re.search(r'miejsce\s+(\d+)', aria, re.IGNORECASE)
+                            m = re.search(r"miejsce\s+(\d+)", aria, re.IGNORECASE)
                             if m:
                                 num = m.group(1)
                         if num and num.isdigit():
@@ -1281,15 +1838,16 @@ class EbiletSeatScraper:
                     for idx in range(b_cnt):
                         b_elem = b_locs.nth(idx)
                         aria = (await b_elem.get_attribute("aria-label")) or ""
-                        if "wolne" not in aria.lower():
+                        aria_l = aria.lower()
+                        if "wolne" not in aria_l:
                             continue
-                        if "klasa 1" in aria.lower() and "klasa 2" not in aria.lower():
+                        if _skip_wrong_class(aria_l, "") or is_prm_wheelchair_label(aria_l):
                             continue
                         place_val = (await b_elem.get_attribute("data-place")) or ""
                         if place_val and place_val.isdigit():
                             free_seats.append(place_val)
                         else:
-                            m = re.search(r'miejsce\s+(\d+)', aria, re.IGNORECASE)
+                            m = re.search(r"miejsce\s+(\d+)", aria, re.IGNORECASE)
                             if m and m.group(1).isdigit():
                                 free_seats.append(m.group(1))
                     if free_seats:
@@ -1312,7 +1870,7 @@ class EbiletSeatScraper:
                     if cnt > 0:
                         for idx in range(cnt):
                             t = (await locs.nth(idx).inner_text()).strip()
-                            m = re.search(r'\b\d+\b', t)
+                            m = re.search(r"\b\d+\b", t)
                             if m:
                                 free_seats.append(m.group(0))
                         break
@@ -1334,15 +1892,19 @@ class EbiletSeatScraper:
         progress_cb: Optional[Callable[[int, str], None]] = None,
         page: Optional[Page] = None,
         has_warmed_session: bool = False,
+        from_eva: str = "",
+        to_eva: str = "",
     ) -> Dict[str, List[str]]:
         """
         Scans a single segment with SQLite caching (TTL 10 min).
         Reuses page if provided by LiveTrainScanner.
+        Raises GraphicReservationUnavailableError on both explicit SOLD_OUT and final SCRAPE_ERROR
+        so callers can distinguish honest sold-out segments from scrape failures.
         """
         cache_key = f"seatmap_{train_number}_{travel_date}_{from_station}_{to_station}_c{ticket_class}"
         if use_cache:
             cached = get_cached_item(cache_key, ttl_seconds=self.ttl_seconds)
-            if cached and isinstance(cached, dict):
+            if cached and isinstance(cached, dict) and any(len(v) > 0 for v in cached.values()):
                 logger.info(f"[CACHE HIT] Seatmap for segment {from_station} -> {to_station} (Klasa {ticket_class})")
                 return cached
 
@@ -1350,6 +1912,7 @@ class EbiletSeatScraper:
         await asyncio.sleep(random.uniform(0.05, 0.15))
 
         if page is not None:
+            last_error: Optional[Exception] = None
             for attempt in range(2):
                 try:
                     carriages = await self.search_segment_on_intercity(
@@ -1362,29 +1925,43 @@ class EbiletSeatScraper:
                         ticket_class=ticket_class,
                         progress_cb=progress_cb,
                         has_warmed_session=has_warmed_session,
+                        from_eva=from_eva,
+                        to_eva=to_eva,
                     )
-                    if carriages:
+                    if carriages and any(len(v) > 0 for v in carriages.values()):
                         set_cached_item(cache_key, carriages)
                         return carriages
                     if attempt == 0:
                         logger.info(f"[RETRY] Brak danych dla {from_station} -> {to_station}, ponawiam próbę...")
                         await asyncio.sleep(1.5)
+                    else:
+                        raise GraphicReservationUnavailableError(
+                            f"SCRAPE_ERROR: Brak danych o miejscach po 2 próbach dla {from_station} -> {to_station}."
+                        )
                 except GraphicReservationUnavailableError as e:
+                    last_error = e
                     logger.warning(f"[SCAN] Rezerwacja graficzna niedostępna dla {from_station} -> {to_station}: {e}")
-                    if "brak_miejsc" in str(e).lower() or "wyprzedan" in str(e).lower():
-                        return {}
+                    if is_sold_out_reason(str(e)):
+                        raise
                     if attempt == 0:
                         await asyncio.sleep(2.0)
                     else:
-                        return {}
+                        raise
                 except Exception as e:
+                    last_error = e
                     logger.warning(f"[SCAN] Błąd w próbie {attempt+1} dla {from_station} -> {to_station}: {e}")
                     if attempt == 0:
                         await asyncio.sleep(2.0)
                     else:
                         await self.save_debug_snapshot(page, f"err_{from_station}_{to_station}")
-                        return {}
-            return {}
+                        raise GraphicReservationUnavailableError(
+                            f"SCRAPE_ERROR: Nieoczekiwany błąd dla {from_station} -> {to_station}: {e}"
+                        ) from e
+            if last_error:
+                raise last_error
+            raise GraphicReservationUnavailableError(
+                f"SCRAPE_ERROR: Nie udało się odczytać miejsc dla {from_station} -> {to_station}."
+            )
 
         # Standalone launch if no page provided
         async with async_playwright() as p:
@@ -1406,8 +1983,10 @@ class EbiletSeatScraper:
                     train_number=train_number,
                     ticket_class=ticket_class,
                     progress_cb=progress_cb,
+                    from_eva=from_eva,
+                    to_eva=to_eva,
                 )
-                if carriages:
+                if carriages and any(len(v) > 0 for v in carriages.values()):
                     set_cached_item(cache_key, carriages)
                 return carriages
             finally:
@@ -1436,6 +2015,22 @@ class LiveTrainScanner:
         self.on_progress = on_progress
         self.concurrency = max(1, concurrency)
 
+    @staticmethod
+    def compute_segment_date(travel_date: str, day_offset: int = 0) -> str:
+        """Computes YYYY-MM-DD segment date adjusted by day_offset for overnight trains crossing midnight."""
+        clean_date = (travel_date or "").strip()
+        if "." in clean_date:
+            parts = clean_date.split(".")
+            if len(parts) == 3 and len(parts[2]) == 4:
+                clean_date = f"{parts[2]}-{parts[1]}-{parts[0]}"
+        if not day_offset:
+            return clean_date
+        try:
+            dt = datetime.strptime(clean_date, "%Y-%m-%d")
+            return (dt + timedelta(days=int(day_offset))).strftime("%Y-%m-%d")
+        except Exception:
+            return clean_date
+
     def _notify(self, msg: str) -> None:
         logger.info(f"[SCANNER] {msg}")
         if self.on_progress:
@@ -1457,7 +2052,8 @@ class LiveTrainScanner:
         1. Obtains all intermediate stops for the train (in worker thread so event loop stays responsive).
         2. Warms up cookies/Cookiebot once and transfers storage_state to isolated per-segment contexts.
         3. Scans elementary segments concurrently with monotonic global progress reporting.
-        4. Constructs FullTrainAvailabilityMap and saves to logs/last_scan_map.txt.
+        4. Constructs FullTrainAvailabilityMap (with honest OK / SOLD_OUT / SCRAPE_ERROR statuses)
+           and saves to logs/last_scan_map.txt.
         """
         self._notify(f"[5%] Rozpoczynanie skanowania pociągu {train_number} (Klasa {ticket_class})...")
 
@@ -1534,6 +2130,10 @@ class LiveTrainScanner:
                     s_from = stops[idx]
                     s_to = stops[idx + 1]
                     seg_dep_time = s_from.departure_time or s_from.arrival_time or departure_time or "12:00"
+                    seg_day_offset = int(getattr(s_from, "day_offset", 0) or 0)
+                    seg_date = self.compute_segment_date(travel_date, seg_day_offset)
+                    seg_from_eva = (getattr(s_from, "eva_code", "") or "").strip()
+                    seg_to_eva = (getattr(s_to, "eva_code", "") or "").strip()
 
                     if idx > 0:
                         await asyncio.sleep(min(idx * 0.1, 0.4))
@@ -1541,7 +2141,7 @@ class LiveTrainScanner:
                     async with sem:
                         self._notify(
                             f"[{compute_global_pct()}%] Skanowanie odcinka {idx + 1}/{num_segments}: "
-                            f"{s_from.name} -> {s_to.name} ({seg_dep_time})..."
+                            f"{s_from.name} -> {s_to.name} ({seg_date} {seg_dep_time})..."
                         )
 
                         def seg_cb(pct: int, msg: str):
@@ -1554,24 +2154,42 @@ class LiveTrainScanner:
 
                         seg_context = await self.scraper.create_context(browser, storage_state=warmup_storage_state)
                         seg_page = await self.scraper.init_page(seg_context)
-                        carriages = {}
+                        carriages: Dict[str, List[str]] = {}
+                        seg_status = "OK"
+                        seg_error_reason: Optional[str] = None
                         try:
                             carriages = await self.scraper.scan_segment(
                                 from_station=s_from.name,
                                 to_station=s_to.name,
-                                travel_date=travel_date,
+                                travel_date=seg_date,
                                 departure_time=seg_dep_time,
                                 train_number=train_number,
                                 ticket_class=ticket_class,
                                 progress_cb=seg_cb,
                                 page=seg_page,
                                 has_warmed_session=bool(warmup_storage_state),
+                                from_eva=seg_from_eva,
+                                to_eva=seg_to_eva,
                             )
+                            if not carriages or not any(len(s) > 0 for s in carriages.values()):
+                                seg_status = "SOLD_OUT"
+                                seg_error_reason = f"Brak wolnych miejsc w Klasie {ticket_class}."
+                                carriages = {}
                         except GraphicReservationUnavailableError as e:
-                            logger.warning(f"[SCANNER] Brak wolnych miejsc lub schematu dla odcinka {s_from.name} -> {s_to.name}: {e}")
+                            err_str = str(e)
+                            if is_sold_out_reason(err_str):
+                                logger.info(f"[SCANNER] Wyprzedany odcinek {s_from.name} -> {s_to.name}: {err_str}")
+                                seg_status = "SOLD_OUT"
+                            else:
+                                logger.warning(f"[SCANNER] Błąd odczytu odcinka {s_from.name} -> {s_to.name}: {err_str}")
+                                seg_status = "SCRAPE_ERROR"
+                            seg_error_reason = err_str
                             carriages = {}
                         except Exception as e:
-                            logger.error(f"[SCANNER] Nieoczekiwany błąd podczas skanowania odcinka {s_from.name} -> {s_to.name}: {e}")
+                            err_str = str(e)
+                            logger.error(f"[SCANNER] Nieoczekiwany błąd podczas skanowania odcinka {s_from.name} -> {s_to.name}: {err_str}")
+                            seg_status = "SCRAPE_ERROR"
+                            seg_error_reason = err_str
                             carriages = {}
                         finally:
                             try:
@@ -1594,7 +2212,13 @@ class LiveTrainScanner:
                             seats_cnt = len(carriages[c_no])
                             c_summary_parts.append(f"W{c_no} ({seats_cnt})")
 
-                        c_summary = ", ".join(c_summary_parts) if c_summary_parts else "Brak wolnych miejsc"
+                        if seg_status == "SCRAPE_ERROR":
+                            c_summary = f"BŁĄD ODCZYTU ({seg_error_reason})"
+                        elif c_summary_parts:
+                            c_summary = ", ".join(c_summary_parts)
+                        else:
+                            c_summary = "Brak wolnych miejsc"
+
                         self._notify(
                             f"[{global_pct}%] Ukończono odcinek {idx + 1}/{num_segments} ({curr_done}/{num_segments} gotowe): "
                             f"{s_from.name} -> {s_to.name}. Wolne miejsca: {c_summary}"
@@ -1606,6 +2230,8 @@ class LiveTrainScanner:
                             to_station=s_to.name,
                             departure_time=seg_dep_time,
                             carriages=carriages,
+                            status=seg_status,
+                            error_reason=seg_error_reason,
                         )
 
                 tasks = [scan_single_segment(i) for i in range(num_segments)]

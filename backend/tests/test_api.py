@@ -22,6 +22,9 @@ class TestHealthEndpoint:
         response = client.get("/")
         assert response.status_code == 200
         assert "PKP Seat Optimizer" in response.text
+        assert "BŁĄD ODCZYTU" in response.text
+        assert "Błąd odczytu odcinka" in response.text
+        assert "scrapeErrorWarningBanner" in response.text
 
 
 class TestStationsSearch:
@@ -62,12 +65,69 @@ class TestStationsSearch:
         assert response.status_code == 200
         assert response.json() == []
 
+    def test_search_polish_diacritics_zyrardow_and_lodz(self):
+        # Uppercase Polish diacritics must match via normalized_name (not SQLite ASCII-only lower())
+        resp_zyr = client.get("/api/stations/search", params={"q": "Żyrardów"})
+        assert resp_zyr.status_code == 200
+        zyr_data = resp_zyr.json()
+        assert len(zyr_data) >= 1
+        assert zyr_data[0]["name"] == "Żyrardów"
+        assert zyr_data[0]["eva_code"] == "5104415"
+
+        resp_lodz = client.get("/api/stations/search", params={"q": "Łódź"})
+        assert resp_lodz.status_code == 200
+        lodz_data = resp_lodz.json()
+        assert len(lodz_data) >= 1
+        assert lodz_data[0]["name"].startswith("Łódź")
+        lodz_by_name = {s["name"]: s["eva_code"] for s in lodz_data}
+        assert lodz_by_name.get("Łódź Fabryczna") == "5100317"
+
+        resp_swin = client.get("/api/stations/search", params={"q": "Świnoujście"})
+        assert resp_swin.status_code == 200
+        swin_data = resp_swin.json()
+        assert len(swin_data) >= 1
+        assert swin_data[0]["name"] == "Świnoujście"
+        assert swin_data[0]["eva_code"] == "5100059"
+
     def test_warszawa_zachodnia_eva_code_correct(self):
         from backend.app.main import KNOWN_STATIONS
 
         by_name = {s["name"]: s["eva_code"] for s in KNOWN_STATIONS}
         assert by_name["Warszawa Zachodnia"] == "5100067"
         assert by_name["Wrocław Główny"] == "5100069"
+
+    def test_all_known_stations_eva_codes_are_accurate(self):
+        from backend.app.db.database import get_connection
+        from backend.app.main import KNOWN_STATIONS
+
+        # No duplicate EVA codes
+        evas = [s["eva_code"] for s in KNOWN_STATIONS]
+        assert len(evas) == len(set(evas)), "Duplicate EVA codes in KNOWN_STATIONS"
+
+        by_name = {s["name"]: s["eva_code"] for s in KNOWN_STATIONS}
+        # Explicitly verify previously swapped/wrong EVAs
+        assert by_name["Gdańsk Główny"] == "5100009"
+        assert by_name["Gdynia Główna"] == "5100010"
+        assert by_name["Poznań Główny"] == "5100081"
+        assert by_name["Łódź Fabryczna"] == "5100317"
+        assert by_name["Sopot"] == "5100056"
+        assert by_name["Gdańsk Wrzeszcz"] == "5101307"
+        assert by_name["Kutno"] == "5100032"
+        assert by_name["Bydgoszcz Główna"] == "5100005"
+
+        # Cross-check every KNOWN_STATIONS entry against pkp_optimizer.db
+        conn = get_connection()
+        try:
+            cur = conn.cursor()
+            for station in KNOWN_STATIONS:
+                cur.execute("SELECT eva_code FROM stations WHERE name = ?", (station["name"],))
+                row = cur.fetchone()
+                assert row is not None, f"Station {station['name']} not found in DB"
+                assert row["eva_code"] == station["eva_code"], (
+                    f"EVA mismatch for {station['name']}: KNOWN_STATIONS={station['eva_code']} vs DB={row['eva_code']}"
+                )
+        finally:
+            conn.close()
 
     def test_scan_tracker_progress_is_monotonic(self):
         from backend.app.main import ScanStatusTracker
@@ -344,3 +404,53 @@ class TestErrorHandlingScraper:
         assert captured_args.get("show_browser") is True
         assert captured_args.get("headless") is False
         assert captured_args.get("ticket_class") == 1
+
+    def test_optimize_propagates_scrape_error_status_on_failed_segments(self, monkeypatch):
+        from types import SimpleNamespace
+        from backend.app.scraper.ebilet_seat_scraper import LiveTrainScanner
+
+        async def mock_scan_with_partial_error(self, *args, **kwargs):
+            return SimpleNamespace(
+                train_number="IC 1644",
+                travel_date="2026-11-24",
+                segments=[
+                    SimpleNamespace(
+                        segment_index=0,
+                        from_station="Warszawa Zachodnia",
+                        to_station="Żyrardów",
+                        departure_time="15:25",
+                        carriages={},
+                        status="SCRAPE_ERROR",
+                        error_reason="Kod stacji spoza zakresu (timeout 35s)",
+                    ),
+                    SimpleNamespace(
+                        segment_index=1,
+                        from_station="Żyrardów",
+                        to_station="Skierniewice",
+                        departure_time="15:45",
+                        carriages={"5": ["81", "82"]},
+                        status="OK",
+                        error_reason=None,
+                    ),
+                ],
+            )
+
+        monkeypatch.setattr(LiveTrainScanner, "scan_full_train", mock_scan_with_partial_error)
+
+        response = client.post(
+            "/api/v1/optimize",
+            json={
+                "from_station": "Warszawa Zachodnia",
+                "to_station": "Skierniewice",
+                "date": "2026-11-24",
+                "time": "15:25",
+                "train_number": "IC 1644",
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["segments"]) == 2
+        assert data["segments"][0]["status"] == "SCRAPE_ERROR"
+        assert data["segments"][0]["error_reason"] == "Kod stacji spoza zakresu (timeout 35s)"
+        assert data["segments"][1]["status"] == "OK"
+        assert data["segments"][1]["error_reason"] is None

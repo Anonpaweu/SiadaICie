@@ -18,6 +18,7 @@ import httpx
 from pydantic import BaseModel
 
 from backend.app.db.database import get_connection, init_db
+from backend.app.db.seed_stations import normalize_polish_name
 from backend.app.scraper.route_resolver import (
     StationStop,
     RouteSegment,
@@ -57,42 +58,42 @@ KNOWN_REAL_CORRIDORS: Dict[str, List[Dict]] = {
     "WARSZAWA_GDANSK": [
         {"name": "Warszawa Centralna", "eva_code": "5100065", "arr_min": 0, "dep_min": 0},
         {"name": "Warszawa Wschodnia", "eva_code": "5100066", "arr_min": 7, "dep_min": 9},
-        {"name": "Modlin", "eva_code": "5100344", "arr_min": 35, "dep_min": 36},
-        {"name": "Nasielsk", "eva_code": "5100345", "arr_min": 48, "dep_min": 49},
-        {"name": "Ciechanów", "eva_code": "5100348", "arr_min": 72, "dep_min": 73},
-        {"name": "Mława", "eva_code": "5100350", "arr_min": 95, "dep_min": 96},
-        {"name": "Działdowo", "eva_code": "5100352", "arr_min": 110, "dep_min": 111},
-        {"name": "Iława Główna", "eva_code": "5100021", "arr_min": 145, "dep_min": 147},
-        {"name": "Malbork", "eva_code": "5100034", "arr_min": 180, "dep_min": 182},
-        {"name": "Tczew", "eva_code": "5100054", "arr_min": 200, "dep_min": 202},
-        {"name": "Gdańsk Główny", "eva_code": "5100015", "arr_min": 225, "dep_min": 225},
+        {"name": "Modlin", "eva_code": "5102206", "arr_min": 35, "dep_min": 36},
+        {"name": "Nasielsk", "eva_code": "5100178", "arr_min": 48, "dep_min": 49},
+        {"name": "Ciechanów", "eva_code": "5100095", "arr_min": 72, "dep_min": 73},
+        {"name": "Mława", "eva_code": "5100219", "arr_min": 95, "dep_min": 96},
+        {"name": "Działdowo", "eva_code": "5100100", "arr_min": 110, "dep_min": 111},
+        {"name": "Iława Główna", "eva_code": "5100075", "arr_min": 145, "dep_min": 147},
+        {"name": "Malbork", "eva_code": "5100040", "arr_min": 180, "dep_min": 182},
+        {"name": "Tczew", "eva_code": "5100061", "arr_min": 200, "dep_min": 202},
+        {"name": "Gdańsk Główny", "eva_code": "5100009", "arr_min": 225, "dep_min": 225},
     ],
     "WARSZAWA_KRAKOW": [
         {"name": "Warszawa Wschodnia", "eva_code": "5100066", "arr_min": 0, "dep_min": 0},
         {"name": "Warszawa Centralna", "eva_code": "5100065", "arr_min": 6, "dep_min": 11},
         {"name": "Warszawa Zachodnia", "eva_code": "5100067", "arr_min": 15, "dep_min": 16},
-        {"name": "Opoczno Południe", "eva_code": "5101234", "arr_min": 65, "dep_min": 66},
-        {"name": "Włoszczowa Północ", "eva_code": "5101235", "arr_min": 95, "dep_min": 96},
-        {"name": "Miechów", "eva_code": "5100378", "arr_min": 135, "dep_min": 136},
+        {"name": "Opoczno Południe", "eva_code": "5104744", "arr_min": 65, "dep_min": 66},
+        {"name": "Włoszczowa Północ", "eva_code": "5104660", "arr_min": 95, "dep_min": 96},
+        {"name": "Miechów", "eva_code": "5100218", "arr_min": 135, "dep_min": 136},
         {"name": "Kraków Główny", "eva_code": "5100028", "arr_min": 155, "dep_min": 155},
     ],
     "WARSZAWA_POZNAN": [
         {"name": "Warszawa Wschodnia", "eva_code": "5100066", "arr_min": 0, "dep_min": 0},
         {"name": "Warszawa Centralna", "eva_code": "5100065", "arr_min": 6, "dep_min": 11},
         {"name": "Warszawa Zachodnia", "eva_code": "5100067", "arr_min": 14, "dep_min": 16},
-        {"name": "Kutno", "eva_code": "5100031", "arr_min": 65, "dep_min": 67},
-        {"name": "Koło", "eva_code": "5100390", "arr_min": 92, "dep_min": 93},
-        {"name": "Konin", "eva_code": "5100027", "arr_min": 115, "dep_min": 117},
-        {"name": "Września", "eva_code": "5100412", "arr_min": 145, "dep_min": 146},
-        {"name": "Poznań Główny", "eva_code": "5100040", "arr_min": 175, "dep_min": 175},
+        {"name": "Kutno", "eva_code": "5100032", "arr_min": 65, "dep_min": 67},
+        {"name": "Koło", "eva_code": "5100258", "arr_min": 92, "dep_min": 93},
+        {"name": "Konin", "eva_code": "5100026", "arr_min": 115, "dep_min": 117},
+        {"name": "Września", "eva_code": "5100157", "arr_min": 145, "dep_min": 146},
+        {"name": "Poznań Główny", "eva_code": "5100081", "arr_min": 175, "dep_min": 175},
     ],
     "POZNAN_WROCLAW": [
-        {"name": "Poznań Główny", "eva_code": "5100040", "arr_min": 0, "dep_min": 0},
-        {"name": "Kościan", "eva_code": "5100420", "arr_min": 25, "dep_min": 26},
-        {"name": "Leszno", "eva_code": "5100032", "arr_min": 45, "dep_min": 47},
-        {"name": "Rawicz", "eva_code": "5100430", "arr_min": 68, "dep_min": 69},
-        {"name": "Żmigród", "eva_code": "5100435", "arr_min": 85, "dep_min": 86},
-        {"name": "Oborniki Śląskie", "eva_code": "5100440", "arr_min": 100, "dep_min": 101},
+        {"name": "Poznań Główny", "eva_code": "5100081", "arr_min": 0, "dep_min": 0},
+        {"name": "Kościan", "eva_code": "5100124", "arr_min": 25, "dep_min": 26},
+        {"name": "Leszno", "eva_code": "5100036", "arr_min": 45, "dep_min": 47},
+        {"name": "Rawicz", "eva_code": "5100202", "arr_min": 68, "dep_min": 69},
+        {"name": "Żmigród", "eva_code": "5104359", "arr_min": 85, "dep_min": 86},
+        {"name": "Oborniki Śląskie", "eva_code": "5100182", "arr_min": 100, "dep_min": 101},
         {"name": "Wrocław Główny", "eva_code": "5100069", "arr_min": 120, "dep_min": 120},
     ]
 }
@@ -157,38 +158,65 @@ def save_cached_route(train_number: str, travel_date: str, stops: List[StationSt
 
 def get_station_info(station_name: str) -> Tuple[str, str]:
     """
-    Finds matching station in SQLite database.
+    Finds matching station in SQLite database using Polish diacritic normalization.
+    Search order:
+      1. Exact match: name = ? OR normalized_name = ?
+      2. Prefix match: normalized_name LIKE 'norm%'
+      3. Infix match: normalized_name LIKE '%norm%'
+    Ordered by is_main_hub DESC, length(name) ASC.
     Returns (official_name, eva_code).
     """
+    raw_query = (station_name or "").strip()
+    norm_query = normalize_polish_name(raw_query)
+    if not norm_query:
+        return station_name, ""
+
     conn = get_connection()
     try:
         cur = conn.cursor()
-        q_lower = station_name.strip().lower()
+
+        # 1. Exact match (handles both official Polish diacritics and ASCII-normalized names)
         cur.execute(
             """
-            SELECT name, eva_code FROM stations 
-            WHERE lower(name) = ? OR lower(normalized_name) = ?
+            SELECT name, eva_code FROM stations
+            WHERE name = ? OR normalized_name = ?
+            ORDER BY is_main_hub DESC, length(name) ASC
             LIMIT 1
             """,
-            (q_lower, q_lower),
+            (raw_query, norm_query),
         )
         row = cur.fetchone()
         if row:
             return row["name"], row["eva_code"]
-        
-        # Fuzzy match
+
+        # 2. Prefix match (e.g. 'lodz' -> 'Łódź ...', never 'Bystrzyca Kłodzka')
         cur.execute(
             """
-            SELECT name, eva_code FROM stations 
-            WHERE lower(name) LIKE ? OR lower(normalized_name) LIKE ?
-            ORDER BY is_main_hub DESC
+            SELECT name, eva_code FROM stations
+            WHERE normalized_name LIKE ?
+            ORDER BY is_main_hub DESC, length(name) ASC
             LIMIT 1
             """,
-            (f"%{q_lower}%", f"%{q_lower}%"),
+            (f"{norm_query}%",),
         )
         row = cur.fetchone()
         if row:
             return row["name"], row["eva_code"]
+
+        # 3. Infix match fallback
+        cur.execute(
+            """
+            SELECT name, eva_code FROM stations
+            WHERE normalized_name LIKE ?
+            ORDER BY is_main_hub DESC, length(name) ASC
+            LIMIT 1
+            """,
+            (f"%{norm_query}%",),
+        )
+        row = cur.fetchone()
+        if row:
+            return row["name"], row["eva_code"]
+
         return station_name, ""
     finally:
         conn.close()
@@ -346,6 +374,38 @@ def fetch_live_train_connections(
     return all_trains
 
 
+def _extract_ti_url_from_sq_html(html_text: str, train_no: str) -> Optional[str]:
+    """
+    Extracts the /pl/ti?... URL for `train_no` by scanning individual <tr> rows so that
+    train brand+number and the /pl/ti link must appear inside the exact same table row.
+    """
+    num_match = re.search(r'\b(\d{3,5})\b', train_no or "")
+    if not num_match:
+        return None
+    clean_num = num_match.group(1)
+
+    brand_match = re.match(r'^\s*(EIP|EIC|IC|TLK)\b', train_no or "", re.IGNORECASE)
+    exact_brand_re = (
+        re.compile(rf'\b{re.escape(brand_match.group(1))}\s*{re.escape(clean_num)}\b', re.IGNORECASE)
+        if brand_match
+        else None
+    )
+    any_ic_re = re.compile(rf'\b(EIP|EIC|IC|TLK)\s*{re.escape(clean_num)}\b', re.IGNORECASE)
+
+    fallback_url: Optional[str] = None
+    for row in re.findall(r'<tr\b[^>]*>.*?</tr>', html_text, re.DOTALL | re.IGNORECASE):
+        ti_m = re.search(r'href="(/pl/ti\?[^"]*)"', row)
+        if not ti_m:
+            continue
+        row_unescaped = unescape(row)
+        if exact_brand_re and exact_brand_re.search(row_unescaped):
+            return "https://rozklad-pkp.pl" + ti_m.group(1).replace("&amp;", "&")
+        if fallback_url is None and any_ic_re.search(row_unescaped):
+            fallback_url = "https://rozklad-pkp.pl" + ti_m.group(1).replace("&amp;", "&")
+
+    return fallback_url
+
+
 def find_ti_url_for_train(
     from_eva: str,
     from_name: str,
@@ -357,9 +417,6 @@ def find_ti_url_for_train(
     Finds the /pl/ti train route details URL for a train departing from a station.
     Queries /pl/sq departure board at dep_time or across all 6 day windows in parallel.
     """
-    num_match = re.search(r'\b(\d{3,5})\b', train_no)
-    clean_num = num_match.group(1) if num_match else ""
-
     def query_sq(time_str: str) -> Optional[str]:
         url = "https://rozklad-pkp.pl/pl/sq"
         params = {
@@ -373,16 +430,7 @@ def find_ti_url_for_train(
             r = httpx.get(url, params=params, headers=DEFAULT_HEADERS, follow_redirects=True, timeout=10)
             if r.status_code != 200:
                 return None
-            idx = r.text.find(clean_num) if clean_num else -1
-            if idx == -1:
-                clean_cat = re.match(r'^[A-Z]+', train_no)
-                if clean_cat:
-                    idx = r.text.find(clean_cat.group(0))
-            if idx != -1:
-                chunk = r.text[max(0, idx - 400):min(len(r.text), idx + 1500)]
-                ti_m = re.search(r'href="(/pl/ti\?[^"]*)"', chunk)
-                if ti_m:
-                    return "https://rozklad-pkp.pl" + ti_m.group(1).replace("&amp;", "&")
+            return _extract_ti_url_from_sq_html(r.text, train_no)
         except Exception:
             pass
         return None
@@ -411,6 +459,7 @@ class RouteStop(BaseModel):
     departure_time: Optional[str] = None
     duration_from_start_min: int = 0
     seq: int = 0
+    day_offset: int = 0
 
 
 class TrainRouteExtractor:
@@ -477,37 +526,59 @@ class TrainRouteExtractor:
         if not raw_stops:
             return []
 
-        # Monotonic time across midnight
+        # Monotonic time across midnight (tracks integer day_offset for midnight-crossing trains)
         cum_stops = []
-        day_offset = 0
-        prev_dep = None
+        day_offset_days = 0
+        prev_time = None
         for s in raw_stops:
+            cur_arr = s["m_arr"]
             cur_dep = s["m_dep"]
-            if prev_dep is not None and cur_dep < prev_dep - 300:
-                day_offset += 1440
-            prev_dep = cur_dep
+            if prev_time is not None and cur_arr < prev_time - 300:
+                day_offset_days += 1
+            arr_day = day_offset_days
+            arr_min = cur_arr + arr_day * 1440
+            prev_time = cur_arr
+
+            if cur_dep < prev_time - 300:
+                day_offset_days += 1
+            dep_day = day_offset_days
+            dep_min = cur_dep + dep_day * 1440
+            prev_time = cur_dep
+
             cum_stops.append({
                 "name": s["name"],
                 "eva_code": s["eva"],
                 "arrival_time": s["arr_str"],
                 "departure_time": s["dep_str"],
-                "arr_min": s["m_arr"] + day_offset,
-                "dep_min": s["m_dep"] + day_offset,
+                "arr_min": arr_min,
+                "dep_min": dep_min,
+                "dep_day": dep_day,
             })
 
         # Slice from_station to to_station
         from_idx = None
         to_idx = None
+        from_norm = normalize_polish_name(from_station)
+        to_norm = normalize_polish_name(to_station)
 
         for i, s in enumerate(cum_stops):
             s_name = s["name"].lower()
+            s_norm = normalize_polish_name(s["name"])
             s_eva = s["eva_code"]
             if from_idx is None:
-                if (from_eva and from_eva == s_eva) or (from_station.lower() in s_name):
+                if (
+                    (from_eva and from_eva == s_eva)
+                    or (from_station.lower() in s_name)
+                    or (from_norm and from_norm in s_norm)
+                ):
                     from_idx = i
                     continue
             if from_idx is not None and to_idx is None:
-                if (to_eva and to_eva == s_eva) or (to_station.lower() in s_name):
+                if (
+                    (to_eva and to_eva == s_eva)
+                    or (to_station.lower() in s_name)
+                    or (to_norm and to_norm in s_norm)
+                ):
                     to_idx = i
                     break
 
@@ -517,6 +588,7 @@ class TrainRouteExtractor:
             sliced = cum_stops
 
         start_min = sliced[0]["dep_min"]
+        base_day = sliced[0]["dep_day"]
         route_stops: List[RouteStop] = []
         for seq, s in enumerate(sliced):
             dur = max(0, s["arr_min"] - start_min)
@@ -528,6 +600,7 @@ class TrainRouteExtractor:
                     arrival_time=s["arrival_time"],
                     departure_time=s["departure_time"],
                     duration_from_start_min=dur,
+                    day_offset=max(0, s["dep_day"] - base_day),
                 )
             )
 
@@ -602,6 +675,7 @@ def fetch_live_train_route_stops(
                 departure_min=s.duration_from_start_min,
                 arrival_time=s.arrival_time or "",
                 departure_time=s.departure_time or "",
+                day_offset=s.day_offset,
             )
         )
     return station_stops

@@ -1,35 +1,78 @@
 """
-Seed official PKP Intercity stations database directly from PKP Intercity source.
+Seed official PKP Intercity stations database directly from PKP Intercity sources.
 
-Source: https://www.intercity.pl/js/station.js
-Populates the 'stations' table in SQLite with official names, normalized names, and EVA codes.
+Sources:
+1. Live e-IC 2.0 dictionary: POST https://api-gateway.intercity.pl/server/public/endpoint/Aktualizacja
+   ({"metoda": "pobierzStacje", "urzadzenieNr": 956})
+2. Fallback/supplement: https://www.intercity.pl/js/station.js
+
+Populates the 'stations' table in SQLite with official names, normalized names, EVA codes, and EPA (ic_id) codes.
 """
 import re
 import sqlite3
 import httpx
 from pathlib import Path
+from typing import Dict, List
 from backend.app.db.database import get_connection, init_db
 from backend.app.scraper.route_resolver import METROPOLITAN_HUBS
 
 STATIONS_JS_URL = "https://www.intercity.pl/js/station.js"
+EIC2_STATIONS_API_URL = "https://api-gateway.intercity.pl/server/public/endpoint/Aktualizacja"
+EIC2_DEVICE_NR = 956
 
 
-def fetch_and_parse_pkp_stations():
-    """Fetches station.js from PKP Intercity and extracts all stations."""
-    print(f"Pobieranie oficjalnego słownika stacji z {STATIONS_JS_URL}...")
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+def normalize_polish_name(s: str) -> str:
+    """Removes Polish diacritics and converts to lowercase for search indexing."""
+    trans = str.maketrans("ąćęłńóśźżĄĆĘŁŃÓŚŹŻ", "acelnoszzACELNOSZZ")
+    return s.translate(trans).strip().lower()
+
+
+def _is_abbreviated_variant(short_name: str, full_name: str) -> bool:
+    """
+    Returns True if short_name (e.g. 'Warszawa Centr.', 'Gdańsk Gł.') is an abbreviated
+    form of full_name (e.g. 'Warszawa Centralna', 'Gdańsk Główny').
+    Used when merging live e-IC 2.0 with station.js so full Polish names are preserved
+    while real EVA conflicts (e.g. 5100093 Chabówka Stadion vs stale Chorzew Siemkowice)
+    always prefer live e-IC 2.0.
+    """
+    if "." not in short_name or len(short_name) >= len(full_name):
+        return False
+    short_tokens = normalize_polish_name(short_name).replace("-", " ").split()
+    full_tokens = normalize_polish_name(full_name).replace("-", " ").split()
+    if not short_tokens or not full_tokens:
+        return False
+    return short_tokens[0].rstrip(".") == full_tokens[0] or full_tokens[0].startswith(short_tokens[0].rstrip("."))
+
+
+def _build_station_record(eva_code: str, name: str, ic_id: str) -> Dict:
+    """Builds a normalized station dictionary entry ready for SQLite insertion."""
+    metro_group = None
+    is_hub = 0
+    if name in METROPOLITAN_HUBS:
+        metro_group, is_hub = METROPOLITAN_HUBS[name]
+        is_hub = 1 if is_hub else 0
+
+    return {
+        "eva_code": eva_code,
+        "name": name,
+        "normalized_name": normalize_polish_name(name),
+        "metropolitan_group": metro_group,
+        "is_main_hub": is_hub,
+        "ic_id": ic_id,
     }
 
+
+def _fetch_station_js_entries(headers: Dict[str, str]) -> Dict[str, Dict]:
+    """Fetches legacy station.js dictionary keyed by eva_code."""
+    print(f"Pobieranie słownika stacji z {STATIONS_JS_URL}...")
     try:
         r = httpx.get(STATIONS_JS_URL, headers=headers, timeout=15)
         r.raise_for_status()
         content = r.content
     except Exception as e:
-        print(f"Błąd pobierania stacji z sieci: {e}")
-        return []
+        print(f"Błąd pobierania station.js z sieci: {e}")
+        return {}
 
-    # Cleanly decode with utf-8 first (PKP Intercity station.js is utf-8 encoded)
     text = ""
     for enc in ["utf-8", "windows-1250", "iso-8859-2"]:
         try:
@@ -48,37 +91,84 @@ def fetch_and_parse_pkp_stations():
     )
     matches = pattern.findall(text)
 
-    parsed_stations = []
-    seen_eva = set()
-
-    for name, norm_name, eva_code, a_code, ic_id in matches:
+    stations_by_eva: Dict[str, Dict] = {}
+    for name, _norm_name, eva_code, _a_code, ic_id in matches:
         name = name.strip()
-        norm_name = norm_name.strip().lower()
         eva_code = eva_code.strip() or ic_id.strip()
         ic_id = ic_id.strip()
 
-        if not eva_code or eva_code in seen_eva or not name:
+        if not eva_code or eva_code in stations_by_eva or not name:
             continue
 
-        seen_eva.add(eva_code)
+        stations_by_eva[eva_code] = _build_station_record(eva_code, name, ic_id)
 
-        # Check metropolitan group
-        metro_group = None
-        is_hub = 0
-        if name in METROPOLITAN_HUBS:
-            metro_group, is_hub = METROPOLITAN_HUBS[name]
-            is_hub = 1 if is_hub else 0
+    return stations_by_eva
 
-        parsed_stations.append({
-            "eva_code": eva_code,
-            "name": name,
-            "normalized_name": norm_name,
-            "metropolitan_group": metro_group,
-            "is_main_hub": is_hub,
-            "ic_id": ic_id,
-        })
 
-    return parsed_stations
+def _fetch_eic2_stations(headers: Dict[str, str]) -> List[Dict]:
+    """Fetches live e-IC 2.0 station list via Aktualizacja/pobierzStacje."""
+    print(f"Pobieranie aktualnego słownika e-IC 2.0 z {EIC2_STATIONS_API_URL}...")
+    api_headers = {
+        **headers,
+        "Accept": "application/json, text/plain, */*",
+        "Content-Type": "application/json",
+        "Origin": "https://ebilet.intercity.pl",
+        "Referer": "https://ebilet.intercity.pl/",
+    }
+    try:
+        r = httpx.post(
+            EIC2_STATIONS_API_URL,
+            json={"metoda": "pobierzStacje", "urzadzenieNr": EIC2_DEVICE_NR},
+            headers=api_headers,
+            timeout=20,
+        )
+        r.raise_for_status()
+        payload = r.json()
+        stacje = payload.get("stacje")
+        if isinstance(stacje, list):
+            return stacje
+        print(f"Ostrzeżenie: e-IC 2.0 nie zwrócił listy 'stacje' (klucze: {list(payload.keys())})")
+        return []
+    except Exception as e:
+        print(f"Błąd pobierania słownika e-IC 2.0 z sieci: {e}")
+        return []
+
+
+def fetch_and_parse_pkp_stations():
+    """
+    Fetches official PKP Intercity stations by merging live e-IC 2.0 `pobierzStacje`
+    with `station.js` fallback. Live e-IC 2.0 takes precedence on EVA/EPA conflicts
+    (e.g. 5100093 Chabówka Stadion) and supplies all newly active Polish e-IC 2.0 stations,
+    while full unabbreviated Polish hub names from station.js are preserved.
+    """
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+    }
+
+    stations_by_eva = _fetch_station_js_entries(headers)
+    eic2_raw = _fetch_eic2_stations(headers)
+
+    for item in eic2_raw:
+        raw_eva = item.get("kodEVA")
+        eva_code = str(raw_eva).strip() if raw_eva not in (None, 0, "0", "") else ""
+        raw_epa = item.get("kodEPA")
+        ic_id = str(raw_epa).strip() if raw_epa not in (None, 0, "0", "") else ""
+        eic_name = str(item.get("nazwa") or "").strip()
+
+        if not eva_code or not eic_name:
+            continue
+
+        existing = stations_by_eva.get(eva_code)
+        if existing is None:
+            stations_by_eva[eva_code] = _build_station_record(eva_code, eic_name, ic_id)
+        else:
+            # Prefer live e-IC 2.0 on EVA conflicts and EPA updates, but keep fuller unabbreviated
+            # Polish names from station.js when e-IC 2.0 only shortens them (e.g. 'Warszawa Centr.').
+            chosen_name = existing["name"] if _is_abbreviated_variant(eic_name, existing["name"]) else eic_name
+            chosen_ic_id = ic_id or existing["ic_id"]
+            stations_by_eva[eva_code] = _build_station_record(eva_code, chosen_name, chosen_ic_id)
+
+    return list(stations_by_eva.values())
 
 
 def seed_stations_table(db_path: str = None):
@@ -113,15 +203,10 @@ def seed_stations_table(db_path: str = None):
         conn.close()
 
 
-def normalize_polish_name(s: str) -> str:
-    """Removes Polish diacritics and converts to lowercase for search indexing."""
-    trans = str.maketrans("ąćęłńóśźżĄĆĘŁŃÓŚŹŻ", "acelnoszzACELNOSZZ")
-    return s.translate(trans).strip().lower()
-
-
 def upsert_station(name: str, eva_code: str, db_path: str = None):
     """
-    Inserts or updates a station into SQLite stations table.
+    Inserts a newly discovered station into SQLite stations table without overwriting
+    existing official names or ic_id values on eva_code conflict.
     Task 043: Enables auto-discovery of newly encountered stations during scraping.
     """
     if not name or not eva_code:
@@ -134,9 +219,7 @@ def upsert_station(name: str, eva_code: str, db_path: str = None):
             """
             INSERT INTO stations (eva_code, name, normalized_name, is_main_hub)
             VALUES (?, ?, ?, 0)
-            ON CONFLICT(eva_code) DO UPDATE SET
-                name = excluded.name,
-                normalized_name = excluded.normalized_name
+            ON CONFLICT(eva_code) DO NOTHING
             """,
             (eva_code, name, norm),
         )

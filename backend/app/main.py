@@ -23,6 +23,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.app.db.database import ensure_stations_seeded, get_connection, init_db
+from backend.app.db.seed_stations import normalize_polish_name
 from backend.app.engine.availability_parser import (
     availability_map_to_matrix,
     format_availability_map,
@@ -82,22 +83,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Station fallback dictionary (correct official EVA codes)
+# Station fallback dictionary (verified official EVA codes from pkp_optimizer.db / station.js)
 KNOWN_STATIONS = [
     {"name": "Warszawa Centralna", "eva_code": "5100065"},
     {"name": "Warszawa Zachodnia", "eva_code": "5100067"},
     {"name": "Warszawa Wschodnia", "eva_code": "5100066"},
     {"name": "Kraków Główny", "eva_code": "5100028"},
-    {"name": "Gdańsk Główny", "eva_code": "5100015"},
-    {"name": "Gdynia Główna", "eva_code": "5100017"},
-    {"name": "Poznań Główny", "eva_code": "5100040"},
+    {"name": "Gdańsk Główny", "eva_code": "5100009"},
+    {"name": "Gdynia Główna", "eva_code": "5100010"},
+    {"name": "Poznań Główny", "eva_code": "5100081"},
     {"name": "Wrocław Główny", "eva_code": "5100069"},
     {"name": "Katowice", "eva_code": "5100020"},
-    {"name": "Łódź Fabryczna", "eva_code": "5100033"},
-    {"name": "Sopot", "eva_code": "5100046"},
-    {"name": "Gdańsk Wrzeszcz", "eva_code": "5100016"},
-    {"name": "Kutno", "eva_code": "5100031"},
-    {"name": "Bydgoszcz Główna", "eva_code": "5100007"},
+    {"name": "Łódź Fabryczna", "eva_code": "5100317"},
+    {"name": "Sopot", "eva_code": "5100056"},
+    {"name": "Gdańsk Wrzeszcz", "eva_code": "5101307"},
+    {"name": "Kutno", "eva_code": "5100032"},
+    {"name": "Bydgoszcz Główna", "eva_code": "5100005"},
 ]
 
 SCENARIO_LOADERS = {
@@ -153,6 +154,7 @@ def _build_optimization_response(
     profile: str = "BALANCED",
     departure_times: Optional[List[str]] = None,
     raw_availability_report: Optional[str] = None,
+    segment_statuses: Optional[List[dict]] = None,
 ) -> OptimizationResponse:
     """Shared helper to solve optimal strategies and build the standardized API response."""
     config = OptimizerConfig(profile=parse_profile(profile))
@@ -161,6 +163,11 @@ def _build_optimization_response(
     segments_info = []
     for i in range(len(station_names) - 1):
         dep_time = departure_times[i] if (departure_times and i < len(departure_times)) else ""
+        status_entry = segment_statuses[i] if (segment_statuses and i < len(segment_statuses)) else {}
+        seg_status = status_entry.get("status", "OK") if isinstance(status_entry, dict) else "OK"
+        if hasattr(seg_status, "value"):
+            seg_status = seg_status.value
+        seg_error_reason = status_entry.get("error_reason", None) if isinstance(status_entry, dict) else None
         segments_info.append(
             {
                 "seg_idx": i,
@@ -168,6 +175,8 @@ def _build_optimization_response(
                 "to_station": station_names[i + 1],
                 "duration_min": segment_durations[i] if i < len(segment_durations) else 30,
                 "departure_time": dep_time,
+                "status": seg_status or "OK",
+                "error_reason": seg_error_reason,
             }
         )
 
@@ -217,7 +226,11 @@ async def health_check():
 def search_stations(q: str = Query(..., min_length=1)):
     """Search for stations matching the query string in the SQLite stations database."""
     init_db()
-    query_pattern = f"%{q.strip().lower()}%"
+    norm_q = normalize_polish_name(q)
+    if not norm_q:
+        return []
+    prefix_pattern = f"{norm_q}%"
+    infix_pattern = f"%{norm_q}%"
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -225,11 +238,19 @@ def search_stations(q: str = Query(..., min_length=1)):
             """
             SELECT name, eva_code
             FROM stations
-            WHERE lower(name) LIKE ? OR lower(normalized_name) LIKE ?
-            ORDER BY is_main_hub DESC, name ASC
+            WHERE normalized_name = ? OR normalized_name LIKE ? OR normalized_name LIKE ?
+            ORDER BY
+                CASE
+                    WHEN normalized_name = ? THEN 0
+                    WHEN normalized_name LIKE ? THEN 1
+                    ELSE 2
+                END ASC,
+                is_main_hub DESC,
+                length(name) ASC,
+                name ASC
             LIMIT 20
             """,
-            (query_pattern, query_pattern),
+            (norm_q, prefix_pattern, infix_pattern, norm_q, prefix_pattern),
         )
         rows = cur.fetchall()
         if rows:
@@ -237,11 +258,10 @@ def search_stations(q: str = Query(..., min_length=1)):
     finally:
         conn.close()
 
-    query_lower = q.lower()
     results = [
         StationSearchResult(name=s["name"], eva_code=s["eva_code"])
         for s in KNOWN_STATIONS
-        if query_lower in s["name"].lower()
+        if norm_q in normalize_polish_name(s["name"])
     ]
     return results[:15]
 
@@ -323,6 +343,13 @@ def optimize_from_text(request: ManualMapRequest):
         )
 
     departure_times = [seg.departure_time for seg in avail_map.segments]
+    segment_statuses = [
+        {
+            "status": getattr(seg, "status", "OK") or "OK",
+            "error_reason": getattr(seg, "error_reason", None),
+        }
+        for seg in avail_map.segments
+    ]
 
     return _build_optimization_response(
         avail=avail,
@@ -332,6 +359,7 @@ def optimize_from_text(request: ManualMapRequest):
         profile=request.profile,
         departure_times=departure_times,
         raw_availability_report=request.raw_text,
+        segment_statuses=segment_statuses,
     )
 
 
@@ -402,6 +430,13 @@ async def optimize_live(request: LiveOptimizeRequest):
     global_scan_tracker.complete()
     formatted_report = format_availability_map(avail_map)
     departure_times = [seg.departure_time for seg in avail_map.segments]
+    segment_statuses = [
+        {
+            "status": getattr(seg, "status", "OK") or "OK",
+            "error_reason": getattr(seg, "error_reason", None),
+        }
+        for seg in avail_map.segments
+    ]
 
     return _build_optimization_response(
         avail=avail,
@@ -411,6 +446,7 @@ async def optimize_live(request: LiveOptimizeRequest):
         profile=request.profile,
         departure_times=departure_times,
         raw_availability_report=formatted_report,
+        segment_statuses=segment_statuses,
     )
 
 

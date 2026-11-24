@@ -228,9 +228,19 @@ class ScanForegroundService : Service() {
 
                 val matrix = SeatOptimizer.availabilityMapToMatrix(map)
                 if (matrix.availabilityMatrix.isEmpty()) {
+                    val scrapeErrorSegs = map.segments.filter { it.status == "SCRAPE_ERROR" }
+                    val errorText = if (scrapeErrorSegs.isNotEmpty()) {
+                        val sampleReason = scrapeErrorSegs
+                            .mapNotNull { it.errorReason?.trim()?.removePrefix("SCRAPE_ERROR:")?.trim() }
+                            .firstOrNull { it.isNotBlank() }
+                            ?: "Nie udało się odczytać schematu miejsc z systemu e-IC."
+                        "Błąd pobierania schematu (${scrapeErrorSegs.size}/${map.segments.size} odcinków): $sampleReason"
+                    } else {
+                        "Brak wolnych miejsc w Klasie $ticketClass dla pociągu $trainNumber."
+                    }
                     _state.value = _state.value.copy(
                         isRunning = false,
-                        error = "Brak wolnych miejsc w Klasie $ticketClass dla pociągu $trainNumber.",
+                        error = errorText,
                         debugWebView = null
                     )
                     return@launch

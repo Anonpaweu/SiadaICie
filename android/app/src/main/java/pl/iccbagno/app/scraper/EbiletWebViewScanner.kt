@@ -87,7 +87,7 @@ class EbiletWebViewScanner(
                 )).filter(el => {
                     const txt = (el.innerText || '');
                     const low = txt.toLowerCase();
-                    if (!/\b\d{1,2}:\d{2}\b/.test(txt)) return false;
+                    if (!/\d{1,2}:\d{2}/.test(txt)) return false;
                     return low.includes('klasa') || low.includes('kup bilet') || low.includes('wybierz') ||
                            low.includes('brak miejsc') || low.includes('niedostępn') || el.querySelector('button') !== null;
                 });
@@ -391,7 +391,11 @@ class EbiletWebViewScanner(
 
                 Log.i(TAG, "[$fromStation -> $toStation] Attempt $attempt: loading $searchUrl")
                 stepProgress("Otwieranie listy połączeń: $fromStation -> $toStation...")
+                evalJs(worker.webView, "window.__iccStalePage = true;")
                 withContext(Dispatchers.Main) {
+                    if (attempt > 1) {
+                        worker.webView.loadUrl("about:blank")
+                    }
                     worker.webView.loadUrl(searchUrl)
                 }
 
@@ -408,6 +412,9 @@ class EbiletWebViewScanner(
                         worker.webView,
                         """
                         (function(tNum) {
+                            if (window.__iccStalePage || location.href === 'about:blank') {
+                                return JSON.stringify({ cards: 0, loaders: 1, w: window.innerWidth, sample: '', body: '' });
+                            }
                             $FIND_CARDS_JS
                             const cards = __iccFindCards();
                             const loaders = document.querySelectorAll("[class*='trainLoaderWithText' i]");
@@ -485,8 +492,8 @@ class EbiletWebViewScanner(
                     (function(num) {
                         $FIND_CARDS_JS
                         const cards = __iccFindCards();
-                        const idRe = new RegExp('(?:_|\\\\|)' + num + '(?:_|\\\\||$)');
-                        const wordRe = new RegExp('\\\\b' + num + '\\\\b');
+                        const idRe = new RegExp('(?:_|\\|)' + num + '(?:_|\\||$)');
+                        const wordRe = new RegExp('\\b' + num + '\\b');
                         for (let i = 0; i < cards.length; i++) {
                             const cid = cards[i].id || '';
                             if (cid && (cid.includes('_' + num + '_') || idRe.test(cid))) return i;
@@ -564,73 +571,112 @@ class EbiletWebViewScanner(
                         const cards = __iccFindCards();
                         const card = cards[idx];
                         if (!card) return 'NO_CARD';
+                        const isSummaryBtn = (low) =>
+                            (low.includes('klasa 1') || low.includes('1 klas')) &&
+                            (low.includes('klasa 2') || low.includes('2 klas'));
                         const hasDirectClassBtn = Array.from(card.querySelectorAll("button, [role='button']")).some(b => {
                             const t = ((b.innerText || '') + ' ' + (b.getAttribute('aria-label') || '')).toLowerCase();
+                            if (isSummaryBtn(t)) return false;
                             return (t.includes('klasa 1') || t.includes('klasa 2') || t.includes('1 klas') || t.includes('2 klas')) && b.offsetParent !== null;
                         });
                         if (!hasDirectClassBtn) {
+                            let clicked = false;
                             const expSels = ["button[data-testid='OutlineButton']", "button[aria-label*='Kup bilet']"];
                             for (const s of expSels) {
                                 const b = card.querySelector(s);
-                                if (b && b.offsetParent !== null) { b.click(); break; }
+                                if (b && b.offsetParent !== null) { b.click(); clicked = true; break; }
                             }
-                            if (!card.querySelector("button[aria-label*='1 klas'], button[aria-label*='2 klas']")) {
+                            if (!clicked) {
                                 for (const b of card.querySelectorAll("button, [role='button']")) {
                                     const t = (b.innerText || '').toLowerCase();
-                                    if ((t.includes('kup bilet') || t.includes('wybierz')) && b.offsetParent !== null) {
+                                    if ((t.includes('kup bilet') || t.includes('wybierz') || isSummaryBtn(t)) && b.offsetParent !== null) {
                                         b.click();
+                                        clicked = true;
                                         break;
                                     }
                                 }
                             }
+                            if (!clicked) {
+                                const anyBtn = card.querySelector("button, [role='button']");
+                                if (anyBtn && anyBtn.offsetParent !== null) {
+                                    anyBtn.click();
+                                    clicked = true;
+                                }
+                            }
+                            return clicked ? 'EXPANDED_CLICKED' : 'EXPANDED_NOOP';
                         }
-                        return 'EXPANDED';
+                        return 'DIRECT_READY';
                     })($matchedIdx, $ticketClass);
                     """.trimIndent()
                 )
-                if (decodeJsString(expandAndClassRaw) == "NO_CARD") {
+                val expandStatus = decodeJsString(expandAndClassRaw)
+                Log.i(TAG, "[$fromStation -> $toStation] Expand status: $expandStatus")
+                if (expandStatus == "NO_CARD") {
                     throw GraphicReservationException("SCRAPE_ERROR: Kafelek pociągu zniknął dla $fromStation -> $toStation.")
                 }
 
-                delay(300)
-
-                val selectClassResult = decodeJsString(
-                    evalJs(
-                        worker.webView,
-                        """
-                        (function(idx, tClass) {
-                            $FIND_CARDS_JS
-                            const cards = __iccFindCards();
-                            const root = cards[idx] || document;
-                            const targets = tClass === 1
-                                ? ["button[aria-label*='1 klas']", "button[aria-label*='klasa 1' i]", "[data-testid='SuperPromo-select-seat-type-0']", "1 klasa", "klasa 1", "1 kl"]
-                                : ["button[aria-label*='2 klas']", "button[aria-label*='klasa 2' i]", "[data-testid='SuperPromo-select-seat-type-1']", "2 klasa", "klasa 2", "2 kl"];
-                            for (const t of targets) {
-                                const isCss = t.startsWith('button') || t.startsWith('[');
-                                let btn = isCss ? root.querySelector(t) : null;
-                                if (!btn && !isCss) {
-                                    btn = Array.from(root.querySelectorAll("button, [role='button'], a")).find(b => {
-                                        const low = ((b.innerText || '') + ' ' + (b.getAttribute('aria-label') || '')).toLowerCase();
-                                        return low.includes(t) && b.offsetParent !== null;
-                                    });
-                                }
-                                if (!btn && isCss) {
-                                    btn = document.querySelector(t);
-                                }
-                                if (btn && btn.offsetParent !== null) {
-                                    const txt = (btn.innerText || '').toLowerCase();
-                                    if (txt.includes('brak miejsc') || txt.includes('niedostępne') || txt.includes('zablokowana') || txt.includes('wyprzedane')) {
-                                        return 'SOLD_OUT';
+                // Wait briefly for class buttons to render after expanding (especially mobile drawer/card)
+                var selectClassResult = ""
+                val classWaitStart = System.currentTimeMillis()
+                while (System.currentTimeMillis() - classWaitStart < 3_500L) {
+                    delay(300)
+                    selectClassResult = decodeJsString(
+                        evalJs(
+                            worker.webView,
+                            """
+                            (function(idx, tClass) {
+                                $FIND_CARDS_JS
+                                const cards = __iccFindCards();
+                                const card = cards[idx] || null;
+                                const isSummaryBtn = (low) =>
+                                    (low.includes('klasa 1') || low.includes('1 klas')) &&
+                                    (low.includes('klasa 2') || low.includes('2 klas'));
+                                const targets = tClass === 1
+                                    ? ["button[aria-label*='1 klas']", "button[aria-label*='klasa 1' i]", "[data-testid='SuperPromo-select-seat-type-0']", "1 klasa", "klasa 1", "1 kl"]
+                                    : ["button[aria-label*='2 klas']", "button[aria-label*='klasa 2' i]", "[data-testid='SuperPromo-select-seat-type-1']", "2 klasa", "klasa 2", "2 kl"];
+                                const roots = card ? [card, document] : [document];
+                                for (const root of roots) {
+                                    for (const t of targets) {
+                                        const isCss = t.startsWith('button') || t.startsWith('[');
+                                        let btn = null;
+                                        if (isCss) {
+                                            btn = Array.from(root.querySelectorAll(t)).find(b => {
+                                                if (b.offsetParent === null) return false;
+                                                const low = ((b.innerText || '') + ' ' + (b.getAttribute('aria-label') || '')).toLowerCase();
+                                                return !isSummaryBtn(low);
+                                            }) || null;
+                                        } else {
+                                            btn = Array.from(root.querySelectorAll("button, [role='button'], a")).find(b => {
+                                                if (b.offsetParent === null) return false;
+                                                const low = ((b.innerText || '') + ' ' + (b.getAttribute('aria-label') || '')).toLowerCase();
+                                                return low.includes(t) && !isSummaryBtn(low);
+                                            }) || null;
+                                        }
+                                        if (btn) {
+                                            const txt = (btn.innerText || '').toLowerCase();
+                                            if (txt.includes('brak miejsc') || txt.includes('niedostępne') || txt.includes('zablokowana') || txt.includes('wyprzedane')) {
+                                                return 'SOLD_OUT';
+                                            }
+                                            btn.click();
+                                            return 'CLICKED:' + (btn.innerText || btn.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+                                        }
                                     }
-                                    btn.click();
-                                    return 'CLICKED:' + (btn.innerText || '').replace(/\s+/g, ' ').trim();
                                 }
-                            }
-                            return 'NOT_FOUND:' + (root.innerText || '').replace(/\s+/g, ' ').slice(0, 200);
-                        })($matchedIdx, $ticketClass);
-                        """.trimIndent()
+                                const btns = Array.from(document.querySelectorAll("button, [role='button']"))
+                                    .filter(b => b.offsetParent !== null)
+                                    .map(b => ((b.innerText || b.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim()))
+                                    .filter(Boolean)
+                                    .slice(0, 12)
+                                    .join(' | ');
+                                return 'NOT_FOUND:url=' + location.href + ' btns=' + btns.slice(0, 300);
+                            })($matchedIdx, $ticketClass);
+                            """.trimIndent()
+                        )
                     )
-                )
+                    if (selectClassResult.startsWith("CLICKED:") || selectClassResult == "SOLD_OUT") {
+                        break
+                    }
+                }
                 Log.i(TAG, "[$fromStation -> $toStation] Class selection: $selectClassResult")
                 if (selectClassResult == "SOLD_OUT") {
                     throw GraphicReservationException("BRAK_MIEJSC_KLASA_$ticketClass: Wyczerpano pulę miejsc w Klasie $ticketClass na tym odcinku.")
@@ -677,6 +723,27 @@ class EbiletWebViewScanner(
                         break
                     }
                     delay(350)
+                }
+                if (!schemaClicked) {
+                    val schemaDiag = decodeJsString(
+                        evalJs(
+                            worker.webView,
+                            """
+                            (function() {
+                                const btns = Array.from(document.querySelectorAll('button, a'))
+                                    .filter(b => b.offsetParent !== null)
+                                    .map(b => ((b.innerText || b.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim()))
+                                    .filter(Boolean)
+                                    .slice(0, 14)
+                                    .join(' | ');
+                                return 'url=' + location.href + ' btns=' + btns.slice(0, 350);
+                            })();
+                            """.trimIndent()
+                        )
+                    )
+                    Log.w(TAG, "[$fromStation -> $toStation] Seatmap button NOT clicked after 8s: $schemaDiag")
+                } else {
+                    Log.i(TAG, "[$fromStation -> $toStation] Seatmap button clicked OK")
                 }
 
                 // Wait for GRM API (/grm/sklad/wbnet/ + SVG)

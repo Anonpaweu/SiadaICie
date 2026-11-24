@@ -16,6 +16,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -30,13 +31,16 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
+import pl.iccbagno.app.data.StationsRepository
 import pl.iccbagno.app.domain.FullTrainAvailabilityMap
 import pl.iccbagno.app.domain.RouteHelpers
 import pl.iccbagno.app.domain.SegmentAvailabilityMap
 import pl.iccbagno.app.domain.StationStop
 import java.io.ByteArrayInputStream
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.resume
 
 open class GraphicReservationException(message: String) : Exception(message)
@@ -49,6 +53,11 @@ class EbiletWebViewScanner(
 ) {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val concurrency = 2
+    private val stationsRepo by lazy { StationsRepository(context.applicationContext) }
+    private val capturedGrmHeaders = ConcurrentHashMap<String, String>()
+    private val capturedGrmTemplate = AtomicReference<GrmParser.GrmUrlTemplate?>(null)
+    private val directGrmPending = ConcurrentHashMap<String, CompletableDeferred<String>>()
+    private val directGrmSeq = AtomicInteger(0)
 
     companion object {
         private val BLOCKED_HOST_SUBSTRINGS = listOf(
@@ -110,33 +119,53 @@ class EbiletWebViewScanner(
                 if (window.__iccGrmHookInstalled) return;
                 window.__iccGrmHookInstalled = true;
                 window.__iccGrmHeaders = window.__iccGrmHeaders || {};
+                window.__iccNetInFlight = window.__iccNetInFlight || 0;
+                window.__iccLastNetAt = window.__iccLastNetAt || 0;
 
                 const isSafeGrmHeader = (k) => {
                     const kl = String(k || '').toLowerCase();
                     return kl === 'authorization' || kl === 'accept' || kl === 'accept-language' || kl.startsWith('x-');
                 };
 
+                const isGrmUrl = (low) => low.includes('/grm/sklad/wbnet/') || low.includes('/grm/wagon/svg/wbnet/');
+                const isIntercityApi = (low) => low.includes('intercity.pl') && !low.endsWith('.js') && !low.endsWith('.css');
+
+                const notifyHeaders = () => {
+                    try {
+                        if (window.AndroidGrmBridge && window.AndroidGrmBridge.onGrmHeaders) {
+                            window.AndroidGrmBridge.onGrmHeaders(JSON.stringify(window.__iccGrmHeaders));
+                        }
+                    } catch (e) {}
+                };
+
                 const recordHeaderObj = (obj) => {
                     if (!obj) return;
+                    let changed = false;
                     try {
                         if (typeof Headers !== 'undefined' && obj instanceof Headers) {
                             obj.forEach((v, k) => {
-                                if (isSafeGrmHeader(k) && v != null) window.__iccGrmHeaders[k] = String(v);
+                                if (isSafeGrmHeader(k) && v != null) {
+                                    window.__iccGrmHeaders[k] = String(v);
+                                    changed = true;
+                                }
                             });
                         } else if (Array.isArray(obj)) {
                             for (const pair of obj) {
                                 if (Array.isArray(pair) && pair.length >= 2 && isSafeGrmHeader(pair[0]) && pair[1] != null) {
                                     window.__iccGrmHeaders[String(pair[0])] = String(pair[1]);
+                                    changed = true;
                                 }
                             }
                         } else if (typeof obj === 'object') {
                             for (const k of Object.keys(obj)) {
                                 if (isSafeGrmHeader(k) && obj[k] != null) {
                                     window.__iccGrmHeaders[k] = String(obj[k]);
+                                    changed = true;
                                 }
                             }
                         }
                     } catch (e) {}
+                    if (changed) notifyHeaders();
                 };
 
                 const notifySklad = (url, text) => {
@@ -168,18 +197,24 @@ class EbiletWebViewScanner(
                     const init = args[1];
                     const url = (typeof req === 'string' ? req : (req && req.url) || '');
                     const urlLow = String(url).toLowerCase();
-                    if (urlLow.includes('/grm/wagon/svg/wbnet/')) {
+                    if (isGrmUrl(urlLow)) {
                         if (req && typeof req === 'object' && req.headers) recordHeaderObj(req.headers);
                         if (init && init.headers) recordHeaderObj(init.headers);
+                    }
+                    const trackApi = isIntercityApi(urlLow);
+                    if (trackApi) {
+                        window.__iccNetInFlight = (window.__iccNetInFlight || 0) + 1;
+                        window.__iccLastNetAt = Date.now();
                     }
                     try {
                         const resp = await origFetch.apply(this, args);
                         const finalUrl = resp.url || url || '';
                         const low = finalUrl.toLowerCase();
-                        if (low.includes('intercity.pl') && !low.endsWith('.js') && !low.endsWith('.css')) {
+                        if (isIntercityApi(low)) {
+                            window.__iccLastNetAt = Date.now();
                             notifyNet('FETCH ' + resp.status + ' ' + finalUrl.slice(0, 140));
                         }
-                        if (resp && resp.status === 200 && (low.includes('/grm/sklad/wbnet/') || low.includes('/grm/wagon/svg/wbnet/'))) {
+                        if (resp && resp.status === 200 && isGrmUrl(low)) {
                             const cloned = resp.clone();
                             cloned.text().then(txt => {
                                 if (low.includes('/grm/sklad/wbnet/')) notifySklad(finalUrl, txt);
@@ -190,6 +225,11 @@ class EbiletWebViewScanner(
                     } catch (err) {
                         notifyNet('FETCH_ERR ' + url.slice(0, 120) + ' -> ' + err);
                         throw err;
+                    } finally {
+                        if (trackApi) {
+                            window.__iccNetInFlight = Math.max(0, (window.__iccNetInFlight || 1) - 1);
+                            window.__iccLastNetAt = Date.now();
+                        }
                     }
                 };
 
@@ -209,19 +249,30 @@ class EbiletWebViewScanner(
                     return origSetHeader.call(this, header, value);
                 };
                 XMLHttpRequest.prototype.send = function(...args) {
+                    const urlLow = String(this.__iccUrl || '').toLowerCase();
                     try {
-                        if (String(this.__iccUrl || '').toLowerCase().includes('/grm/wagon/svg/wbnet/') && this.__iccReqHeaders) {
+                        if (isGrmUrl(urlLow) && this.__iccReqHeaders) {
                             recordHeaderObj(this.__iccReqHeaders);
                         }
                     } catch (e) {}
+                    const trackApi = isIntercityApi(urlLow);
+                    if (trackApi) {
+                        window.__iccNetInFlight = (window.__iccNetInFlight || 0) + 1;
+                        window.__iccLastNetAt = Date.now();
+                        this.addEventListener('loadend', function() {
+                            window.__iccNetInFlight = Math.max(0, (window.__iccNetInFlight || 1) - 1);
+                            window.__iccLastNetAt = Date.now();
+                        });
+                    }
                     this.addEventListener('load', function() {
                         try {
                             const u = String(this.responseURL || this.__iccUrl || '');
                             const low = u.toLowerCase();
-                            if (low.includes('intercity.pl') && !low.endsWith('.js') && !low.endsWith('.css')) {
+                            if (isIntercityApi(low)) {
+                                window.__iccLastNetAt = Date.now();
                                 notifyNet('XHR ' + this.status + ' ' + u.slice(0, 140));
                             }
-                            if (this.status === 200 && (low.includes('/grm/sklad/wbnet/') || low.includes('/grm/wagon/svg/wbnet/'))) {
+                            if (this.status === 200 && isGrmUrl(low)) {
                                 const txt = this.responseText || '';
                                 if (low.includes('/grm/sklad/wbnet/')) notifySklad(u, txt);
                                 else notifySvg(u, txt);
@@ -236,15 +287,48 @@ class EbiletWebViewScanner(
 
     private class SegmentCaptureState {
         @Volatile var skladJson: JSONObject? = null
+        @Volatile var skladUrl: String? = null
         @Volatile var svgPrefix: String? = null
         @Volatile var svgSuffix: String? = null
         val svgsByWagon = ConcurrentHashMap<String, String>()
     }
 
-    private class GrmJsBridge(private val stateProvider: () -> SegmentCaptureState) {
+    private sealed class DirectGrmResult {
+        data class Ok(val carriages: Map<String, List<String>>) : DirectGrmResult()
+        data class SoldOut(val reason: String) : DirectGrmResult()
+        data class Fallback(val reason: String, val isAuthOrBlocked: Boolean = false) : DirectGrmResult()
+    }
+
+    private class GrmJsBridge(
+        private val stateProvider: () -> SegmentCaptureState,
+        private val onTemplateCaptured: (GrmParser.GrmUrlTemplate) -> Unit,
+        private val onHeadersCaptured: (Map<String, String>) -> Unit,
+        private val onDirectResult: (String, String) -> Unit
+    ) {
         @JavascriptInterface
         fun onNetLog(msg: String) {
             Log.i(TAG, "[NET] $msg")
+        }
+
+        @JavascriptInterface
+        fun onGrmHeaders(headersJson: String) {
+            try {
+                val obj = JSONObject(headersJson)
+                val map = HashMap<String, String>()
+                val keys = obj.keys()
+                while (keys.hasNext()) {
+                    val k = keys.next()
+                    val v = obj.optString(k, "")
+                    if (k.isNotBlank() && v.isNotBlank()) map[k] = v
+                }
+                if (map.isNotEmpty()) onHeadersCaptured(map)
+            } catch (_: Exception) {
+            }
+        }
+
+        @JavascriptInterface
+        fun onDirectGrmResult(reqId: String, payloadJson: String) {
+            onDirectResult(reqId, payloadJson)
         }
 
         @JavascriptInterface
@@ -252,7 +336,10 @@ class EbiletWebViewScanner(
             try {
                 val obj = JSONObject(jsonText)
                 if (obj.has("klasa1") || obj.has("klasa2") || obj.has("wagonySchemat") || obj.has("wagony")) {
-                    stateProvider().skladJson = obj
+                    val st = stateProvider()
+                    st.skladJson = obj
+                    st.skladUrl = url
+                    GrmParser.parseGrmUrlTemplate(url)?.let(onTemplateCaptured)
                 }
             } catch (_: Exception) {
             }
@@ -267,6 +354,7 @@ class EbiletWebViewScanner(
                     st.svgPrefix = m.groupValues[1]
                     val wNo = m.groupValues[2]
                     st.svgSuffix = m.groupValues[4]
+                    GrmParser.parseGrmUrlTemplate(null, url)?.let(onTemplateCaptured)
                     if ("<svg" in svgText.lowercase()) {
                         st.svgsByWagon[wNo] = svgText
                     }
@@ -298,7 +386,18 @@ class EbiletWebViewScanner(
             settings.cacheMode = WebSettings.LOAD_DEFAULT
         }
         val worker = WorkerWebView(wv)
-        val bridge = GrmJsBridge { worker.captureState }
+        val bridge = GrmJsBridge(
+            stateProvider = { worker.captureState },
+            onTemplateCaptured = { tmpl ->
+                capturedGrmTemplate.compareAndSet(null, tmpl)
+            },
+            onHeadersCaptured = { hdrs ->
+                capturedGrmHeaders.putAll(hdrs)
+            },
+            onDirectResult = { reqId, payload ->
+                directGrmPending.remove(reqId)?.complete(payload)
+            }
+        )
         wv.addJavascriptInterface(bridge, "AndroidGrmBridge")
 
         wv.webViewClient = object : WebViewClient() {
@@ -372,7 +471,7 @@ class EbiletWebViewScanner(
         }
     }
 
-    private suspend fun closeCookieBanners(wv: WebView) {
+    private suspend fun closeCookieBanners(wv: WebView): Boolean {
         val js = """
             (function() {
                 const sels = [
@@ -395,7 +494,247 @@ class EbiletWebViewScanner(
                 return false;
             })();
         """.trimIndent()
-        evalJs(wv, js)
+        return evalJs(wv, js).trim() == "true"
+    }
+
+    private fun resolveStationEpa(stop: StationStop): String? {
+        return try {
+            val candidates = stationsRepo.searchStations(stop.name, limit = 10)
+            val evaTrim = stop.evaCode.trim()
+            val normName = RouteHelpers.normalizePolishName(stop.name)
+            val byEva = if (evaTrim.isNotEmpty()) {
+                candidates.firstOrNull { it.evaCode.trim() == evaTrim && !it.icId.isNullOrBlank() }
+            } else null
+            val chosen = byEva
+                ?: candidates.firstOrNull { it.normalizedName == normName && !it.icId.isNullOrBlank() }
+                ?: candidates.firstOrNull { !it.icId.isNullOrBlank() }
+            chosen?.icId?.trim()?.takeIf { it.length >= 6 && it.all(Char::isDigit) }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private suspend fun awaitDirectJs(
+        wv: WebView,
+        timeoutMs: Long,
+        scriptBuilder: (reqId: String, headersJson: String) -> String
+    ): String? {
+        val reqId = "grm_${directGrmSeq.incrementAndGet()}"
+        val deferred = CompletableDeferred<String>()
+        directGrmPending[reqId] = deferred
+        return try {
+            val hdrObj = JSONObject()
+            for ((k, v) in capturedGrmHeaders) {
+                hdrObj.put(k, v)
+            }
+            val script = scriptBuilder(reqId, hdrObj.toString())
+            withContext(Dispatchers.Main) {
+                wv.evaluateJavascript(script, null)
+            }
+            withTimeoutOrNull(timeoutMs) { deferred.await() }
+        } finally {
+            directGrmPending.remove(reqId)
+        }
+    }
+
+    private suspend fun scanRelationViaDirectGrm(
+        worker: WorkerWebView,
+        template: GrmParser.GrmUrlTemplate,
+        fromStop: StationStop,
+        toStop: StationStop,
+        fromEpa: String?,
+        toEpa: String?,
+        travelDate: String,
+        fallbackDepTime: String,
+        ticketClass: Int
+    ): DirectGrmResult {
+        if (RouteHelpers.isSameMetroHub(fromStop.name, toStop.name)) {
+            return DirectGrmResult.Fallback("same metro hub")
+        }
+        if (fromEpa.isNullOrBlank() || toEpa.isNullOrBlank()) {
+            return DirectGrmResult.Fallback("missing EPA code")
+        }
+
+        val depTime = fromStop.departureTime.ifBlank { fromStop.arrivalTime }.ifBlank { fallbackDepTime }
+        val arrTime = toStop.arrivalTime.ifBlank { toStop.departureTime }.ifBlank { depTime }
+        val depDate = RouteHelpers.computeSegmentDate(travelDate, fromStop.dayOffset)
+        val arrDayOffset = GrmParser.computeArrivalDayOffset(toStop.arrivalTime, toStop.departureTime, toStop.dayOffset)
+        val arrDate = RouteHelpers.computeSegmentDate(travelDate, arrDayOffset)
+
+        val depDt = GrmParser.formatGrmDateTime(depDate, depTime)
+            ?: return DirectGrmResult.Fallback("invalid dep datetime")
+        val arrDt = GrmParser.formatGrmDateTime(arrDate, arrTime)
+            ?: return DirectGrmResult.Fallback("invalid arr datetime")
+
+        val skladUrl = GrmParser.buildGrmSkladUrl(template, fromEpa, toEpa, depDt, arrDt)
+        val skladRaw = awaitDirectJs(worker.webView, timeoutMs = 8_000L) { reqId, hdrsJson ->
+            """
+            (async function(reqId, targetUrl, extraHdrs) {
+                const reply = (obj) => {
+                    try {
+                        if (window.AndroidGrmBridge && window.AndroidGrmBridge.onDirectGrmResult) {
+                            window.AndroidGrmBridge.onDirectGrmResult(reqId, JSON.stringify(obj));
+                        }
+                    } catch (e) {}
+                };
+                try {
+                    const hdrs = Object.assign({}, extraHdrs || {}, window.__iccGrmHeaders || {});
+                    const ctrl = new AbortController();
+                    const timer = setTimeout(() => ctrl.abort(), 6500);
+                    const r = await fetch(targetUrl, {
+                        method: 'GET',
+                        credentials: 'include',
+                        headers: hdrs,
+                        signal: ctrl.signal
+                    });
+                    clearTimeout(timer);
+                    const txt = await r.text();
+                    reply({ ok: r.ok, status: r.status, text: txt });
+                } catch (e) {
+                    reply({ ok: false, status: 0, text: '', err: String(e) });
+                }
+            })(${JSONObject.quote(reqId)}, ${JSONObject.quote(skladUrl)}, $hdrsJson);
+            """.trimIndent()
+        } ?: return DirectGrmResult.Fallback("sklad timeout")
+
+        val skladResp = try {
+            JSONObject(skladRaw)
+        } catch (_: Exception) {
+            return DirectGrmResult.Fallback("invalid sklad bridge payload")
+        }
+        val status = skladResp.optInt("status", 0)
+        if (status == 401 || status == 403) {
+            return DirectGrmResult.Fallback("HTTP $status", isAuthOrBlocked = true)
+        }
+        if (!skladResp.optBoolean("ok", false)) {
+            return DirectGrmResult.Fallback("HTTP $status")
+        }
+        val skladText = skladResp.optString("text", "")
+        if (skladText.isBlank()) {
+            return DirectGrmResult.Fallback("empty sklad body")
+        }
+        val skladJson = try {
+            JSONObject(skladText)
+        } catch (_: Exception) {
+            return DirectGrmResult.Fallback("non-JSON sklad")
+        }
+        if (!skladJson.has("klasa1") && !skladJson.has("klasa2") && !skladJson.has("wagonySchemat") && !skladJson.has("wagony")) {
+            return DirectGrmResult.Fallback("unexpected sklad schema")
+        }
+
+        val (targets, hasKey) = GrmParser.selectGrmTargetWagons(skladJson, ticketClass)
+        if (targets.isEmpty()) {
+            return if (hasKey) {
+                DirectGrmResult.SoldOut(
+                    "BRAK_MIEJSC_KLASA_$ticketClass: Brak dostępnych wagonów Klasy $ticketClass w składzie."
+                )
+            } else {
+                DirectGrmResult.Fallback("no targets and no class key")
+            }
+        }
+
+        val reqArr = JSONArray()
+        for ((wNo, schemaId) in targets) {
+            val svgUrl = GrmParser.buildGrmSvgUrl(template, wNo, schemaId, fromEpa, toEpa, depDt, arrDt)
+            reqArr.put(JSONObject().put("wNo", wNo).put("url", svgUrl))
+        }
+
+        val svgBatchRaw = awaitDirectJs(worker.webView, timeoutMs = 18_000L) { reqId, hdrsJson ->
+            """
+            (async function(reqId, items, extraHdrs) {
+                const reply = (obj) => {
+                    try {
+                        if (window.AndroidGrmBridge && window.AndroidGrmBridge.onDirectGrmResult) {
+                            window.AndroidGrmBridge.onDirectGrmResult(reqId, JSON.stringify(obj));
+                        }
+                    } catch (e) {}
+                };
+                try {
+                    const hdrs = Object.assign({}, extraHdrs || {}, window.__iccGrmHeaders || {});
+                    const svgs = {};
+                    const fail = [];
+                    let idx = 0;
+
+                    const fetchOne = async (it) => {
+                        for (let tryNum = 0; tryNum < 2; tryNum++) {
+                            try {
+                                const ctrl = new AbortController();
+                                const timer = setTimeout(() => ctrl.abort(), 6500);
+                                const r = await fetch(it.url, {
+                                    method: 'GET',
+                                    credentials: 'include',
+                                    headers: hdrs,
+                                    signal: ctrl.signal
+                                });
+                                clearTimeout(timer);
+                                if (r.ok) {
+                                    const txt = await r.text();
+                                    if (txt && txt.toLowerCase().includes('<svg')) {
+                                        svgs[it.wNo] = txt;
+                                        return;
+                                    }
+                                } else if (tryNum === 1) {
+                                    fail.push(it.wNo + ':' + r.status);
+                                    return;
+                                }
+                            } catch (e) {
+                                if (tryNum === 1) {
+                                    fail.push(it.wNo + ':err');
+                                    return;
+                                }
+                            }
+                            await new Promise(res => setTimeout(res, 150));
+                        }
+                    };
+
+                    const workerCount = Math.min(3, items.length);
+                    await Promise.all(Array.from({ length: workerCount }, async () => {
+                        while (idx < items.length) {
+                            const current = items[idx++];
+                            await fetchOne(current);
+                        }
+                    }));
+
+                    reply({ svgs: svgs, fail: fail });
+                } catch (e) {
+                    reply({ svgs: {}, fail: ['batch_err:' + String(e)] });
+                }
+            })(${JSONObject.quote(reqId)}, $reqArr, $hdrsJson);
+            """.trimIndent()
+        } ?: return DirectGrmResult.Fallback("svg batch timeout")
+
+        val svgsObj = try {
+            JSONObject(svgBatchRaw).optJSONObject("svgs")
+        } catch (_: Exception) {
+            null
+        } ?: return DirectGrmResult.Fallback("invalid svg batch payload")
+
+        val result = LinkedHashMap<String, List<String>>()
+        for ((wNo, _) in targets) {
+            val svgXml = svgsObj.optString(wNo, "")
+            if (svgXml.isNotBlank() && "<svg" in svgXml.lowercase()) {
+                result[wNo] = GrmParser.parseGrmWagonSvg(svgXml, ticketClass)
+            }
+        }
+
+        return when {
+            result.size == targets.size -> {
+                if (result.values.none { it.isNotEmpty() }) {
+                    DirectGrmResult.SoldOut(
+                        "BRAK_MIEJSC_KLASA_$ticketClass: Wszystkie dostępne wagony Klasy $ticketClass (${result.keys.joinToString(", ")}) mają 0 wolnych miejsc."
+                    )
+                } else {
+                    DirectGrmResult.Ok(result)
+                }
+            }
+            result.values.any { it.isNotEmpty() } -> {
+                Log.w(TAG, "[DIRECT GRM] Partial wagons ${result.size}/${targets.size} for ${fromStop.name} -> ${toStop.name}, returning available seats")
+                DirectGrmResult.Ok(result)
+            }
+            else -> {
+                DirectGrmResult.Fallback("incomplete SVGs ${result.size}/${targets.size}")
+            }
+        }
     }
 
     private suspend fun scanSingleRelation(
@@ -445,26 +784,36 @@ class EbiletWebViewScanner(
                     worker.webView.loadUrl(searchUrl)
                 }
 
-                // Wait up to 35s for connection cards (reload once after 10.0s stall)
+                // Wait up to 35s for connection cards (smart reload after 14s idle or 20s hard stall)
                 val startWait = System.currentTimeMillis()
                 var reloaded = false
                 var cardsReady = false
+                var cookieDismissed = false
+                var lastCookieCheckAt = 0L
                 var lastDiagAt = 0L
                 val trainDigitsOnly = TRAIN_DIGITS_REGEX.find(trainNumber)?.groupValues?.get(1).orEmpty()
                 while (System.currentTimeMillis() - startWait < 35_000L) {
                     coroutineScope { ensureActive() }
-                    closeCookieBanners(worker.webView)
+                    val nowLoopMs = System.currentTimeMillis()
+                    if (!cookieDismissed && (nowLoopMs - lastCookieCheckAt >= 600L)) {
+                        lastCookieCheckAt = nowLoopMs
+                        if (closeCookieBanners(worker.webView)) {
+                            cookieDismissed = true
+                        }
+                    }
                     val probeRaw = evalJs(
                         worker.webView,
                         """
                         (function(tNum) {
                             if (window.__iccStalePage || location.href === 'about:blank') {
-                                return JSON.stringify({ cards: 0, loaders: 1, w: window.innerWidth, sample: '', body: '' });
+                                return JSON.stringify({ cards: 0, loaders: 1, w: window.innerWidth, inFlight: 0, netIdleMs: 999999, sample: '', body: '' });
                             }
                             $FIND_CARDS_JS
                             const cards = __iccFindCards();
                             const loaders = document.querySelectorAll("[class*='trainLoaderWithText' i]");
                             const body = (document.body ? document.body.innerText : '').replace(/\s+/g, ' ').trim();
+                            const inFlight = window.__iccNetInFlight || 0;
+                            const netIdleMs = window.__iccLastNetAt ? (Date.now() - window.__iccLastNetAt) : 999999;
                             let sample = '';
                             if (cards.length === 0 && loaders.length === 0 && tNum && body.includes(tNum)) {
                                 const els = Array.from(document.querySelectorAll('li, article, section, div'));
@@ -476,7 +825,7 @@ class EbiletWebViewScanner(
                                     }
                                 }
                             }
-                            return JSON.stringify({ cards: cards.length, loaders: loaders.length, w: window.innerWidth, sample: sample.slice(0, 400), body: body.slice(0, 600) });
+                            return JSON.stringify({ cards: cards.length, loaders: loaders.length, w: window.innerWidth, inFlight: inFlight, netIdleMs: netIdleMs, sample: sample.slice(0, 400), body: body.slice(0, 600) });
                         })(${JSONObject.quote(trainDigitsOnly)});
                         """.trimIndent()
                     )
@@ -487,6 +836,8 @@ class EbiletWebViewScanner(
                     }
                     val cardCount = probeJson.optInt("cards", 0)
                     val loaderCount = probeJson.optInt("loaders", 0)
+                    val inFlight = probeJson.optInt("inFlight", 0)
+                    val netIdleMs = probeJson.optLong("netIdleMs", 999_999L)
                     val bodyRaw = probeJson.optString("body", "")
                     val sampleRaw = probeJson.optString("sample", "")
                     val bodyLow = bodyRaw.lowercase()
@@ -494,7 +845,7 @@ class EbiletWebViewScanner(
 
                     if (elapsedMs - lastDiagAt >= 3_500L || sampleRaw.isNotEmpty()) {
                         lastDiagAt = elapsedMs
-                        Log.i(TAG, "[$fromStation -> $toStation] t=${elapsedMs}ms cards=$cardCount loaders=$loaderCount w=${probeJson.optInt("w", -1)} sample='$sampleRaw' body='${bodyRaw.take(180)}'")
+                        Log.i(TAG, "[$fromStation -> $toStation] t=${elapsedMs}ms cards=$cardCount loaders=$loaderCount inFlight=$inFlight idle=${netIdleMs}ms w=${probeJson.optInt("w", -1)} sample='$sampleRaw' body='${bodyRaw.take(180)}'")
                     }
 
                     if (cardCount > 0 && loaderCount == 0) {
@@ -514,13 +865,17 @@ class EbiletWebViewScanner(
                         }
                     }
 
-                    if (elapsedMs > 10_000L && !reloaded && cardCount == 0) {
+                    val shouldSmartReload = !reloaded && cardCount == 0 && (
+                        (elapsedMs > 14_000L && inFlight == 0 && netIdleMs >= 3_000L) ||
+                            elapsedMs > 20_000L
+                    )
+                    if (shouldSmartReload) {
                         reloaded = true
-                        Log.i(TAG, "[$fromStation -> $toStation] List stalled >10s (cards=$cardCount, loaders=$loaderCount), reloading...")
+                        Log.i(TAG, "[$fromStation -> $toStation] List stalled at ${elapsedMs}ms (cards=$cardCount, loaders=$loaderCount, inFlight=$inFlight, netIdleMs=$netIdleMs), reloading...")
                         stepProgress("Przeładowanie listy połączeń ($fromStation -> $toStation)...")
                         withContext(Dispatchers.Main) { worker.webView.reload() }
                     }
-                    delay(400)
+                    delay(150)
                 }
 
                 if (!cardsReady) {
@@ -571,8 +926,17 @@ class EbiletWebViewScanner(
                                 """.trimIndent()
                             )
                             if (clickedRaw.trim() != "true") break
-                            delay(1400)
-                            matchedIdx = evalJs(worker.webView, matchJs).trim().toIntOrNull() ?: -1
+                            val pagStart = System.currentTimeMillis()
+                            while (System.currentTimeMillis() - pagStart < 2_500L) {
+                                delay(150)
+                                matchedIdx = evalJs(worker.webView, matchJs).trim().toIntOrNull() ?: -1
+                                if (matchedIdx >= 0) break@outer
+                                val loadersNow = evalJs(
+                                    worker.webView,
+                                    "document.querySelectorAll(\"[class*='trainLoaderWithText' i]\").length"
+                                ).trim().toIntOrNull() ?: 0
+                                if (loadersNow == 0 && System.currentTimeMillis() - pagStart >= 600L) break
+                            }
                             if (matchedIdx >= 0) break@outer
                         }
                     }
@@ -627,7 +991,7 @@ class EbiletWebViewScanner(
                         """.trimIndent()
                     )
                     if (readyRaw.trim() == "true") break
-                    delay(250)
+                    delay(150)
                 }
 
                 // Expand card + select class (with retry if card collapses or ignores first tap)
@@ -690,9 +1054,15 @@ class EbiletWebViewScanner(
                 var lastExpandAt = System.currentTimeMillis()
                 var reExpandAttempts = 0
                 val classWaitStart = System.currentTimeMillis()
+                var firstClassCheck = true
                 while (System.currentTimeMillis() - classWaitStart < 6_500L) {
                     coroutineScope { ensureActive() }
-                    delay(300)
+                    if (firstClassCheck) {
+                        firstClassCheck = false
+                        if (expandStatus != "DIRECT_READY") delay(100)
+                    } else {
+                        delay(150)
+                    }
                     selectClassResult = decodeJsString(
                         evalJs(
                             worker.webView,
@@ -765,11 +1135,11 @@ class EbiletWebViewScanner(
                     throw GraphicReservationException("SCRAPE_ERROR: Nie udało się wybrać Klasy $ticketClass dla $fromStation -> $toStation ($selectClassResult)")
                 }
 
-                // Wait and click seatmap button on Your Journey page + re-install hook
+                // Wait and click seatmap button on Your Journey page + ensure hook is installed
+                evalJs(worker.webView, GRM_HOOK_JS)
                 var schemaClicked = false
                 val schemaWaitStart = System.currentTimeMillis()
                 while (System.currentTimeMillis() - schemaWaitStart < 8_000L) {
-                    evalJs(worker.webView, GRM_HOOK_JS)
                     val clickedRaw = evalJs(
                         worker.webView,
                         """
@@ -805,7 +1175,7 @@ class EbiletWebViewScanner(
                         schemaClicked = true
                         break
                     }
-                    delay(350)
+                    delay(150)
                 }
                 if (!schemaClicked) {
                     val schemaDiag = decodeJsString(
@@ -839,7 +1209,7 @@ class EbiletWebViewScanner(
                         val (targetsChk, hasKeyChk) = GrmParser.selectGrmTargetWagons(sklad, ticketClass)
                         if (hasKeyChk && targetsChk.isEmpty()) break
                     }
-                    delay(200)
+                    delay(120)
                 }
 
                 val sklad = freshState.skladJson
@@ -931,7 +1301,7 @@ class EbiletWebViewScanner(
                                     batchStatusRaw = decodeJsString(doneRaw)
                                     break
                                 }
-                                delay(200)
+                                delay(100)
                             }
                             Log.i(TAG, "[$fromStation -> $toStation] SVG batch status=$batchStatusRaw, svgsByWagon=${freshState.svgsByWagon.keys}")
                         }
@@ -1044,6 +1414,13 @@ class EbiletWebViewScanner(
         val numSegments = stops.size - 1
         onProgress(10, "Wykryto $numSegments odcinków trasy.")
 
+        capturedGrmHeaders.clear()
+        capturedGrmTemplate.set(null)
+        directGrmPending.clear()
+        val stopEpaByIdx: List<String?> = withContext(Dispatchers.IO) {
+            stops.map { resolveStationEpa(it) }
+        }
+
         val pool = ArrayList<WorkerWebView>(concurrency)
         try {
             repeat(concurrency) { idx ->
@@ -1052,15 +1429,35 @@ class EbiletWebViewScanner(
                 if (idx == 0) onAttachDebugWebView?.invoke(w.webView)
             }
 
-            // Warmup e-IC home page so Akamai & Cookiebot initialize cookies naturally
+            // Dynamic warmup on e-IC home page (capped at 1200ms) so Akamai & Cookiebot initialize naturally
             onProgress(12, "Inicjalizacja sesji e-IC i ciasteczek...")
             Log.i(TAG, "Warmup: loading https://ebilet.intercity.pl/")
             withContext(Dispatchers.Main) {
                 pool[0].webView.loadUrl("https://ebilet.intercity.pl/")
             }
-            delay(2000)
-            closeCookieBanners(pool[0].webView)
-            delay(400)
+            val warmupStart = System.currentTimeMillis()
+            var warmupBannerClicked = false
+            while (System.currentTimeMillis() - warmupStart < 1_200L) {
+                ensureActive()
+                delay(120)
+                val readyState = decodeJsString(evalJs(pool[0].webView, "document.readyState"))
+                if (readyState == "interactive" || readyState == "complete") {
+                    if (closeCookieBanners(pool[0].webView)) {
+                        warmupBannerClicked = true
+                        break
+                    }
+                    if (readyState == "complete" && System.currentTimeMillis() - warmupStart >= 450L) {
+                        break
+                    }
+                }
+            }
+            if (!warmupBannerClicked) {
+                warmupBannerClicked = closeCookieBanners(pool[0].webView)
+            }
+            if (warmupBannerClicked) {
+                delay(100)
+            }
+            Log.i(TAG, "Warmup finished in ${System.currentTimeMillis() - warmupStart}ms (bannerClicked=$warmupBannerClicked)")
 
             // 1. Direct Fast-Path A -> B
             var fpWagonsUnavailable = false
@@ -1130,6 +1527,48 @@ class EbiletWebViewScanner(
                         val sb = stops[bIdx]
                         val subDep = sa.departureTime.ifBlank { sa.arrivalTime }.ifBlank { departureTime ?: "12:00" }
                         val subDate = RouteHelpers.computeSegmentDate(travelDate, sa.dayOffset)
+                        val subDur = RouteHelpers.computeDurationMin(sa, sb, 30 * (bIdx - aIdx).coerceAtLeast(1))
+
+                        val tmpl = capturedGrmTemplate.get()
+                        if (tmpl != null) {
+                            when (
+                                val directRes = scanRelationViaDirectGrm(
+                                    worker = pool[0],
+                                    template = tmpl,
+                                    fromStop = sa,
+                                    toStop = sb,
+                                    fromEpa = stopEpaByIdx.getOrNull(aIdx),
+                                    toEpa = stopEpaByIdx.getOrNull(bIdx),
+                                    travelDate = travelDate,
+                                    fallbackDepTime = subDep,
+                                    ticketClass = ticketClass
+                                )
+                            ) {
+                                is DirectGrmResult.Ok -> {
+                                    Log.i(TAG, "[DIRECT GRM] Split Fast-Path OK: ${sa.name} -> ${sb.name}")
+                                    return SegmentAvailabilityMap(
+                                        segmentIndex = 0,
+                                        fromStation = sa.name,
+                                        toStation = sb.name,
+                                        departureTime = subDep,
+                                        durationMin = subDur,
+                                        fromEva = sa.evaCode,
+                                        toEva = sb.evaCode,
+                                        segmentDate = subDate,
+                                        carriages = directRes.carriages,
+                                        status = "OK"
+                                    ) to false
+                                }
+                                is DirectGrmResult.SoldOut -> {
+                                    Log.i(TAG, "[DIRECT GRM] Split Fast-Path SOLD_OUT: ${sa.name} -> ${sb.name} (${directRes.reason})")
+                                    return null to GrmParser.isSeatmapWagonsUnavailableError(directRes.reason)
+                                }
+                                is DirectGrmResult.Fallback -> {
+                                    Log.i(TAG, "[DIRECT GRM] Split Fast-Path fallback (${directRes.reason}): ${sa.name} -> ${sb.name}")
+                                }
+                            }
+                        }
+
                         return try {
                             val cars = withTimeout(60_000L) {
                                 scanSingleRelation(
@@ -1150,7 +1589,7 @@ class EbiletWebViewScanner(
                                     fromStation = sa.name,
                                     toStation = sb.name,
                                     departureTime = subDep,
-                                    durationMin = RouteHelpers.computeDurationMin(sa, sb, 30 * (bIdx - aIdx).coerceAtLeast(1)),
+                                    durationMin = subDur,
                                     fromEva = sa.evaCode,
                                     toEva = sb.evaCode,
                                     segmentDate = subDate,
@@ -1209,84 +1648,195 @@ class EbiletWebViewScanner(
                 }
             }
 
-            // 3. Full segment-by-segment scan using pool of max 2 WebViews
-            val sem = Semaphore(concurrency)
-            val availablePool = ArrayDeque<WorkerWebView>(pool)
-            val poolLock = Any()
+            // 3. Full segment-by-segment scan: Direct GRM API fast-scan + automatic WebView UI fallback
             val progressBase = if (fastPath && numSegments > 1) 24 else 15
             val completed = AtomicInteger(0)
+            val resultsByIdx = arrayOfNulls<SegmentAvailabilityMap>(numSegments)
 
-            val scannedList = (0 until numSegments).map { idx ->
-                async {
-                    sem.withPermit {
-                        ensureActive()
-                        val worker = synchronized(poolLock) { availablePool.removeFirst() }
-                        try {
-                            val sFrom = stops[idx]
-                            val sTo = stops[idx + 1]
-                            val segDep = sFrom.departureTime.ifBlank { sFrom.arrivalTime }.ifBlank { departureTime ?: "12:00" }
-                            val segDate = RouteHelpers.computeSegmentDate(travelDate, sFrom.dayOffset)
-                            val segDur = RouteHelpers.computeDurationMin(sFrom, sTo, 30)
+            suspend fun scanSegmentViaWebView(worker: WorkerWebView, idx: Int): SegmentAvailabilityMap {
+                val sFrom = stops[idx]
+                val sTo = stops[idx + 1]
+                val segDep = sFrom.departureTime.ifBlank { sFrom.arrivalTime }.ifBlank { departureTime ?: "12:00" }
+                val segDate = RouteHelpers.computeSegmentDate(travelDate, sFrom.dayOffset)
+                val segDur = RouteHelpers.computeDurationMin(sFrom, sTo, 30)
 
-                            var carriages: Map<String, List<String>> = emptyMap()
-                            var status = "OK"
-                            var errReason: String? = null
+                var carriages: Map<String, List<String>> = emptyMap()
+                var status = "OK"
+                var errReason: String? = null
 
-                            try {
-                                carriages = withTimeout(75_000L) {
-                                    scanSingleRelation(
-                                        worker = worker,
-                                        fromStation = sFrom.name,
-                                        toStation = sTo.name,
-                                        travelDate = segDate,
-                                        departureTime = segDep,
-                                        trainNumber = trainNumber,
-                                        ticketClass = ticketClass,
-                                        fromEva = sFrom.evaCode,
-                                        toEva = sTo.evaCode,
-                                        stepProgress = { msg -> onProgress(progressBase + (completed.get() * (96 - progressBase) / numSegments), "[${idx + 1}/$numSegments] $msg") }
-                                    )
-                                }
-                                if (carriages.values.none { it.isNotEmpty() }) {
-                                    status = "SOLD_OUT"
-                                    errReason = "Brak wolnych miejsc w Klasie $ticketClass."
-                                    carriages = emptyMap()
-                                }
-                            } catch (e: CancellationException) {
-                                throw e
-                            } catch (e: GraphicReservationException) {
-                                status = if (GrmParser.isSoldOutReason(e.message)) "SOLD_OUT" else "SCRAPE_ERROR"
-                                errReason = e.message
-                                carriages = emptyMap()
-                            } catch (e: Exception) {
-                                status = "SCRAPE_ERROR"
-                                errReason = e.message
-                                carriages = emptyMap()
+                try {
+                    carriages = withTimeout(75_000L) {
+                        scanSingleRelation(
+                            worker = worker,
+                            fromStation = sFrom.name,
+                            toStation = sTo.name,
+                            travelDate = segDate,
+                            departureTime = segDep,
+                            trainNumber = trainNumber,
+                            ticketClass = ticketClass,
+                            fromEva = sFrom.evaCode,
+                            toEva = sTo.evaCode,
+                            stepProgress = { msg ->
+                                onProgress(
+                                    progressBase + (completed.get() * (96 - progressBase) / numSegments),
+                                    "[${idx + 1}/$numSegments] $msg"
+                                )
                             }
+                        )
+                    }
+                    if (carriages.values.none { it.isNotEmpty() }) {
+                        status = "SOLD_OUT"
+                        errReason = "Brak wolnych miejsc w Klasie $ticketClass."
+                        carriages = emptyMap()
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: GraphicReservationException) {
+                    status = if (GrmParser.isSoldOutReason(e.message)) "SOLD_OUT" else "SCRAPE_ERROR"
+                    errReason = e.message
+                    carriages = emptyMap()
+                } catch (e: Exception) {
+                    status = "SCRAPE_ERROR"
+                    errReason = e.message
+                    carriages = emptyMap()
+                }
 
-                            val doneNow = completed.incrementAndGet()
-                            val pct = (progressBase + (doneNow * (96 - progressBase) / numSegments)).coerceIn(progressBase, 96)
-                            onProgress(pct, "Ukończono odcinek $doneNow/$numSegments: ${sFrom.name} -> ${sTo.name}")
+                val doneNow = completed.incrementAndGet()
+                val pct = (progressBase + (doneNow * (96 - progressBase) / numSegments)).coerceIn(progressBase, 96)
+                onProgress(pct, "Ukończono odcinek $doneNow/$numSegments: ${sFrom.name} -> ${sTo.name}")
 
-                            SegmentAvailabilityMap(
-                                segmentIndex = idx,
-                                fromStation = sFrom.name,
-                                toStation = sTo.name,
-                                departureTime = segDep,
-                                durationMin = segDur,
-                                fromEva = sFrom.evaCode,
-                                toEva = sTo.evaCode,
-                                segmentDate = segDate,
-                                carriages = carriages,
-                                status = status,
-                                errorReason = errReason
-                            )
-                        } finally {
-                            synchronized(poolLock) { availablePool.addLast(worker) }
+                return SegmentAvailabilityMap(
+                    segmentIndex = idx,
+                    fromStation = sFrom.name,
+                    toStation = sTo.name,
+                    departureTime = segDep,
+                    durationMin = segDur,
+                    fromEva = sFrom.evaCode,
+                    toEva = sTo.evaCode,
+                    segmentDate = segDate,
+                    carriages = carriages,
+                    status = status,
+                    errorReason = errReason
+                )
+            }
+
+            // If we don't have a GRM template yet (e.g. fastPath=false), scan segment 0 via WebView first
+            // so its intercepted /grm/sklad/wbnet/ template + headers unlock Direct GRM for all remaining segments.
+            if (capturedGrmTemplate.get() == null && numSegments > 1) {
+                ensureActive()
+                resultsByIdx[0] = scanSegmentViaWebView(pool[0], 0)
+            }
+
+            // Phase 3A: Direct GRM API fast-scan on pool[0] (stays parked on ebilet.intercity.pl)
+            val directTemplate = capturedGrmTemplate.get()
+            if (directTemplate != null) {
+                val pendingDirect = (0 until numSegments).filter { resultsByIdx[it] == null }
+                if (pendingDirect.isNotEmpty()) {
+                    Log.i(TAG, "[DIRECT GRM] Starting fast API scan for ${pendingDirect.size} segments using template=$directTemplate")
+                    val directSem = Semaphore(2)
+                    val consecutiveAuthFailures = AtomicInteger(0)
+                    val abortDirect = AtomicBoolean(false)
+
+                    pendingDirect.map { idx ->
+                        async {
+                            directSem.withPermit {
+                                ensureActive()
+                                if (abortDirect.get()) return@withPermit
+                                val sFrom = stops[idx]
+                                val sTo = stops[idx + 1]
+                                val segDep = sFrom.departureTime.ifBlank { sFrom.arrivalTime }.ifBlank { departureTime ?: "12:00" }
+                                val segDate = RouteHelpers.computeSegmentDate(travelDate, sFrom.dayOffset)
+                                val segDur = RouteHelpers.computeDurationMin(sFrom, sTo, 30)
+
+                                when (
+                                    val directRes = scanRelationViaDirectGrm(
+                                        worker = pool[0],
+                                        template = directTemplate,
+                                        fromStop = sFrom,
+                                        toStop = sTo,
+                                        fromEpa = stopEpaByIdx.getOrNull(idx),
+                                        toEpa = stopEpaByIdx.getOrNull(idx + 1),
+                                        travelDate = travelDate,
+                                        fallbackDepTime = segDep,
+                                        ticketClass = ticketClass
+                                    )
+                                ) {
+                                    is DirectGrmResult.Ok -> {
+                                        consecutiveAuthFailures.set(0)
+                                        val doneNow = completed.incrementAndGet()
+                                        val pct = (progressBase + (doneNow * (96 - progressBase) / numSegments)).coerceIn(progressBase, 96)
+                                        onProgress(pct, "Szybki odczyt GRM $doneNow/$numSegments: ${sFrom.name} -> ${sTo.name}")
+                                        Log.i(TAG, "[DIRECT GRM] Segment $idx OK (${sFrom.name} -> ${sTo.name}): ${directRes.carriages.mapValues { it.value.size }}")
+                                        resultsByIdx[idx] = SegmentAvailabilityMap(
+                                            segmentIndex = idx,
+                                            fromStation = sFrom.name,
+                                            toStation = sTo.name,
+                                            departureTime = segDep,
+                                            durationMin = segDur,
+                                            fromEva = sFrom.evaCode,
+                                            toEva = sTo.evaCode,
+                                            segmentDate = segDate,
+                                            carriages = directRes.carriages,
+                                            status = "OK"
+                                        )
+                                    }
+                                    is DirectGrmResult.SoldOut -> {
+                                        consecutiveAuthFailures.set(0)
+                                        val doneNow = completed.incrementAndGet()
+                                        val pct = (progressBase + (doneNow * (96 - progressBase) / numSegments)).coerceIn(progressBase, 96)
+                                        onProgress(pct, "Szybki odczyt GRM $doneNow/$numSegments: ${sFrom.name} -> ${sTo.name} (brak miejsc)")
+                                        Log.i(TAG, "[DIRECT GRM] Segment $idx SOLD_OUT (${sFrom.name} -> ${sTo.name}): ${directRes.reason}")
+                                        resultsByIdx[idx] = SegmentAvailabilityMap(
+                                            segmentIndex = idx,
+                                            fromStation = sFrom.name,
+                                            toStation = sTo.name,
+                                            departureTime = segDep,
+                                            durationMin = segDur,
+                                            fromEva = sFrom.evaCode,
+                                            toEva = sTo.evaCode,
+                                            segmentDate = segDate,
+                                            carriages = emptyMap(),
+                                            status = "SOLD_OUT",
+                                            errorReason = directRes.reason
+                                        )
+                                    }
+                                    is DirectGrmResult.Fallback -> {
+                                        Log.i(TAG, "[DIRECT GRM] Segment $idx fallback to WebView (${sFrom.name} -> ${sTo.name}): ${directRes.reason}")
+                                        if (directRes.isAuthOrBlocked && consecutiveAuthFailures.incrementAndGet() >= 2) {
+                                            abortDirect.set(true)
+                                            Log.w(TAG, "[DIRECT GRM] Aborting remaining Direct GRM attempts after 2 auth/block failures; falling back to WebView pool")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }.awaitAll()
+                }
+            }
+
+            // Phase 3B: WebView UI pool fallback for any remaining segments
+            val remainingIndices = (0 until numSegments).filter { resultsByIdx[it] == null }
+            if (remainingIndices.isNotEmpty()) {
+                val sem = Semaphore(concurrency)
+                val availablePool = ArrayDeque<WorkerWebView>(pool)
+                val poolLock = Any()
+
+                remainingIndices.map { idx ->
+                    async {
+                        sem.withPermit {
+                            ensureActive()
+                            val worker = synchronized(poolLock) { availablePool.removeFirst() }
+                            try {
+                                resultsByIdx[idx] = scanSegmentViaWebView(worker, idx)
+                            } finally {
+                                synchronized(poolLock) { availablePool.addLast(worker) }
+                            }
                         }
                     }
-                }
-            }.awaitAll().toMutableList()
+                }.awaitAll()
+            }
+
+            val scannedList = resultsByIdx.map { it!! }.toMutableList()
 
             // 4. Tail & Head metropolitan boundary recovery
             fun isUnsellableMetroBoundary(seg: SegmentAvailabilityMap): Boolean {
@@ -1368,6 +1918,8 @@ class EbiletWebViewScanner(
                 segments = finalSegments
             )
         } finally {
+            directGrmPending.values.forEach { it.cancel() }
+            directGrmPending.clear()
             onAttachDebugWebView?.invoke(null)
             for (w in pool) {
                 destroyWorkerWebView(w)

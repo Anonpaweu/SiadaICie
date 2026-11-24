@@ -30,6 +30,13 @@ object GrmParser {
     private val SEAT_ARIA_REGEX = Regex("miejsce\\s+(\\d+)", RegexOption.IGNORE_CASE)
     private val TIME_HH_MM_REGEX = Regex("^(\\d{1,2}):(\\d{2})$")
     private val DATE_YYYY_MM_DD_REGEX = Regex("^(\\d{4})-(\\d{2})-(\\d{2})$")
+    private val GRM_TEMPLATE_REGEX = Regex("^(https?://[^/]+)/grm/(?:sklad|wagon/svg)/wbnet/([^/]+)/([^/]+)/")
+
+    data class GrmUrlTemplate(
+        val host: String,
+        val category: String,
+        val trainNo: String
+    )
 
     fun isPrmWheelchairLabel(ariaLabel: String?): Boolean {
         val low = (ariaLabel ?: "").lowercase()
@@ -201,5 +208,61 @@ object GrmParser {
         val mm = mTime.groupValues[2].toIntOrNull() ?: return null
         if (hh !in 0..23 || mm !in 0..59) return null
         return "${mDate.groupValues[1]}${mDate.groupValues[2]}${mDate.groupValues[3]}%02d%02d".format(hh, mm)
+    }
+
+    fun parseGrmUrlTemplate(skladUrl: String?, svgUrl: String? = null): GrmUrlTemplate? {
+        for (candidate in listOfNotNull(skladUrl, svgUrl)) {
+            val trimmed = candidate.trim()
+            if (trimmed.isEmpty()) continue
+            val m = GRM_TEMPLATE_REGEX.find(trimmed)
+            if (m != null) {
+                return GrmUrlTemplate(
+                    host = m.groupValues[1],
+                    category = m.groupValues[2],
+                    trainNo = m.groupValues[3]
+                )
+            }
+        }
+        return null
+    }
+
+    fun buildGrmSkladUrl(
+        template: GrmUrlTemplate,
+        fromEpa: String,
+        toEpa: String,
+        depDt: String,
+        arrDt: String
+    ): String {
+        return "${template.host}/grm/sklad/wbnet/${template.category}/${template.trainNo}/" +
+            "$arrDt/${fromEpa.trim()}/$depDt/${toEpa.trim()}"
+    }
+
+    fun buildGrmSvgUrl(
+        template: GrmUrlTemplate,
+        wagonNo: String,
+        schemaId: String,
+        fromEpa: String,
+        toEpa: String,
+        depDt: String,
+        arrDt: String
+    ): String {
+        return "${template.host}/grm/wagon/svg/wbnet/${template.category}/${template.trainNo}/" +
+            "${wagonNo.trim()}/${schemaId.trim()}/$depDt/$arrDt/${fromEpa.trim()}/${toEpa.trim()}"
+    }
+
+    fun computeArrivalDayOffset(
+        arrivalTime: String,
+        departureTime: String,
+        depDayOffset: Int
+    ): Int {
+        val mArr = TIME_HH_MM_REGEX.matchEntire(arrivalTime.trim()) ?: return depDayOffset.coerceAtLeast(0)
+        val mDep = TIME_HH_MM_REGEX.matchEntire(departureTime.trim()) ?: return depDayOffset.coerceAtLeast(0)
+        val arrMin = (mArr.groupValues[1].toIntOrNull() ?: 0) * 60 + (mArr.groupValues[2].toIntOrNull() ?: 0)
+        val depMin = (mDep.groupValues[1].toIntOrNull() ?: 0) * 60 + (mDep.groupValues[2].toIntOrNull() ?: 0)
+        return if (arrMin > depMin + 300) {
+            (depDayOffset - 1).coerceAtLeast(0)
+        } else {
+            depDayOffset.coerceAtLeast(0)
+        }
     }
 }

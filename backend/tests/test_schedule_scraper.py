@@ -395,4 +395,16 @@ def test_find_ti_url_for_train_row_scoped_matching(monkeypatch):
     assert schedule_scraper._extract_ti_url_from_sq_html(split_rows_html, "IC 1644") is None
 
 
+def test_get_system_ssl_context_enforces_verification():
+    """Verify get_system_ssl_context returns a verifying SSLContext with hostname checks enabled."""
+    import ssl
+    from backend.app.scraper.schedule_scraper import get_system_ssl_context
+
+    ctx = get_system_ssl_context()
+    assert isinstance(ctx, ssl.SSLContext)
+    assert ctx.verify_mode == ssl.CERT_REQUIRED
+    assert ctx.check_hostname is True
+
+
+
 

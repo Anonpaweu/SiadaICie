@@ -8,8 +8,11 @@ Sources:
 
 Populates the 'stations' table in SQLite with official names, normalized names, EVA codes, and EPA (ic_id) codes.
 """
+import functools
 import re
 import sqlite3
+import ssl
+import sys
 import httpx
 from pathlib import Path
 from typing import Dict, List
@@ -19,6 +22,39 @@ from backend.app.scraper.route_resolver import METROPOLITAN_HUBS
 STATIONS_JS_URL = "https://www.intercity.pl/js/station.js"
 EIC2_STATIONS_API_URL = "https://api-gateway.intercity.pl/server/public/endpoint/Aktualizacja"
 EIC2_DEVICE_NR = 956
+
+
+@functools.lru_cache(maxsize=1)
+def _get_system_ssl_context() -> ssl.SSLContext:
+    """
+    Returns an SSLContext that trusts the OS system certificate store
+    (including Windows ROOT/CA stores) while keeping full TLS verification enabled.
+    """
+    try:
+        import truststore  # type: ignore[import-not-found]
+        return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    except ImportError:
+        pass
+
+    ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+    if sys.platform == "win32" and hasattr(ssl, "enum_certificates"):
+        purpose_oid = ssl.Purpose.SERVER_AUTH.oid
+        der_certs = bytearray()
+        for store_name in ("ROOT", "CA"):
+            try:
+                for cert, encoding, trust in ssl.enum_certificates(store_name):
+                    if encoding == "x509_asn" and (
+                        trust is True or (isinstance(trust, set) and purpose_oid in trust)
+                    ):
+                        der_certs.extend(cert)
+            except Exception:
+                pass
+        if der_certs:
+            try:
+                ctx.load_verify_locations(cadata=bytes(der_certs))
+            except Exception:
+                pass
+    return ctx
 
 
 def normalize_polish_name(s: str) -> str:
@@ -66,7 +102,7 @@ def _fetch_station_js_entries(headers: Dict[str, str]) -> Dict[str, Dict]:
     """Fetches legacy station.js dictionary keyed by eva_code."""
     print(f"Pobieranie słownika stacji z {STATIONS_JS_URL}...")
     try:
-        r = httpx.get(STATIONS_JS_URL, headers=headers, timeout=15)
+        r = httpx.get(STATIONS_JS_URL, headers=headers, timeout=15, verify=_get_system_ssl_context())
         r.raise_for_status()
         content = r.content
     except Exception as e:
@@ -121,6 +157,7 @@ def _fetch_eic2_stations(headers: Dict[str, str]) -> List[Dict]:
             json={"metoda": "pobierzStacje", "urzadzenieNr": EIC2_DEVICE_NR},
             headers=api_headers,
             timeout=20,
+            verify=_get_system_ssl_context(),
         )
         r.raise_for_status()
         payload = r.json()

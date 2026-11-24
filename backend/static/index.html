@@ -393,8 +393,8 @@
           <select id="carriageFilter" onchange="renderMatrix()" class="bg-pkp-dark border border-pkp-borderLight rounded px-2.5 py-1 text-slate-200 focus:outline-none focus:border-pkp-orange">
             <option value="ALL">Wszystkie wagony</option>
           </select>
-          <button id="toggleFilterSelectedBtn" onclick="toggleFilterSelected()" class="px-3 py-1 rounded bg-pkp-surfaceHover hover:bg-pkp-border border border-pkp-borderLight text-slate-200 transition-colors">
-            Pokaż tylko miejsca z wybranego wariantu
+          <button id="toggleFilterSelectedBtn" onclick="toggleFilterSelected()" class="px-3 py-1 rounded bg-pkp-orange hover:bg-pkp-orangeHover text-white font-bold transition-colors">
+            Pokaż wszystkie wolne miejsca w pociągu
           </button>
         </div>
       </div>
@@ -1244,7 +1244,7 @@ W6 m14/m16`;
     let currentAnalysisData = null;
     let selectedStrategyIndex = 0;
     let currentTicketClass = 2;
-    let filterOnlyRecommended = false;
+    let filterOnlyRecommended = true;
 
     // --- Interactive Polish Calendar Picker with manual typing support ---
     const MONTH_NAMES_PL = [

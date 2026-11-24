@@ -109,6 +109,35 @@ class EbiletWebViewScanner(
             (function() {
                 if (window.__iccGrmHookInstalled) return;
                 window.__iccGrmHookInstalled = true;
+                window.__iccGrmHeaders = window.__iccGrmHeaders || {};
+
+                const isSafeGrmHeader = (k) => {
+                    const kl = String(k || '').toLowerCase();
+                    return kl === 'authorization' || kl === 'accept' || kl === 'accept-language' || kl.startsWith('x-');
+                };
+
+                const recordHeaderObj = (obj) => {
+                    if (!obj) return;
+                    try {
+                        if (typeof Headers !== 'undefined' && obj instanceof Headers) {
+                            obj.forEach((v, k) => {
+                                if (isSafeGrmHeader(k) && v != null) window.__iccGrmHeaders[k] = String(v);
+                            });
+                        } else if (Array.isArray(obj)) {
+                            for (const pair of obj) {
+                                if (Array.isArray(pair) && pair.length >= 2 && isSafeGrmHeader(pair[0]) && pair[1] != null) {
+                                    window.__iccGrmHeaders[String(pair[0])] = String(pair[1]);
+                                }
+                            }
+                        } else if (typeof obj === 'object') {
+                            for (const k of Object.keys(obj)) {
+                                if (isSafeGrmHeader(k) && obj[k] != null) {
+                                    window.__iccGrmHeaders[k] = String(obj[k]);
+                                }
+                            }
+                        }
+                    } catch (e) {}
+                };
 
                 const notifySklad = (url, text) => {
                     try {
@@ -135,7 +164,14 @@ class EbiletWebViewScanner(
 
                 const origFetch = window.fetch;
                 window.fetch = async function(...args) {
-                    const url = (typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url) || '');
+                    const req = args[0];
+                    const init = args[1];
+                    const url = (typeof req === 'string' ? req : (req && req.url) || '');
+                    const urlLow = String(url).toLowerCase();
+                    if (urlLow.includes('/grm/wagon/svg/wbnet/')) {
+                        if (req && typeof req === 'object' && req.headers) recordHeaderObj(req.headers);
+                        if (init && init.headers) recordHeaderObj(init.headers);
+                    }
                     try {
                         const resp = await origFetch.apply(this, args);
                         const finalUrl = resp.url || url || '';
@@ -158,12 +194,26 @@ class EbiletWebViewScanner(
                 };
 
                 const origOpen = XMLHttpRequest.prototype.open;
+                const origSetHeader = XMLHttpRequest.prototype.setRequestHeader;
                 const origSend = XMLHttpRequest.prototype.send;
                 XMLHttpRequest.prototype.open = function(method, url, ...rest) {
                     this.__iccUrl = String(url || '');
+                    this.__iccReqHeaders = {};
                     return origOpen.call(this, method, url, ...rest);
                 };
+                XMLHttpRequest.prototype.setRequestHeader = function(header, value) {
+                    try {
+                        if (!this.__iccReqHeaders) this.__iccReqHeaders = {};
+                        if (header) this.__iccReqHeaders[String(header)] = String(value);
+                    } catch (e) {}
+                    return origSetHeader.call(this, header, value);
+                };
                 XMLHttpRequest.prototype.send = function(...args) {
+                    try {
+                        if (String(this.__iccUrl || '').toLowerCase().includes('/grm/wagon/svg/wbnet/') && this.__iccReqHeaders) {
+                            recordHeaderObj(this.__iccReqHeaders);
+                        }
+                    } catch (e) {}
                     this.addEventListener('load', function() {
                         try {
                             const u = String(this.responseURL || this.__iccUrl || '');
@@ -228,12 +278,11 @@ class EbiletWebViewScanner(
 
     private class WorkerWebView(
         val webView: WebView,
-        var captureState: SegmentCaptureState = SegmentCaptureState()
+        @Volatile var captureState: SegmentCaptureState = SegmentCaptureState()
     )
 
     @SuppressLint("SetJavaScriptEnabled")
     private suspend fun createWorkerWebView(): WorkerWebView = withContext(Dispatchers.Main) {
-        val stateHolder = arrayOf(SegmentCaptureState())
         val wv = WebView(context.applicationContext).apply {
             layoutParams = FrameLayout.LayoutParams(1280, 900)
             settings.javaScriptEnabled = true
@@ -248,7 +297,8 @@ class EbiletWebViewScanner(
             settings.userAgentString = settings.userAgentString.replace("; wv)", ")").replace("; wv;", ";")
             settings.cacheMode = WebSettings.LOAD_DEFAULT
         }
-        val bridge = GrmJsBridge { stateHolder[0] }
+        val worker = WorkerWebView(wv)
+        val bridge = GrmJsBridge { worker.captureState }
         wv.addJavascriptInterface(bridge, "AndroidGrmBridge")
 
         wv.webViewClient = object : WebViewClient() {
@@ -286,7 +336,7 @@ class EbiletWebViewScanner(
         )
         wv.layout(0, 0, 1280, 900)
 
-        WorkerWebView(wv, stateHolder[0])
+        worker
     }
 
     private suspend fun destroyWorkerWebView(worker: WorkerWebView) = withContext(Dispatchers.Main) {
@@ -362,10 +412,6 @@ class EbiletWebViewScanner(
     ): Map<String, List<String>> {
         val freshState = SegmentCaptureState()
         worker.captureState = freshState
-        withContext(Dispatchers.Main) {
-            worker.webView.removeJavascriptInterface("AndroidGrmBridge")
-            worker.webView.addJavascriptInterface(GrmJsBridge { worker.captureState }, "AndroidGrmBridge")
-        }
 
         val searchUrl = GrmParser.buildEicSearchUrl(
             fromEva = fromEva,
@@ -515,7 +561,7 @@ class EbiletWebViewScanner(
                                 """
                                 (function(lbl) {
                                     for (const b of document.querySelectorAll('button')) {
-                                        if ((b.innerText || '').includes(lbl) && b.offsetParent !== null && !b.disabled) {
+                                        if ((b.innerText || '').toLowerCase().includes(lbl.toLowerCase()) && b.offsetParent !== null && !b.disabled) {
                                             b.click();
                                             return true;
                                         }
@@ -541,9 +587,10 @@ class EbiletWebViewScanner(
                 Log.i(TAG, "[$fromStation -> $toStation] Matched card index=$matchedIdx")
                 stepProgress("Wybór klasy $ticketClass i schematu miejsc...")
 
-                // Wait for card price loader to finish
+                // Wait for card price loader and actionable content to be ready
                 val priceWaitStart = System.currentTimeMillis()
                 while (System.currentTimeMillis() - priceWaitStart < 12_000L) {
+                    coroutineScope { ensureActive() }
                     val readyRaw = evalJs(
                         worker.webView,
                         """
@@ -552,9 +599,30 @@ class EbiletWebViewScanner(
                             const cards = __iccFindCards();
                             const card = cards[idx];
                             if (!card) return true;
-                            if (card.querySelector("button[aria-label*='Kup bilet'], button[data-testid='OutlineButton'], button[aria-label*='2 klas'], button[aria-label*='1 klas'], button[aria-label*='klasa 2' i], button[aria-label*='klasa 1' i]")) return true;
                             const txt = (card.innerText || '').toLowerCase();
-                            return !(txt.includes('ładowanie ceny') || txt.includes('ladowanie ceny'));
+                            if (txt.includes('ładowanie ceny') || txt.includes('ladowanie ceny')) return false;
+                            const visibleLoaders = Array.from(card.querySelectorAll("[class*='skeleton' i], [class*='loader' i], [class*='spinner' i]"))
+                                .filter(el => el.offsetParent !== null);
+                            if (visibleLoaders.length > 0) return false;
+                            const isSummaryBtn = (low) =>
+                                (low.includes('klasa 1') || low.includes('1 klas')) &&
+                                (low.includes('klasa 2') || low.includes('2 klas'));
+                            const hasDirectClassBtn = Array.from(card.querySelectorAll("button, [role='button']")).some(b => {
+                                if (b.offsetParent === null) return false;
+                                const t = ((b.innerText || '') + ' ' + (b.getAttribute('aria-label') || '')).toLowerCase();
+                                return !isSummaryBtn(t) && (t.includes('klasa 1') || t.includes('klasa 2') || t.includes('1 klas') || t.includes('2 klas'));
+                            });
+                            const hasDesktopBtn = !!card.querySelector("button[aria-label*='Kup bilet'], button[data-testid='OutlineButton']");
+                            const hasActionableText = txt.includes('zł') || txt.includes('pln') ||
+                                txt.includes('brak miejsc') || txt.includes('niedostępn') ||
+                                txt.includes('wyprzedan') || txt.includes('kup bilet') || txt.includes('wybierz');
+                            if (!hasDirectClassBtn && !hasDesktopBtn && !hasActionableText) return false;
+                            const primaryBtn = Array.from(card.querySelectorAll("button, [role='button']"))
+                                .find(b => b.offsetParent !== null);
+                            if (primaryBtn && (primaryBtn.disabled || primaryBtn.getAttribute('aria-disabled') === 'true')) {
+                                return false;
+                            }
+                            return true;
                         })($matchedIdx);
                         """.trimIndent()
                     )
@@ -562,11 +630,9 @@ class EbiletWebViewScanner(
                     delay(250)
                 }
 
-                // Expand card + select class
-                val expandAndClassRaw = evalJs(
-                    worker.webView,
-                    """
-                    (function(idx, tClass) {
+                // Expand card + select class (with retry if card collapses or ignores first tap)
+                val expandCardJs = """
+                    (function(idx) {
                         $FIND_CARDS_JS
                         const cards = __iccFindCards();
                         const card = cards[idx];
@@ -574,51 +640,58 @@ class EbiletWebViewScanner(
                         const isSummaryBtn = (low) =>
                             (low.includes('klasa 1') || low.includes('1 klas')) &&
                             (low.includes('klasa 2') || low.includes('2 klas'));
+                        const isEnabledVisible = (b) =>
+                            b && b.offsetParent !== null && !b.disabled && b.getAttribute('aria-disabled') !== 'true';
                         const hasDirectClassBtn = Array.from(card.querySelectorAll("button, [role='button']")).some(b => {
+                            if (!isEnabledVisible(b)) return false;
                             const t = ((b.innerText || '') + ' ' + (b.getAttribute('aria-label') || '')).toLowerCase();
                             if (isSummaryBtn(t)) return false;
-                            return (t.includes('klasa 1') || t.includes('klasa 2') || t.includes('1 klas') || t.includes('2 klas')) && b.offsetParent !== null;
+                            return t.includes('klasa 1') || t.includes('klasa 2') || t.includes('1 klas') || t.includes('2 klas');
                         });
-                        if (!hasDirectClassBtn) {
-                            let clicked = false;
-                            const expSels = ["button[data-testid='OutlineButton']", "button[aria-label*='Kup bilet']"];
-                            for (const s of expSels) {
-                                const b = card.querySelector(s);
-                                if (b && b.offsetParent !== null) { b.click(); clicked = true; break; }
-                            }
-                            if (!clicked) {
-                                for (const b of card.querySelectorAll("button, [role='button']")) {
-                                    const t = (b.innerText || '').toLowerCase();
-                                    if ((t.includes('kup bilet') || t.includes('wybierz') || isSummaryBtn(t)) && b.offsetParent !== null) {
-                                        b.click();
-                                        clicked = true;
-                                        break;
-                                    }
-                                }
-                            }
-                            if (!clicked) {
-                                const anyBtn = card.querySelector("button, [role='button']");
-                                if (anyBtn && anyBtn.offsetParent !== null) {
-                                    anyBtn.click();
-                                    clicked = true;
-                                }
-                            }
-                            return clicked ? 'EXPANDED_CLICKED' : 'EXPANDED_NOOP';
+                        if (hasDirectClassBtn) return 'DIRECT_READY';
+
+                        let chosen = null;
+                        const expSels = ["button[data-testid='OutlineButton']", "button[aria-label*='Kup bilet']"];
+                        for (const s of expSels) {
+                            const b = card.querySelector(s);
+                            if (isEnabledVisible(b)) { chosen = b; break; }
                         }
-                        return 'DIRECT_READY';
-                    })($matchedIdx, $ticketClass);
-                    """.trimIndent()
-                )
-                val expandStatus = decodeJsString(expandAndClassRaw)
+                        if (!chosen) {
+                            for (const b of card.querySelectorAll("button, [role='button']")) {
+                                if (!isEnabledVisible(b)) continue;
+                                const t = ((b.innerText || '') + ' ' + (b.getAttribute('aria-label') || '')).toLowerCase();
+                                if (isSummaryBtn(t) || t.includes('kup bilet') || t.includes('wybierz')) {
+                                    chosen = b;
+                                    break;
+                                }
+                            }
+                        }
+                        if (!chosen) {
+                            for (const b of card.querySelectorAll("button, [role='button']")) {
+                                if (isEnabledVisible(b)) { chosen = b; break; }
+                            }
+                        }
+                        if (!chosen) return 'EXPANDED_NOOP';
+                        try { chosen.scrollIntoView({ block: 'center' }); } catch (e) {}
+                        chosen.click();
+                        const lbl = (chosen.tagName + ':' + (chosen.innerText || chosen.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim()).slice(0, 90);
+                        return 'EXPANDED_CLICKED:' + lbl;
+                    })($matchedIdx);
+                """.trimIndent()
+
+                val expandStatus = decodeJsString(evalJs(worker.webView, expandCardJs))
                 Log.i(TAG, "[$fromStation -> $toStation] Expand status: $expandStatus")
                 if (expandStatus == "NO_CARD") {
                     throw GraphicReservationException("SCRAPE_ERROR: Kafelek pociągu zniknął dla $fromStation -> $toStation.")
                 }
 
-                // Wait briefly for class buttons to render after expanding (especially mobile drawer/card)
+                // Wait for class buttons to render after expanding (re-try expand up to 3 times if card stays closed)
                 var selectClassResult = ""
+                var lastExpandAt = System.currentTimeMillis()
+                var reExpandAttempts = 0
                 val classWaitStart = System.currentTimeMillis()
-                while (System.currentTimeMillis() - classWaitStart < 3_500L) {
+                while (System.currentTimeMillis() - classWaitStart < 6_500L) {
+                    coroutineScope { ensureActive() }
                     delay(300)
                     selectClassResult = decodeJsString(
                         evalJs(
@@ -676,10 +749,20 @@ class EbiletWebViewScanner(
                     if (selectClassResult.startsWith("CLICKED:") || selectClassResult == "SOLD_OUT") {
                         break
                     }
+                    val nowMs = System.currentTimeMillis()
+                    if (expandStatus != "DIRECT_READY" && reExpandAttempts < 3 && (nowMs - lastExpandAt >= 900L)) {
+                        reExpandAttempts++
+                        lastExpandAt = nowMs
+                        val retryExp = decodeJsString(evalJs(worker.webView, expandCardJs))
+                        Log.i(TAG, "[$fromStation -> $toStation] Retry expand #$reExpandAttempts: $retryExp")
+                    }
                 }
                 Log.i(TAG, "[$fromStation -> $toStation] Class selection: $selectClassResult")
                 if (selectClassResult == "SOLD_OUT") {
                     throw GraphicReservationException("BRAK_MIEJSC_KLASA_$ticketClass: Wyczerpano pulę miejsc w Klasie $ticketClass na tym odcinku.")
+                }
+                if (!selectClassResult.startsWith("CLICKED:")) {
+                    throw GraphicReservationException("SCRAPE_ERROR: Nie udało się wybrać Klasy $ticketClass dla $fromStation -> $toStation ($selectClassResult)")
                 }
 
                 // Wait and click seatmap button on Your Journey page + re-install hook
@@ -760,6 +843,7 @@ class EbiletWebViewScanner(
                 }
 
                 val sklad = freshState.skladJson
+                var incompleteGrmStatus: String? = null
                 Log.i(TAG, "[$fromStation -> $toStation] GRM wait finished: sklad=${sklad != null}, svgPrefix=${freshState.svgPrefix != null}, cachedSvgs=${freshState.svgsByWagon.keys}")
                 if (sklad != null) {
                     val (targets, hasKey) = GrmParser.selectGrmTargetWagons(sklad, ticketClass)
@@ -784,39 +868,72 @@ class EbiletWebViewScanner(
                             val fetchJs = """
                                 (async function(items) {
                                     window.__iccSvgBatch = null;
-                                    const out = {};
-                                    await Promise.all(items.map(async (it) => {
-                                        try {
-                                            const ctrl = new AbortController();
-                                            const timer = setTimeout(() => ctrl.abort(), 6500);
-                                            const r = await fetch(it.url, { method: 'GET', credentials: 'include', signal: ctrl.signal });
-                                            clearTimeout(timer);
-                                            if (r.ok) out[it.wNo] = await r.text();
-                                        } catch (e) {}
+                                    const hdrs = window.__iccGrmHeaders || {};
+                                    const okList = [];
+                                    const failList = [];
+                                    let idx = 0;
+
+                                    const fetchOne = async (it) => {
+                                        for (let tryNum = 0; tryNum < 2; tryNum++) {
+                                            try {
+                                                const ctrl = new AbortController();
+                                                const timer = setTimeout(() => ctrl.abort(), 9000);
+                                                const r = await fetch(it.url, {
+                                                    method: 'GET',
+                                                    credentials: 'include',
+                                                    headers: hdrs,
+                                                    signal: ctrl.signal
+                                                });
+                                                clearTimeout(timer);
+                                                if (r.ok) {
+                                                    const txt = await r.text();
+                                                    if (txt && txt.toLowerCase().includes('<svg')) {
+                                                        if (window.AndroidGrmBridge) {
+                                                            window.AndroidGrmBridge.onSvg(it.url, txt);
+                                                        }
+                                                        okList.push(it.wNo);
+                                                        return;
+                                                    }
+                                                } else if (tryNum === 1) {
+                                                    failList.push(it.wNo + ':' + r.status);
+                                                    return;
+                                                }
+                                            } catch (e) {
+                                                if (tryNum === 1) {
+                                                    failList.push(it.wNo + ':err');
+                                                    return;
+                                                }
+                                            }
+                                            await new Promise(res => setTimeout(res, 200));
+                                        }
+                                    };
+
+                                    const workerCount = Math.min(3, items.length);
+                                    await Promise.all(Array.from({ length: workerCount }, async () => {
+                                        while (idx < items.length) {
+                                            const current = items[idx++];
+                                            await fetchOne(current);
+                                        }
                                     }));
-                                    window.__iccSvgBatch = JSON.stringify(out);
+
+                                    window.__iccSvgBatch = JSON.stringify({ done: true, ok: okList, fail: failList });
                                     return true;
                                 })(${reqArr});
                             """.trimIndent()
                             evalJs(worker.webView, fetchJs)
 
                             val batchWait = System.currentTimeMillis()
-                            while (System.currentTimeMillis() - batchWait < 7_500L) {
+                            var batchStatusRaw = ""
+                            while (System.currentTimeMillis() - batchWait < 20_000L) {
+                                coroutineScope { ensureActive() }
                                 val doneRaw = evalJs(worker.webView, "window.__iccSvgBatch")
                                 if (doneRaw != "null" && doneRaw.isNotBlank()) {
-                                    val mapJson = JSONObject(decodeJsString(doneRaw))
-                                    val keys = mapJson.keys()
-                                    while (keys.hasNext()) {
-                                        val k = keys.next()
-                                        val svgTxt = mapJson.optString(k, "")
-                                        if (svgTxt.isNotBlank()) {
-                                            freshState.svgsByWagon[k] = svgTxt
-                                        }
-                                    }
+                                    batchStatusRaw = decodeJsString(doneRaw)
                                     break
                                 }
-                                delay(150)
+                                delay(200)
                             }
+                            Log.i(TAG, "[$fromStation -> $toStation] SVG batch status=$batchStatusRaw, svgsByWagon=${freshState.svgsByWagon.keys}")
                         }
 
                         val result = LinkedHashMap<String, List<String>>()
@@ -828,7 +945,18 @@ class EbiletWebViewScanner(
                         }
                         if (result.size == targets.size) {
                             Log.i(TAG, "[$fromStation -> $toStation] Parsed seats OK: ${result.mapValues { it.value.size }}")
+                            if (result.values.none { it.isNotEmpty() }) {
+                                throw GraphicReservationException(
+                                    "BRAK_MIEJSC_KLASA_$ticketClass: Wszystkie dostępne wagony Klasy $ticketClass (${result.keys.joinToString(", ")}) mają 0 wolnych miejsc."
+                                )
+                            }
                             return result
+                        } else if (result.values.any { it.isNotEmpty() }) {
+                            Log.w(TAG, "[$fromStation -> $toStation] Parsed partial GRM wagons ${result.size}/${targets.size}, but found free seats - returning result: ${result.mapValues { it.value.size }}")
+                            return result
+                        } else {
+                            Log.w(TAG, "[$fromStation -> $toStation] Incomplete GRM fetch ${result.size}/${targets.size} with 0 seats; falling back to DOM")
+                            incompleteGrmStatus = "${result.size}/${targets.size}"
                         }
                     }
                 }
@@ -872,10 +1000,10 @@ class EbiletWebViewScanner(
                     }
                 }
 
-                val errMsg = if (!schemaClicked) {
-                    "SCRAPE_ERROR: Brak przycisku otwarcia schematu dla $fromStation -> $toStation."
-                } else {
-                    "BRAK_MIEJSC_KLASA_$ticketClass: Brak wolnych miejsc na schemacie."
+                val errMsg = when {
+                    !schemaClicked -> "SCRAPE_ERROR: Brak przycisku otwarcia schematu dla $fromStation -> $toStation."
+                    incompleteGrmStatus != null -> "SCRAPE_ERROR: Niepełny odczyt schematu GRM ($incompleteGrmStatus wagonów) dla $fromStation -> $toStation."
+                    else -> "BRAK_MIEJSC_KLASA_$ticketClass: Brak wolnych miejsc na schemacie."
                 }
                 throw GraphicReservationException(errMsg)
             } catch (e: CancellationException) {

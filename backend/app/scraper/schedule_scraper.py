@@ -8,9 +8,12 @@ Implements 2-tier architecture:
 2. Offline / Cached route registry in SQLite for popular corridors and train lines
 """
 import concurrent.futures
+import functools
 import json
 import logging
 import re
+import ssl
+import sys
 from datetime import datetime
 from html import unescape
 from typing import List, Optional, Dict, Tuple
@@ -39,6 +42,39 @@ DEFAULT_HEADERS = {
 }
 
 FULL_DAY_WINDOWS = ["00:00", "04:30", "09:00", "13:30", "18:00", "21:30"]
+
+
+@functools.lru_cache(maxsize=1)
+def get_system_ssl_context() -> ssl.SSLContext:
+    """
+    Returns an SSLContext that trusts the OS system certificate store
+    (including Windows ROOT/CA stores) while keeping full TLS verification enabled.
+    """
+    try:
+        import truststore  # type: ignore[import-not-found]
+        return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    except ImportError:
+        pass
+
+    ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+    if sys.platform == "win32" and hasattr(ssl, "enum_certificates"):
+        purpose_oid = ssl.Purpose.SERVER_AUTH.oid
+        der_certs = bytearray()
+        for store_name in ("ROOT", "CA"):
+            try:
+                for cert, encoding, trust in ssl.enum_certificates(store_name):
+                    if encoding == "x509_asn" and (
+                        trust is True or (isinstance(trust, set) and purpose_oid in trust)
+                    ):
+                        der_certs.extend(cert)
+            except Exception as exc:
+                logger.debug("Could not enumerate Windows %s certificate store: %s", store_name, exc)
+        if der_certs:
+            try:
+                ctx.load_verify_locations(cadata=bytes(der_certs))
+            except Exception as exc:
+                logger.debug("Could not load Windows system certificates into SSLContext: %s", exc)
+    return ctx
 
 
 def clean_pkp_train_name(raw: str) -> str:
@@ -278,7 +314,14 @@ def _fetch_single_window_trains(
         params["REQ0HafasNoOfChanges"] = "0"
 
     try:
-        r = httpx.get(url, params=params, headers=DEFAULT_HEADERS, follow_redirects=True, timeout=10)
+        r = httpx.get(
+            url,
+            params=params,
+            headers=DEFAULT_HEADERS,
+            follow_redirects=True,
+            timeout=10,
+            verify=get_system_ssl_context(),
+        )
         if r.status_code != 200:
             return []
 
@@ -455,7 +498,14 @@ def find_ti_url_for_train(
             "start": "start",
         }
         try:
-            r = httpx.get(url, params=params, headers=DEFAULT_HEADERS, follow_redirects=True, timeout=10)
+            r = httpx.get(
+                url,
+                params=params,
+                headers=DEFAULT_HEADERS,
+                follow_redirects=True,
+                timeout=10,
+                verify=get_system_ssl_context(),
+            )
             if r.status_code != 200:
                 return None
             return _extract_ti_url_from_sq_html(r.text, train_no)
@@ -657,7 +707,13 @@ class TrainRouteExtractor:
             return []
 
         try:
-            r = httpx.get(ti_url, headers=DEFAULT_HEADERS, timeout=self.timeout, follow_redirects=True)
+            r = httpx.get(
+                ti_url,
+                headers=DEFAULT_HEADERS,
+                timeout=self.timeout,
+                follow_redirects=True,
+                verify=get_system_ssl_context(),
+            )
             if r.status_code != 200:
                 return []
             stops = self.parse_stops_from_ti_html(r.text, from_station, to_station, from_eva, to_eva)

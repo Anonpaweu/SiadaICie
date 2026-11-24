@@ -19,6 +19,7 @@ htmlcov/
 *.db
 *.sqlite3
 !backend/app/db/schema.sql
+!android/app/src/main/assets/stations.db
 
 # Temporary and scratch scripts
 scratch/
@@ -39,5 +40,16 @@ logs/
 # Ignored user folders
 Scraper_G_Trends/
 screeny i html krok po kroku strony icc/
+
+# Android local build and secrets
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/keystore.properties
+*.jks
+*.keystore
+android/.idea/
+
 
 

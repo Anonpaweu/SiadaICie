@@ -6,6 +6,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import pl.iccbagno.app.domain.SeatFilterPrefs
 import pl.iccbagno.app.scraper.GrmParser
 
 class GrmParserTest {
@@ -111,5 +112,50 @@ class GrmParserTest {
         assertEquals(0, GrmParser.computeArrivalDayOffset("23:55", "00:05", 1))
         assertEquals(1, GrmParser.computeArrivalDayOffset("00:15", "00:17", 1))
         assertEquals(0, GrmParser.computeArrivalDayOffset("15:20", "15:22", 0))
+    }
+
+    @Test
+    fun parseGrmWagonSvgWithMeta_extractsSpecialAndComfortTagsAndFilters() {
+        val svg = """
+            <svg xmlns:eic="http://www.intercity.pl/eic" viewBox="0 0 100 100">
+                <g aria-label="Miejsce 31 klasa 2, Wolne, niewybrane" data-class="second class">
+                    <eic:special ref="1" pl="Miejsce dla osoby z rowerem" carriagecode="24" iconcode="S1">Miejsce dla osoby z rowerem</eic:special>
+                    <text>31</text>
+                </g>
+                <g aria-label="Miejsce 32 klasa 2, okno, strefa ciszy, Wolne" data-class="second class"><text>32</text></g>
+                <g aria-label="Miejsce 33 klasa 2, miejsce dla kobiety w ciąży, Wolne"><text>33</text></g>
+                <g aria-label="Miejsce 34 klasa 2, miejsce dla osoby z dzieckiem, Wolne"><text>34</text></g>
+                <g aria-label="Miejsce 35 klasa 2, miejsce dla seniora, Wolne"><text>35</text></g>
+                <g aria-label="Miejsce 36 klasa 2, miejsce dla osoby o ograniczonej sprawności, Wolne"><text>36</text></g>
+                <g aria-label="Miejsce 37 klasa 2, dla osoby na wózku inwalidzkim, Wolne"><text>37</text></g>
+            </svg>
+        """.trimIndent()
+
+        val (allSeats, tagsMap) = GrmParser.parseGrmWagonSvgWithMeta(svg, ticketClass = 2, includeWheelchair = true)
+        assertEquals(listOf("31", "32", "33", "34", "35", "36", "37"), allSeats)
+        assertEquals(listOf(GrmParser.TAG_BIKE), tagsMap["31"])
+        assertEquals(listOf(GrmParser.TAG_QUIET, GrmParser.TAG_WINDOW), tagsMap["32"])
+        assertEquals(listOf(GrmParser.TAG_PREGNANT), tagsMap["33"])
+        assertEquals(listOf(GrmParser.TAG_CHILD), tagsMap["34"])
+        assertEquals(listOf(GrmParser.TAG_ELDERLY), tagsMap["35"])
+        assertEquals(listOf(GrmParser.TAG_PRM_ASSIST), tagsMap["36"])
+        assertEquals(listOf(GrmParser.TAG_WHEELCHAIR), tagsMap["37"])
+
+        // Default filters allow bike + normal/quiet, disallow pregnant/child/elderly/prm_assist/wheelchair
+        val defaultPrefs = SeatFilterPrefs()
+        assertTrue(GrmParser.isSeatAllowed(tagsMap["31"].orEmpty(), defaultPrefs))
+        assertTrue(GrmParser.isSeatAllowed(tagsMap["32"].orEmpty(), defaultPrefs))
+        assertFalse(GrmParser.isSeatAllowed(tagsMap["33"].orEmpty(), defaultPrefs))
+        assertFalse(GrmParser.isSeatAllowed(tagsMap["34"].orEmpty(), defaultPrefs))
+        assertFalse(GrmParser.isSeatAllowed(tagsMap["35"].orEmpty(), defaultPrefs))
+        assertFalse(GrmParser.isSeatAllowed(tagsMap["36"].orEmpty(), defaultPrefs))
+        assertFalse(GrmParser.isSeatAllowed(tagsMap["37"].orEmpty(), defaultPrefs))
+
+        // Priority hierarchy: normal/quiet (0) < bike (1) < pregnant/child/elderly/prm (2) < wheelchair (3)
+        assertEquals(0, GrmParser.seatPriorityTier(tagsMap["32"].orEmpty()))
+        assertEquals(1, GrmParser.seatPriorityTier(tagsMap["31"].orEmpty()))
+        assertEquals(2, GrmParser.seatPriorityTier(tagsMap["33"].orEmpty()))
+        assertEquals(2, GrmParser.seatPriorityTier(tagsMap["36"].orEmpty()))
+        assertEquals(3, GrmParser.seatPriorityTier(tagsMap["37"].orEmpty()))
     }
 }

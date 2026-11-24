@@ -34,6 +34,7 @@ import org.json.JSONObject
 import pl.iccbagno.app.data.StationsRepository
 import pl.iccbagno.app.domain.FullTrainAvailabilityMap
 import pl.iccbagno.app.domain.RouteHelpers
+import pl.iccbagno.app.domain.SeatFilterPrefs
 import pl.iccbagno.app.domain.SegmentAvailabilityMap
 import pl.iccbagno.app.domain.StationStop
 import java.io.ByteArrayInputStream
@@ -293,10 +294,45 @@ class EbiletWebViewScanner(
         val svgsByWagon = ConcurrentHashMap<String, String>()
     }
 
+    private data class WagonScanResult(
+        val carriages: Map<String, List<String>>,
+        val seatTags: Map<String, List<String>>
+    )
+
     private sealed class DirectGrmResult {
-        data class Ok(val carriages: Map<String, List<String>>) : DirectGrmResult()
+        data class Ok(val scan: WagonScanResult) : DirectGrmResult()
         data class SoldOut(val reason: String) : DirectGrmResult()
         data class Fallback(val reason: String, val isAuthOrBlocked: Boolean = false) : DirectGrmResult()
+    }
+
+    private fun parseSvgPayloads(
+        targets: List<Pair<String, String>>,
+        svgLookup: (String) -> String?,
+        ticketClass: Int
+    ): WagonScanResult {
+        val carriages = LinkedHashMap<String, List<String>>()
+        val seatTags = LinkedHashMap<String, List<String>>()
+        for ((wNo, _) in targets) {
+            val svgXml = svgLookup(wNo)
+            if (!svgXml.isNullOrBlank() && "<svg" in svgXml.lowercase()) {
+                val (seats, perSeatTags) = GrmParser.parseGrmWagonSvgWithMeta(
+                    svgXml = svgXml,
+                    ticketClass = ticketClass,
+                    includeWheelchair = true
+                )
+                carriages[wNo] = seats
+                for ((sNo, tags) in perSeatTags) {
+                    seatTags["${wNo}_$sNo"] = tags
+                }
+            }
+        }
+        return WagonScanResult(carriages = carriages, seatTags = seatTags)
+    }
+
+    private fun hasAnyAllowedSeat(scan: WagonScanResult, seatFilters: SeatFilterPrefs): Boolean {
+        return scan.carriages.any { (wNo, seats) ->
+            seats.any { sNo -> GrmParser.isSeatAllowed(scan.seatTags["${wNo}_$sNo"].orEmpty(), seatFilters) }
+        }
     }
 
     private class GrmJsBridge(
@@ -709,13 +745,8 @@ class EbiletWebViewScanner(
             null
         } ?: return DirectGrmResult.Fallback("invalid svg batch payload")
 
-        val result = LinkedHashMap<String, List<String>>()
-        for ((wNo, _) in targets) {
-            val svgXml = svgsObj.optString(wNo, "")
-            if (svgXml.isNotBlank() && "<svg" in svgXml.lowercase()) {
-                result[wNo] = GrmParser.parseGrmWagonSvg(svgXml, ticketClass)
-            }
-        }
+        val scan = parseSvgPayloads(targets, { wNo -> svgsObj.optString(wNo, "") }, ticketClass)
+        val result = scan.carriages
 
         return when {
             result.size == targets.size -> {
@@ -724,12 +755,12 @@ class EbiletWebViewScanner(
                         "BRAK_MIEJSC_KLASA_$ticketClass: Wszystkie dostępne wagony Klasy $ticketClass (${result.keys.joinToString(", ")}) mają 0 wolnych miejsc."
                     )
                 } else {
-                    DirectGrmResult.Ok(result)
+                    DirectGrmResult.Ok(scan)
                 }
             }
             result.values.any { it.isNotEmpty() } -> {
                 Log.w(TAG, "[DIRECT GRM] Partial wagons ${result.size}/${targets.size} for ${fromStop.name} -> ${toStop.name}, returning available seats")
-                DirectGrmResult.Ok(result)
+                DirectGrmResult.Ok(scan)
             }
             else -> {
                 DirectGrmResult.Fallback("incomplete SVGs ${result.size}/${targets.size}")
@@ -748,7 +779,7 @@ class EbiletWebViewScanner(
         fromEva: String,
         toEva: String,
         stepProgress: (String) -> Unit = {}
-    ): Map<String, List<String>> {
+    ): WagonScanResult {
         val freshState = SegmentCaptureState()
         worker.captureState = freshState
 
@@ -1306,13 +1337,8 @@ class EbiletWebViewScanner(
                             Log.i(TAG, "[$fromStation -> $toStation] SVG batch status=$batchStatusRaw, svgsByWagon=${freshState.svgsByWagon.keys}")
                         }
 
-                        val result = LinkedHashMap<String, List<String>>()
-                        for ((wNo, _) in targets) {
-                            val svgXml = freshState.svgsByWagon[wNo]
-                            if (!svgXml.isNullOrBlank()) {
-                                result[wNo] = GrmParser.parseGrmWagonSvg(svgXml, ticketClass)
-                            }
-                        }
+                        val scan = parseSvgPayloads(targets, { wNo -> freshState.svgsByWagon[wNo] }, ticketClass)
+                        val result = scan.carriages
                         if (result.size == targets.size) {
                             Log.i(TAG, "[$fromStation -> $toStation] Parsed seats OK: ${result.mapValues { it.value.size }}")
                             if (result.values.none { it.isNotEmpty() }) {
@@ -1320,10 +1346,10 @@ class EbiletWebViewScanner(
                                     "BRAK_MIEJSC_KLASA_$ticketClass: Wszystkie dostępne wagony Klasy $ticketClass (${result.keys.joinToString(", ")}) mają 0 wolnych miejsc."
                                 )
                             }
-                            return result
+                            return scan
                         } else if (result.values.any { it.isNotEmpty() }) {
                             Log.w(TAG, "[$fromStation -> $toStation] Parsed partial GRM wagons ${result.size}/${targets.size}, but found free seats - returning result: ${result.mapValues { it.value.size }}")
-                            return result
+                            return scan
                         } else {
                             Log.w(TAG, "[$fromStation -> $toStation] Incomplete GRM fetch ${result.size}/${targets.size} with 0 seats; falling back to DOM")
                             incompleteGrmStatus = "${result.size}/${targets.size}"
@@ -1344,7 +1370,7 @@ class EbiletWebViewScanner(
                     )
                 )
                 if (domSvgRaw.isNotBlank() && "<svg" in domSvgRaw.lowercase()) {
-                    val seats = GrmParser.parseGrmWagonSvg(domSvgRaw, ticketClass)
+                    val (seats, perSeatTags) = GrmParser.parseGrmWagonSvgWithMeta(domSvgRaw, ticketClass, includeWheelchair = true)
                     val activeWagon = decodeJsString(
                         evalJs(
                             worker.webView,
@@ -1366,7 +1392,8 @@ class EbiletWebViewScanner(
                         )
                     ).ifBlank { "1" }
                     if (seats.isNotEmpty()) {
-                        return mapOf(activeWagon to seats)
+                        val tagsMap = perSeatTags.mapKeys { (sNo, _) -> "${activeWagon}_$sNo" }
+                        return WagonScanResult(carriages = mapOf(activeWagon to seats), seatTags = tagsMap)
                     }
                 }
 
@@ -1403,7 +1430,8 @@ class EbiletWebViewScanner(
         trainNumber: String,
         departureTime: String? = null,
         ticketClass: Int = 2,
-        fastPath: Boolean = true
+        fastPath: Boolean = true,
+        seatFilters: SeatFilterPrefs = SeatFilterPrefs()
     ): FullTrainAvailabilityMap = coroutineScope {
         onProgress(5, "Pobieranie trasy i stacji pośrednich pociągu $trainNumber...")
         val stops = scheduleClient.resolveRealRoute(fromStation, toStation, travelDate, trainNumber, departureTime)
@@ -1469,7 +1497,7 @@ class EbiletWebViewScanner(
 
                 onProgress(14, "Szybkie sprawdzanie (Fast-Path): ${sFirst.name} -> ${sLast.name}...")
                 try {
-                    val fullCarriages = withTimeout(75_000L) {
+                    val fullScan = withTimeout(75_000L) {
                         scanSingleRelation(
                             worker = pool[0],
                             fromStation = sFirst.name,
@@ -1483,7 +1511,7 @@ class EbiletWebViewScanner(
                             stepProgress = { msg -> onProgress(16, "Fast-Path: $msg") }
                         )
                     }
-                    if (fullCarriages.values.any { it.isNotEmpty() }) {
+                    if (hasAnyAllowedSeat(fullScan, seatFilters)) {
                         onProgress(100, "Szybkie sprawdzanie: znaleziono wolne miejsca na 100% trasy bez przesiadek!")
                         return@coroutineScope FullTrainAvailabilityMap(
                             trainNumber = trainNumber,
@@ -1500,7 +1528,8 @@ class EbiletWebViewScanner(
                                     fromEva = sFirst.evaCode,
                                     toEva = sLast.evaCode,
                                     segmentDate = fullDate,
-                                    carriages = fullCarriages,
+                                    carriages = fullScan.carriages,
+                                    seatTags = fullScan.seatTags,
                                     status = "OK"
                                 )
                             )
@@ -1555,7 +1584,8 @@ class EbiletWebViewScanner(
                                         fromEva = sa.evaCode,
                                         toEva = sb.evaCode,
                                         segmentDate = subDate,
-                                        carriages = directRes.carriages,
+                                        carriages = directRes.scan.carriages,
+                                        seatTags = directRes.scan.seatTags,
                                         status = "OK"
                                     ) to false
                                 }
@@ -1570,7 +1600,7 @@ class EbiletWebViewScanner(
                         }
 
                         return try {
-                            val cars = withTimeout(60_000L) {
+                            val subScan = withTimeout(60_000L) {
                                 scanSingleRelation(
                                     worker = pool[0],
                                     fromStation = sa.name,
@@ -1583,7 +1613,7 @@ class EbiletWebViewScanner(
                                     toEva = sb.evaCode
                                 )
                             }
-                            if (cars.values.any { it.isNotEmpty() }) {
+                            if (subScan.carriages.values.any { it.isNotEmpty() }) {
                                 SegmentAvailabilityMap(
                                     segmentIndex = 0,
                                     fromStation = sa.name,
@@ -1593,7 +1623,8 @@ class EbiletWebViewScanner(
                                     fromEva = sa.evaCode,
                                     toEva = sb.evaCode,
                                     segmentDate = subDate,
-                                    carriages = cars,
+                                    carriages = subScan.carriages,
+                                    seatTags = subScan.seatTags,
                                     status = "OK"
                                 ) to false
                             } else null to false
@@ -1626,13 +1657,17 @@ class EbiletWebViewScanner(
 
                     val macroSegments = trySplit(0, numSegments, 1)
                     if (!macroSegments.isNullOrEmpty()) {
-                        val commonSeats = macroSegments
+                        val commonAllowedSeats = macroSegments
                             .map { seg ->
-                                seg.carriages.flatMap { (w, seats) -> seats.map { s -> w to s } }.toSet()
+                                seg.carriages.flatMap { (w, seats) ->
+                                    seats.filter { s ->
+                                        GrmParser.isSeatAllowed(seg.seatTags["${w}_$s"].orEmpty(), seatFilters)
+                                    }.map { s -> w to s }
+                                }.toSet()
                             }
                             .reduce { acc, set -> acc.intersect(set) }
 
-                        if (commonSeats.isNotEmpty()) {
+                        if (commonAllowedSeats.isNotEmpty()) {
                             val indexed = macroSegments.mapIndexed { idx, s -> s.copy(segmentIndex = idx) }
                             onProgress(100, "Szybkie sprawdzanie (podział trasy na ${indexed.size} odcinki): znaleziono miejsce na 100% trasy!")
                             return@coroutineScope FullTrainAvailabilityMap(
@@ -1661,11 +1696,12 @@ class EbiletWebViewScanner(
                 val segDur = RouteHelpers.computeDurationMin(sFrom, sTo, 30)
 
                 var carriages: Map<String, List<String>> = emptyMap()
+                var seatTags: Map<String, List<String>> = emptyMap()
                 var status = "OK"
                 var errReason: String? = null
 
                 try {
-                    carriages = withTimeout(75_000L) {
+                    val segScan = withTimeout(75_000L) {
                         scanSingleRelation(
                             worker = worker,
                             fromStation = sFrom.name,
@@ -1684,10 +1720,13 @@ class EbiletWebViewScanner(
                             }
                         )
                     }
+                    carriages = segScan.carriages
+                    seatTags = segScan.seatTags
                     if (carriages.values.none { it.isNotEmpty() }) {
                         status = "SOLD_OUT"
                         errReason = "Brak wolnych miejsc w Klasie $ticketClass."
                         carriages = emptyMap()
+                        seatTags = emptyMap()
                     }
                 } catch (e: CancellationException) {
                     throw e
@@ -1695,10 +1734,12 @@ class EbiletWebViewScanner(
                     status = if (GrmParser.isSoldOutReason(e.message)) "SOLD_OUT" else "SCRAPE_ERROR"
                     errReason = e.message
                     carriages = emptyMap()
+                    seatTags = emptyMap()
                 } catch (e: Exception) {
                     status = "SCRAPE_ERROR"
                     errReason = e.message
                     carriages = emptyMap()
+                    seatTags = emptyMap()
                 }
 
                 val doneNow = completed.incrementAndGet()
@@ -1715,6 +1756,7 @@ class EbiletWebViewScanner(
                     toEva = sTo.evaCode,
                     segmentDate = segDate,
                     carriages = carriages,
+                    seatTags = seatTags,
                     status = status,
                     errorReason = errReason
                 )
@@ -1766,7 +1808,7 @@ class EbiletWebViewScanner(
                                         val doneNow = completed.incrementAndGet()
                                         val pct = (progressBase + (doneNow * (96 - progressBase) / numSegments)).coerceIn(progressBase, 96)
                                         onProgress(pct, "Szybki odczyt GRM $doneNow/$numSegments: ${sFrom.name} -> ${sTo.name}")
-                                        Log.i(TAG, "[DIRECT GRM] Segment $idx OK (${sFrom.name} -> ${sTo.name}): ${directRes.carriages.mapValues { it.value.size }}")
+                                        Log.i(TAG, "[DIRECT GRM] Segment $idx OK (${sFrom.name} -> ${sTo.name}): ${directRes.scan.carriages.mapValues { it.value.size }}")
                                         resultsByIdx[idx] = SegmentAvailabilityMap(
                                             segmentIndex = idx,
                                             fromStation = sFrom.name,
@@ -1776,7 +1818,8 @@ class EbiletWebViewScanner(
                                             fromEva = sFrom.evaCode,
                                             toEva = sTo.evaCode,
                                             segmentDate = segDate,
-                                            carriages = directRes.carriages,
+                                            carriages = directRes.scan.carriages,
+                                            seatTags = directRes.scan.seatTags,
                                             status = "OK"
                                         )
                                     }
@@ -1855,7 +1898,7 @@ class EbiletWebViewScanner(
             ): SegmentAvailabilityMap? {
                 val mergedDur = RouteHelpers.computeDurationMin(stopFrom, stopTo, first.durationMin + second.durationMin)
                 return try {
-                    val cars = withTimeout(60_000L) {
+                    val mergedScan = withTimeout(60_000L) {
                         scanSingleRelation(
                             worker = pool[0],
                             fromStation = first.fromStation,
@@ -1868,6 +1911,7 @@ class EbiletWebViewScanner(
                             toEva = second.toEva
                         )
                     }
+                    val cars = mergedScan.carriages
                     SegmentAvailabilityMap(
                         segmentIndex = first.segmentIndex,
                         fromStation = first.fromStation,
@@ -1878,6 +1922,7 @@ class EbiletWebViewScanner(
                         toEva = second.toEva,
                         segmentDate = first.segmentDate,
                         carriages = cars,
+                        seatTags = mergedScan.seatTags,
                         status = if (cars.values.any { it.isNotEmpty() }) "OK" else "SOLD_OUT",
                         errorReason = if (cars.values.any { it.isNotEmpty() }) null else "Brak wolnych miejsc w Klasie $ticketClass."
                     )

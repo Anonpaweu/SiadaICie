@@ -1,6 +1,7 @@
 package pl.iccbagno.app.ui
 
 import android.app.Application
+import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
@@ -14,6 +15,7 @@ import kotlinx.coroutines.launch
 import pl.iccbagno.app.data.ScanHistoryItem
 import pl.iccbagno.app.data.ScanHistoryStore
 import pl.iccbagno.app.data.StationsRepository
+import pl.iccbagno.app.domain.SeatFilterPrefs
 import pl.iccbagno.app.domain.StationInfo
 import pl.iccbagno.app.domain.TrainConnection
 import pl.iccbagno.app.optimizer.OptimizationProfile
@@ -40,6 +42,7 @@ data class SearchUiState(
     val ticketClass: Int = 2,
     val profile: OptimizationProfile = OptimizationProfile.BALANCED,
     val directOnly: Boolean = true,
+    val seatFilters: SeatFilterPrefs = SeatFilterPrefs(),
     val forceFullScan: Boolean = false,
     val debugWebViewEnabled: Boolean = false,
     val isLoadingTrains: Boolean = false,
@@ -50,10 +53,14 @@ data class SearchUiState(
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
+    private val prefs = application.applicationContext.getSharedPreferences(
+        "ic_seat_optimizer_prefs",
+        Context.MODE_PRIVATE
+    )
     private val stationsRepo = StationsRepository(application.applicationContext)
     private val scheduleClient = ScheduleClient(stationsRepo)
 
-    private val _uiState = MutableStateFlow(SearchUiState())
+    private val _uiState = MutableStateFlow(loadInitialUiState())
     val uiState: StateFlow<SearchUiState> = _uiState.asStateFlow()
 
     val scanState: StateFlow<ScanProgressState> = ScanForegroundService.state
@@ -61,6 +68,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         ScanHistoryStore.refresh(application.applicationContext)
+    }
+
+    private fun loadInitialUiState(): SearchUiState {
+        return SearchUiState(
+            directOnly = prefs.getBoolean("direct_only", true),
+            seatFilters = SeatFilterPrefs(
+                allowBike = prefs.getBoolean("allow_bike", true),
+                allowPregnant = prefs.getBoolean("allow_pregnant", false),
+                allowChild = prefs.getBoolean("allow_child", false),
+                allowElderly = prefs.getBoolean("allow_elderly", false),
+                allowPrmAssist = prefs.getBoolean("allow_prm_assist", false),
+                allowWheelchair = prefs.getBoolean("allow_wheelchair", false)
+            )
+        )
+    }
+
+    private fun saveFilterPrefs(directOnly: Boolean, filters: SeatFilterPrefs) {
+        prefs.edit()
+            .putBoolean("direct_only", directOnly)
+            .putBoolean("allow_bike", filters.allowBike)
+            .putBoolean("allow_pregnant", filters.allowPregnant)
+            .putBoolean("allow_child", filters.allowChild)
+            .putBoolean("allow_elderly", filters.allowElderly)
+            .putBoolean("allow_prm_assist", filters.allowPrmAssist)
+            .putBoolean("allow_wheelchair", filters.allowWheelchair)
+            .apply()
     }
 
     private var fromSearchJob: Job? = null
@@ -134,14 +167,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setProfile(profile: OptimizationProfile) {
+        val filters = _uiState.value.seatFilters
         _uiState.update { it.copy(profile = profile, selectedStrategyIdx = 0) }
         viewModelScope.launch(Dispatchers.Default) {
-            ScanForegroundService.recomputeProfile(profile)
+            ScanForegroundService.recomputeStrategies(profile, filters)
         }
     }
 
     fun setDirectOnly(directOnly: Boolean) {
+        val filters = _uiState.value.seatFilters
         _uiState.update { it.copy(directOnly = directOnly) }
+        saveFilterPrefs(directOnly, filters)
+    }
+
+    fun updateSeatFilters(filters: SeatFilterPrefs) {
+        val st = _uiState.value
+        _uiState.update { it.copy(seatFilters = filters, selectedStrategyIdx = 0) }
+        saveFilterPrefs(st.directOnly, filters)
+        viewModelScope.launch(Dispatchers.Default) {
+            ScanForegroundService.recomputeStrategies(st.profile, filters)
+        }
     }
 
     fun setForceFullScan(forceFull: Boolean) {
@@ -165,8 +210,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openHistoryItem(item: ScanHistoryItem) {
-        val profile = _uiState.value.profile
-        ScanForegroundService.loadFromHistory(item, profile)
+        val st = _uiState.value
+        ScanForegroundService.loadFromHistory(item, st.profile, st.seatFilters)
         _uiState.update {
             it.copy(
                 selectedStrategyIdx = 0,
@@ -235,7 +280,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             depTime = train.departure,
             ticketClass = st.ticketClass,
             profile = st.profile,
-            forceFull = st.forceFullScan
+            forceFull = st.forceFullScan,
+            seatFilters = st.seatFilters
         )
     }
 

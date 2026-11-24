@@ -3,9 +3,30 @@ package pl.iccbagno.app.scraper
 import org.json.JSONObject
 import org.jsoup.Jsoup
 import org.jsoup.parser.Parser
+import pl.iccbagno.app.domain.SeatFilterPrefs
 
 object GrmParser {
     const val TARGET_CLASS = 2
+
+    const val TAG_BIKE = "BIKE"
+    const val TAG_PREGNANT = "PREGNANT"
+    const val TAG_CHILD = "CHILD"
+    const val TAG_ELDERLY = "ELDERLY"
+    const val TAG_PRM_ASSIST = "PRM_ASSIST"
+    const val TAG_WHEELCHAIR = "WHEELCHAIR"
+    const val TAG_QUIET = "QUIET"
+    const val TAG_WINDOW = "WINDOW"
+    const val TAG_AISLE = "AISLE"
+    const val TAG_TABLE = "TABLE"
+
+    private val RESTRICTED_TAGS = setOf(
+        TAG_BIKE,
+        TAG_PREGNANT,
+        TAG_CHILD,
+        TAG_ELDERLY,
+        TAG_PRM_ASSIST,
+        TAG_WHEELCHAIR
+    )
 
     private val PRM_WHEELCHAIR_MARKERS = listOf(
         "na wózku",
@@ -43,6 +64,53 @@ object GrmParser {
         return PRM_WHEELCHAIR_MARKERS.any { it in low }
     }
 
+    fun isRestrictedTag(tag: String): Boolean = tag in RESTRICTED_TAGS
+
+    fun formatSeatTagPl(tag: String): String = when (tag) {
+        TAG_BIKE -> "Rower"
+        TAG_PREGNANT -> "Kobieta w ciąży"
+        TAG_CHILD -> "Z dzieckiem"
+        TAG_ELDERLY -> "Senior"
+        TAG_PRM_ASSIST -> "Niepełnosprawność"
+        TAG_WHEELCHAIR -> "Osoba na wózku"
+        TAG_QUIET -> "Strefa ciszy"
+        TAG_WINDOW -> "Okno"
+        TAG_AISLE -> "Korytarz"
+        TAG_TABLE -> "Stolik"
+        else -> tag
+    }
+
+    /**
+     * Tier hierarchy:
+     * 0 = Normal / Quiet zone / comfort-only
+     * 1 = Bike
+     * 2 = Pregnant / Child / Elderly / PRM without wheelchair
+     * 3 = Wheelchair
+     */
+    fun seatPriorityTier(tags: List<String>): Int = when {
+        TAG_WHEELCHAIR in tags -> 3
+        TAG_PREGNANT in tags || TAG_CHILD in tags || TAG_ELDERLY in tags || TAG_PRM_ASSIST in tags -> 2
+        TAG_BIKE in tags -> 1
+        else -> 0
+    }
+
+    fun seatTierPenalty(tags: List<String>): Double = when (seatPriorityTier(tags)) {
+        1 -> 3.0
+        2 -> 8.0
+        3 -> 15.0
+        else -> 0.0
+    }
+
+    fun isSeatAllowed(tags: List<String>, prefs: SeatFilterPrefs): Boolean {
+        if (TAG_WHEELCHAIR in tags && !prefs.allowWheelchair) return false
+        if (TAG_PREGNANT in tags && !prefs.allowPregnant) return false
+        if (TAG_CHILD in tags && !prefs.allowChild) return false
+        if (TAG_ELDERLY in tags && !prefs.allowElderly) return false
+        if (TAG_PRM_ASSIST in tags && !prefs.allowPrmAssist) return false
+        if (TAG_BIKE in tags && !prefs.allowBike) return false
+        return true
+    }
+
     fun isSoldOutReason(reason: String?): Boolean {
         val low = (reason ?: "").lowercase()
         return SOLD_OUT_MARKERS.any { it in low }
@@ -54,10 +122,19 @@ object GrmParser {
     }
 
     fun parseGrmWagonSvg(svgXml: String, ticketClass: Int = TARGET_CLASS): List<String> {
-        if (svgXml.isBlank()) return emptyList()
+        return parseGrmWagonSvgWithMeta(svgXml, ticketClass, includeWheelchair = false).first
+    }
+
+    fun parseGrmWagonSvgWithMeta(
+        svgXml: String,
+        ticketClass: Int = TARGET_CLASS,
+        includeWheelchair: Boolean = true
+    ): Pair<List<String>, Map<String, List<String>>> {
+        if (svgXml.isBlank()) return emptyList<String>() to emptyMap()
 
         val isClass1 = ticketClass == 1
         val seats = HashSet<String>()
+        val seatTags = LinkedHashMap<String, LinkedHashSet<String>>()
 
         fun shouldSkipClass(ariaL: String, dClassL: String): Boolean {
             return if (isClass1) {
@@ -90,7 +167,30 @@ object GrmParser {
             if ("wolne" !in ariaL) continue
             if ("niedostepne" in ariaL || "niedostępne" in ariaL) continue
             if (shouldSkipClass(ariaL, dClassL)) continue
-            if (isPrmWheelchairLabel(ariaL)) continue
+
+            val textParts = ArrayList<String>(4)
+            textParts.add(ariaL)
+            var iconCode = ""
+            var carriageCode = ""
+            for (el in g.allElements) {
+                val tName = el.tagName()
+                if (tName.endsWith("special", ignoreCase = true)) {
+                    val pl = el.attr("pl").trim()
+                    val en = el.attr("en").trim()
+                    val txt = el.text().trim()
+                    if (pl.isNotEmpty()) textParts.add(pl.lowercase())
+                    if (en.isNotEmpty()) textParts.add(en.lowercase())
+                    if (txt.isNotEmpty()) textParts.add(txt.lowercase())
+                    if (iconCode.isEmpty()) iconCode = el.attr("iconcode").trim().uppercase()
+                    if (carriageCode.isEmpty()) carriageCode = el.attr("carriagecode").trim()
+                } else if (tName.equals("title", ignoreCase = true)) {
+                    val txt = el.text().trim()
+                    if (txt.isNotEmpty()) textParts.add(txt.lowercase())
+                }
+            }
+            val combined = textParts.joinToString(" | ")
+            val isWheelchair = isPrmWheelchairLabel(combined) || iconCode in setOf("6", "S6") || carriageCode == "6"
+            if (isWheelchair && !includeWheelchair) continue
 
             var num = g.selectFirst("text")?.text()?.trim().orEmpty()
             if (num.isEmpty() || num.toIntOrNull() == null) {
@@ -98,10 +198,48 @@ object GrmParser {
             }
             if (num.toIntOrNull() != null) {
                 seats.add(num)
+                val tagSet = seatTags.getOrPut(num) { LinkedHashSet() }
+                if (isWheelchair) {
+                    tagSet.add(TAG_WHEELCHAIR)
+                } else if ("niepełnosprawn" in combined || "niepelnosprawn" in combined || "ograniczon" in combined) {
+                    tagSet.add(TAG_PRM_ASSIST)
+                }
+                if ("rower" in combined || iconCode == "S1" || carriageCode == "24") {
+                    tagSet.add(TAG_BIKE)
+                }
+                if ("w ciąży" in combined || "w ciazy" in combined || "ciężarn" in combined || "ciezarn" in combined) {
+                    tagSet.add(TAG_PREGNANT)
+                }
+                if ("z dzieckiem" in combined || "matk" in combined || "rodzin" in combined) {
+                    tagSet.add(TAG_CHILD)
+                }
+                if ("starsz" in combined || "senior" in combined) {
+                    tagSet.add(TAG_ELDERLY)
+                }
+                if ("strefa ciszy" in combined || "ciszy" in combined) {
+                    tagSet.add(TAG_QUIET)
+                }
+                if ("okno" in combined) {
+                    tagSet.add(TAG_WINDOW)
+                }
+                if ("korytarz" in combined) {
+                    tagSet.add(TAG_AISLE)
+                }
+                if ("stolik" in combined) {
+                    tagSet.add(TAG_TABLE)
+                }
             }
         }
 
-        return seats.sortedBy { it.toIntOrNull() ?: Int.MAX_VALUE }
+        val sortedSeats = seats.sortedBy { it.toIntOrNull() ?: Int.MAX_VALUE }
+        val finalTags = LinkedHashMap<String, List<String>>()
+        for (s in sortedSeats) {
+            val tags = seatTags[s]?.toList().orEmpty()
+            if (tags.isNotEmpty()) {
+                finalTags[s] = tags
+            }
+        }
+        return sortedSeats to finalTags
     }
 
     fun selectGrmTargetWagons(

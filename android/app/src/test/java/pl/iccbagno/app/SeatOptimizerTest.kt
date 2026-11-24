@@ -4,11 +4,13 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import pl.iccbagno.app.domain.FullTrainAvailabilityMap
+import pl.iccbagno.app.domain.SeatFilterPrefs
 import pl.iccbagno.app.domain.SegmentAvailabilityMap
 import pl.iccbagno.app.optimizer.OptimizationProfile
 import pl.iccbagno.app.optimizer.OptimizerConfig
 import pl.iccbagno.app.optimizer.SeatMeta
 import pl.iccbagno.app.optimizer.SeatOptimizer
+import pl.iccbagno.app.scraper.GrmParser
 
 class SeatOptimizerTest {
 
@@ -97,5 +99,96 @@ class SeatOptimizerTest {
         assertEquals(0, strategies[0].transfersCount)
         assertTrue(strategies[0].steps[0].bookingUrl?.contains("swyj=5100065") == true)
         assertTrue(strategies[0].steps[0].bookingUrl?.contains("time=15:10") == true)
+    }
+
+    @Test
+    fun seatHierarchyAndFiltersRespectNormalQuietBikeSpecialWheelchair() {
+        // Compartment 3: seats 31 (BIKE), 32 (WHEELCHAIR), 33 (ELDERLY), 34 (QUIET - equivalent availability)
+        // Ensures equivalence pruning keeps tier 0 quiet/normal seat 34 rather than pruning it behind 31/32/33.
+        val availMap = FullTrainAvailabilityMap(
+            trainNumber = "IC 6122",
+            travelDate = "2026-11-29",
+            fastPathUsed = true,
+            totalRouteSegments = 1,
+            segments = listOf(
+                SegmentAvailabilityMap(
+                    segmentIndex = 0,
+                    fromStation = "Wrocław Główny",
+                    toStation = "Warszawa Centralna",
+                    departureTime = "17:27",
+                    durationMin = 261,
+                    carriages = mapOf("7" to listOf("31", "32", "33", "34")),
+                    seatTags = mapOf(
+                        "7_31" to listOf(GrmParser.TAG_BIKE),
+                        "7_32" to listOf(GrmParser.TAG_WHEELCHAIR),
+                        "7_33" to listOf(GrmParser.TAG_ELDERLY),
+                        "7_34" to listOf(GrmParser.TAG_QUIET)
+                    )
+                )
+            )
+        )
+        val matrix = SeatOptimizer.availabilityMapToMatrix(availMap)
+
+        // With all allowed, quiet/normal seat 34 must beat bike 31, elderly 33, wheelchair 32
+        val allAllowed = SeatFilterPrefs(
+            allowBike = true,
+            allowPregnant = true,
+            allowChild = true,
+            allowElderly = true,
+            allowPrmAssist = true,
+            allowWheelchair = true
+        )
+        val sAll = SeatOptimizer.solveTopStrategies(
+            matrix.availabilityMatrix,
+            matrix.seatsMeta,
+            matrix.stationNames,
+            matrix.segmentDurations,
+            config = OptimizerConfig(seatFilters = allAllowed)
+        )
+        assertEquals("34", sAll[0].steps[0].seatNo)
+
+        // When only bike + elderly + wheelchair exist (no normal), bike (31) must beat elderly (33) and wheelchair (32)
+        val noNormalMap = availMap.copy(
+            segments = listOf(
+                availMap.segments[0].copy(carriages = mapOf("7" to listOf("31", "32", "33")))
+            )
+        )
+        val noNormalMatrix = SeatOptimizer.availabilityMapToMatrix(noNormalMap)
+        val sBike = SeatOptimizer.solveTopStrategies(
+            noNormalMatrix.availabilityMatrix,
+            noNormalMatrix.seatsMeta,
+            noNormalMatrix.stationNames,
+            noNormalMatrix.segmentDurations,
+            config = OptimizerConfig(seatFilters = allAllowed)
+        )
+        assertEquals("31", sBike[0].steps[0].seatNo)
+        assertEquals(listOf(GrmParser.TAG_BIKE), sBike[0].steps[0].seatTags)
+
+        // When default prefs active and only seat 33 (elderly) & 32 (wheelchair) are free -> empty strategies
+        val restrictedOnlyMap = availMap.copy(
+            segments = listOf(
+                availMap.segments[0].copy(carriages = mapOf("7" to listOf("32", "33")))
+            )
+        )
+        val restrictedMatrix = SeatOptimizer.availabilityMapToMatrix(restrictedOnlyMap)
+        val sNone = SeatOptimizer.solveTopStrategies(
+            restrictedMatrix.availabilityMatrix,
+            restrictedMatrix.seatsMeta,
+            restrictedMatrix.stationNames,
+            restrictedMatrix.segmentDurations,
+            config = OptimizerConfig(seatFilters = SeatFilterPrefs())
+        )
+        assertTrue(sNone.isEmpty())
+
+        // Enabling allowElderly picks seat 33 over disabled wheelchair seat 32
+        val sElderly = SeatOptimizer.solveTopStrategies(
+            restrictedMatrix.availabilityMatrix,
+            restrictedMatrix.seatsMeta,
+            restrictedMatrix.stationNames,
+            restrictedMatrix.segmentDurations,
+            config = OptimizerConfig(seatFilters = SeatFilterPrefs(allowElderly = true))
+        )
+        assertEquals("33", sElderly[0].steps[0].seatNo)
+        assertEquals(listOf(GrmParser.TAG_ELDERLY), sElderly[0].steps[0].seatTags)
     }
 }

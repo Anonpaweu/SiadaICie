@@ -26,11 +26,13 @@ import pl.iccbagno.app.data.ScanHistoryItem
 import pl.iccbagno.app.data.ScanHistoryStore
 import pl.iccbagno.app.data.StationsRepository
 import pl.iccbagno.app.domain.FullTrainAvailabilityMap
+import pl.iccbagno.app.domain.SeatFilterPrefs
 import pl.iccbagno.app.optimizer.OptimizationProfile
 import pl.iccbagno.app.optimizer.OptimizationStrategy
 import pl.iccbagno.app.optimizer.OptimizerConfig
 import pl.iccbagno.app.optimizer.SeatOptimizer
 import pl.iccbagno.app.scraper.EbiletWebViewScanner
+import pl.iccbagno.app.scraper.GrmParser
 import pl.iccbagno.app.scraper.ScheduleClient
 
 data class ScanProgressState(
@@ -69,9 +71,18 @@ class ScanForegroundService : Service() {
         const val EXTRA_CLASS = "ticket_class"
         const val EXTRA_PROFILE = "profile"
         const val EXTRA_FORCE_FULL = "force_full"
+        const val EXTRA_ALLOW_BIKE = "allow_bike"
+        const val EXTRA_ALLOW_PREGNANT = "allow_pregnant"
+        const val EXTRA_ALLOW_CHILD = "allow_child"
+        const val EXTRA_ALLOW_ELDERLY = "allow_elderly"
+        const val EXTRA_ALLOW_PRM_ASSIST = "allow_prm_assist"
+        const val EXTRA_ALLOW_WHEELCHAIR = "allow_wheelchair"
 
         private val _state = MutableStateFlow(ScanProgressState())
         val state: StateFlow<ScanProgressState> = _state.asStateFlow()
+
+        @Volatile
+        private var currentSeatFilters: SeatFilterPrefs = SeatFilterPrefs()
 
         fun startScan(
             context: Context,
@@ -82,8 +93,10 @@ class ScanForegroundService : Service() {
             depTime: String,
             ticketClass: Int,
             profile: OptimizationProfile,
-            forceFull: Boolean
+            forceFull: Boolean,
+            seatFilters: SeatFilterPrefs = SeatFilterPrefs()
         ) {
+            currentSeatFilters = seatFilters
             val intent = Intent(context, ScanForegroundService::class.java).apply {
                 action = ACTION_START
                 putExtra(EXTRA_FROM, fromStation)
@@ -94,6 +107,12 @@ class ScanForegroundService : Service() {
                 putExtra(EXTRA_CLASS, ticketClass)
                 putExtra(EXTRA_PROFILE, profile.name)
                 putExtra(EXTRA_FORCE_FULL, forceFull)
+                putExtra(EXTRA_ALLOW_BIKE, seatFilters.allowBike)
+                putExtra(EXTRA_ALLOW_PREGNANT, seatFilters.allowPregnant)
+                putExtra(EXTRA_ALLOW_CHILD, seatFilters.allowChild)
+                putExtra(EXTRA_ALLOW_ELDERLY, seatFilters.allowElderly)
+                putExtra(EXTRA_ALLOW_PRM_ASSIST, seatFilters.allowPrmAssist)
+                putExtra(EXTRA_ALLOW_WHEELCHAIR, seatFilters.allowWheelchair)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
@@ -110,15 +129,27 @@ class ScanForegroundService : Service() {
         }
 
         fun recomputeProfile(profile: OptimizationProfile) {
-            val current = _state.value
-            val map = current.availabilityMap ?: return
-            val strategies = computeStrategiesForMap(map, profile)
-            if (strategies.isEmpty()) return
-            _state.value = current.copy(strategies = strategies)
+            recomputeStrategies(profile, currentSeatFilters)
         }
 
-        fun loadFromHistory(item: ScanHistoryItem, profile: OptimizationProfile) {
-            val strategies = computeStrategiesForMap(item.availabilityMap, profile)
+        fun recomputeStrategies(profile: OptimizationProfile, seatFilters: SeatFilterPrefs) {
+            currentSeatFilters = seatFilters
+            val current = _state.value
+            val map = current.availabilityMap ?: return
+            val strategies = computeStrategiesForMap(map, profile, seatFilters)
+            _state.value = current.copy(
+                strategies = strategies,
+                error = if (strategies.isEmpty()) buildFilteredEmptyMessage(map, current.ticketClass, seatFilters) else null
+            )
+        }
+
+        fun loadFromHistory(
+            item: ScanHistoryItem,
+            profile: OptimizationProfile,
+            seatFilters: SeatFilterPrefs = currentSeatFilters
+        ) {
+            currentSeatFilters = seatFilters
+            val strategies = computeStrategiesForMap(item.availabilityMap, profile, seatFilters)
             _state.value = ScanProgressState(
                 isRunning = false,
                 progress = 100,
@@ -126,7 +157,7 @@ class ScanForegroundService : Service() {
                 logs = emptyList(),
                 availabilityMap = item.availabilityMap,
                 strategies = strategies,
-                error = if (strategies.isEmpty()) "Brak wariantów siedzących w zapisanej analizie." else null,
+                error = if (strategies.isEmpty()) buildFilteredEmptyMessage(item.availabilityMap, item.ticketClass, seatFilters) else null,
                 ticketClass = item.ticketClass,
                 trainNumber = item.trainNumber,
                 fromStation = item.fromStation,
@@ -136,9 +167,33 @@ class ScanForegroundService : Service() {
             )
         }
 
+        private fun buildFilteredEmptyMessage(
+            map: FullTrainAvailabilityMap,
+            ticketClass: Int,
+            seatFilters: SeatFilterPrefs
+        ): String {
+            val anyRawSeats = map.segments.any { seg -> seg.carriages.values.any { it.isNotEmpty() } }
+            val anyAllowedSeats = map.segments.any { seg ->
+                seg.carriages.any { (wNo, seats) ->
+                    seats.any { sNo ->
+                        val tags = seg.seatTags["${wNo}_$sNo"].orEmpty()
+                        GrmParser.isSeatAllowed(tags, seatFilters)
+                    }
+                }
+            }
+            return when {
+                anyRawSeats && !anyAllowedSeats ->
+                    "Wolne miejsca w Klasie $ticketClass są dostępne tylko w wyłączonych kategoriach specjalnych (np. bez roweru lub wymagające zaznaczenia w filtrach)."
+                anyRawSeats ->
+                    "Brak opłacalnych wariantów siedzących spełniających wybrane filtry w Klasie $ticketClass."
+                else -> "Brak wariantów siedzących w zapisanej analizie."
+            }
+        }
+
         private fun computeStrategiesForMap(
             map: FullTrainAvailabilityMap,
-            profile: OptimizationProfile
+            profile: OptimizationProfile,
+            seatFilters: SeatFilterPrefs = currentSeatFilters
         ): List<OptimizationStrategy> {
             val matrix = SeatOptimizer.availabilityMapToMatrix(map)
             if (matrix.availabilityMatrix.isEmpty()) return emptyList()
@@ -156,7 +211,7 @@ class ScanForegroundService : Service() {
                 seatsMeta = matrix.seatsMeta,
                 stationNames = matrix.stationNames,
                 segmentDurations = matrix.segmentDurations,
-                config = OptimizerConfig(profile = profile),
+                config = OptimizerConfig(profile = profile, seatFilters = seatFilters),
                 stationEvas = evas,
                 departureTimes = depTimes,
                 segmentDates = segDates,
@@ -193,6 +248,15 @@ class ScanForegroundService : Service() {
                 val ticketClass = intent.getIntExtra(EXTRA_CLASS, 2)
                 val profile = SeatOptimizer.parseProfile(intent.getStringExtra(EXTRA_PROFILE))
                 val forceFull = intent.getBooleanExtra(EXTRA_FORCE_FULL, false)
+                val seatFilters = SeatFilterPrefs(
+                    allowBike = intent.getBooleanExtra(EXTRA_ALLOW_BIKE, true),
+                    allowPregnant = intent.getBooleanExtra(EXTRA_ALLOW_PREGNANT, false),
+                    allowChild = intent.getBooleanExtra(EXTRA_ALLOW_CHILD, false),
+                    allowElderly = intent.getBooleanExtra(EXTRA_ALLOW_ELDERLY, false),
+                    allowPrmAssist = intent.getBooleanExtra(EXTRA_ALLOW_PRM_ASSIST, false),
+                    allowWheelchair = intent.getBooleanExtra(EXTRA_ALLOW_WHEELCHAIR, false)
+                )
+                currentSeatFilters = seatFilters
 
                 val notif = buildNotification(train, 0, "Uruchamianie skanera...")
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -201,7 +265,7 @@ class ScanForegroundService : Service() {
                     startForeground(NOTIFICATION_ID, notif)
                 }
 
-                runScan(fromSt, toSt, date, train, depTime, ticketClass, profile, forceFull)
+                runScan(fromSt, toSt, date, train, depTime, ticketClass, profile, forceFull, seatFilters)
             }
         }
         return START_NOT_STICKY
@@ -215,7 +279,8 @@ class ScanForegroundService : Service() {
         depTime: String,
         ticketClass: Int,
         profile: OptimizationProfile,
-        forceFull: Boolean
+        forceFull: Boolean,
+        seatFilters: SeatFilterPrefs
     ) {
         scanJob?.cancel()
         _state.value = ScanProgressState(
@@ -258,7 +323,8 @@ class ScanForegroundService : Service() {
                     trainNumber = trainNumber,
                     departureTime = depTime,
                     ticketClass = ticketClass,
-                    fastPath = !forceFull
+                    fastPath = !forceFull,
+                    seatFilters = seatFilters
                 )
 
                 val matrix = SeatOptimizer.availabilityMapToMatrix(map)
@@ -281,11 +347,18 @@ class ScanForegroundService : Service() {
                     return@launch
                 }
 
-                val strategies = computeStrategiesForMap(map, profile)
+                val strategies = computeStrategiesForMap(map, profile, seatFilters)
                 if (strategies.isEmpty()) {
+                    val anyAllowedRaw = map.segments.any { seg ->
+                        seg.carriages.any { (wNo, seats) ->
+                            seats.any { sNo -> GrmParser.isSeatAllowed(seg.seatTags["${wNo}_$sNo"].orEmpty(), seatFilters) }
+                        }
+                    }
                     val freeSegments = map.segments.filter { seg -> seg.carriages.values.any { it.isNotEmpty() } }
                     val errSegs = map.segments.filter { it.status == "SCRAPE_ERROR" }
                     val details = when {
+                        freeSegments.isNotEmpty() && !anyAllowedRaw ->
+                            "Znaleziono wolne miejsca w Klasie $ticketClass, ale wszystkie wymagają włączenia odpowiedniej kategorii w filtrach."
                         freeSegments.isNotEmpty() -> {
                             val listStr = freeSegments.take(3).joinToString("; ") { seg ->
                                 "${seg.fromStation} -> ${seg.toStation}"

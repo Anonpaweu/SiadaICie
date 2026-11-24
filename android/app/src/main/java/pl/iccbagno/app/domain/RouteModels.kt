@@ -45,6 +45,18 @@ data class TrainConnection(
     val changes: Int
 )
 
+data class SeatFilterPrefs(
+    val allowBike: Boolean = true,
+    val allowPregnant: Boolean = false,
+    val allowChild: Boolean = false,
+    val allowElderly: Boolean = false,
+    val allowPrmAssist: Boolean = false,
+    val allowWheelchair: Boolean = false
+) {
+    fun activeSpecialCount(): Int =
+        listOf(allowBike, allowPregnant, allowChild, allowElderly, allowPrmAssist, allowWheelchair).count { it }
+}
+
 data class SegmentAvailabilityMap(
     val segmentIndex: Int,
     val fromStation: String,
@@ -55,6 +67,7 @@ data class SegmentAvailabilityMap(
     val toEva: String = "",
     val segmentDate: String = "",
     val carriages: Map<String, List<String>> = emptyMap(),
+    val seatTags: Map<String, List<String>> = emptyMap(),
     val status: String = "OK",
     val errorReason: String? = null
 )

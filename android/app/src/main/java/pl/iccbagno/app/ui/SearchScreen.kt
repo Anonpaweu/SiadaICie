@@ -34,6 +34,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Schedule
@@ -44,6 +47,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -53,11 +58,16 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -72,6 +82,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import pl.iccbagno.app.R
 import pl.iccbagno.app.data.ScanHistoryItem
+import pl.iccbagno.app.domain.SeatFilterPrefs
 import pl.iccbagno.app.domain.StationInfo
 import pl.iccbagno.app.domain.TrainConnection
 import pl.iccbagno.app.optimizer.SeatOptimizer
@@ -95,6 +106,8 @@ fun SearchScreen(
     onOpenTime: () -> Unit,
     onResetTime: () -> Unit,
     onSelectClass: (Int) -> Unit,
+    onDirectOnlyChange: (Boolean) -> Unit,
+    onSeatFiltersChange: (SeatFilterPrefs) -> Unit,
     onSearchTrains: () -> Unit,
     onSelectTrain: (TrainConnection) -> Unit,
     onOpenSettings: () -> Unit,
@@ -103,6 +116,7 @@ fun SearchScreen(
     onClearHistory: () -> Unit
 ) {
     val colors = LocalRailColors.current
+    var showFilters by remember { mutableStateOf(false) }
 
     val visibleTrains = ui.trains.filter { train ->
         train.departure.trim().padStart(5, '0') >= ui.minDepartureTime
@@ -123,8 +137,8 @@ fun SearchScreen(
                             contentDescription = "IC Seat Optimizer",
                             contentScale = ContentScale.Crop,
                             modifier = Modifier
-                                .size(38.dp)
-                                .clip(RoundedCornerShape(10.dp))
+                                .size(46.dp)
+                                .clip(RoundedCornerShape(12.dp))
                         )
                         Spacer(modifier = Modifier.width(10.dp))
                         Column {
@@ -432,6 +446,97 @@ fun SearchScreen(
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text("Szukaj pociągów", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Collapsible Filters Bar directly below Search button
+            item(key = "filters_bar") {
+                Surface(
+                    color = colors.card,
+                    shape = RoundedCornerShape(18.dp),
+                    border = BorderStroke(1.dp, colors.hairline),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { showFilters = !showFilters }
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.FilterList,
+                                    contentDescription = null,
+                                    tint = colors.brandNavy,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text(
+                                    text = "Filtry",
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 14.sp,
+                                    color = colors.textPrimary
+                                )
+                                val directBadge = if (ui.directOnly) "Bezpośrednie" else "Z przesiadkami"
+                                Text(
+                                    text = "$directBadge • ${ui.seatFilters.activeSpecialCount()}/6",
+                                    fontSize = 12.sp,
+                                    color = colors.textSecondary
+                                )
+                            }
+                            Icon(
+                                imageVector = if (showFilters) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                contentDescription = if (showFilters) "Zwiń filtry" else "Rozwiń filtry",
+                                tint = colors.textSecondary
+                            )
+                        }
+
+                        AnimatedVisibility(visible = showFilters) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 16.dp, end = 16.dp, bottom = 14.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                HorizontalDivider(color = colors.hairline)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                                        Text(
+                                            text = "Tylko pociągi bezpośrednie",
+                                            color = colors.textPrimary,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                        Text(
+                                            text = "Ukrywa z listy rozkładu połączenia z przesiadkami",
+                                            color = colors.textSecondary,
+                                            fontSize = 11.sp
+                                        )
+                                    }
+                                    Switch(
+                                        checked = ui.directOnly,
+                                        onCheckedChange = onDirectOnlyChange
+                                    )
+                                }
+
+                                HorizontalDivider(color = colors.hairline)
+
+                                SeatFilterChipsSection(
+                                    filters = ui.seatFilters,
+                                    onFiltersChange = onSeatFiltersChange
+                                )
                             }
                         }
                     }
@@ -892,4 +997,52 @@ private fun formatDurationCompact(raw: String): String {
         }
     }
     return raw
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun SeatFilterChipsSection(
+    filters: SeatFilterPrefs,
+    onFiltersChange: (SeatFilterPrefs) -> Unit
+) {
+    val colors = LocalRailColors.current
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            text = "Dodatkowe typy miejsc (zwykłe i strefa ciszy zawsze priorytetowe)",
+            fontSize = 12.sp,
+            color = colors.textSecondary
+        )
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            val options = listOf(
+                Triple("Miejsce z rowerem", filters.allowBike) { on: Boolean -> filters.copy(allowBike = on) },
+                Triple("Kobieta w ciąży", filters.allowPregnant) { on: Boolean -> filters.copy(allowPregnant = on) },
+                Triple("Osoba z dzieckiem", filters.allowChild) { on: Boolean -> filters.copy(allowChild = on) },
+                Triple("Senior", filters.allowElderly) { on: Boolean -> filters.copy(allowElderly = on) },
+                Triple("Niepełnosprawność (bez wózka)", filters.allowPrmAssist) { on: Boolean -> filters.copy(allowPrmAssist = on) },
+                Triple("Osoba na wózku", filters.allowWheelchair) { on: Boolean -> filters.copy(allowWheelchair = on) }
+            )
+            options.forEach { (label, selected, updater) ->
+                FilterChip(
+                    selected = selected,
+                    onClick = { onFiltersChange(updater(!selected)) },
+                    label = { Text(label, fontSize = 12.sp) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = colors.brandNavy,
+                        selectedLabelColor = Color.White,
+                        containerColor = colors.cardTonal,
+                        labelColor = colors.textSecondary
+                    ),
+                    border = FilterChipDefaults.filterChipBorder(
+                        enabled = true,
+                        selected = selected,
+                        borderColor = colors.hairline
+                    )
+                )
+            }
+        }
+    }
 }

@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
@@ -73,10 +74,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import pl.iccbagno.app.domain.SeatFilterPrefs
 import pl.iccbagno.app.optimizer.OptimizationProfile
 import pl.iccbagno.app.optimizer.OptimizationStrategy
 import pl.iccbagno.app.optimizer.PathStep
 import pl.iccbagno.app.optimizer.SeatOptimizer
+import pl.iccbagno.app.scraper.GrmParser
 import pl.iccbagno.app.service.ScanProgressState
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -88,11 +91,13 @@ fun ResultScreen(
     onCancelScan: () -> Unit,
     onRetryScan: () -> Unit,
     onProfileChange: (OptimizationProfile) -> Unit,
+    onSeatFiltersChange: (SeatFilterPrefs) -> Unit,
     onSelectStrategy: (Int) -> Unit,
     onOpenBooking: (String) -> Unit
 ) {
     val colors = LocalRailColors.current
     var showLogs by remember { mutableStateOf(false) }
+    var showResultFilters by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = colors.canvas,
@@ -468,6 +473,65 @@ fun ResultScreen(
                 }
             }
 
+            if (!scan.isRunning && scan.availabilityMap != null) {
+                item(key = "result_filters") {
+                    Surface(
+                        color = colors.card,
+                        shape = RoundedCornerShape(16.dp),
+                        border = BorderStroke(1.dp, colors.hairline),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { showResultFilters = !showResultFilters }
+                                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.FilterList,
+                                        contentDescription = null,
+                                        tint = colors.brandNavy,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Text(
+                                        text = "Filtry miejsc (${ui.seatFilters.activeSpecialCount()}/6)",
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 13.sp,
+                                        color = colors.textPrimary
+                                    )
+                                }
+                                Icon(
+                                    imageVector = if (showResultFilters) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                    contentDescription = null,
+                                    tint = colors.textSecondary
+                                )
+                            }
+                            AnimatedVisibility(visible = showResultFilters) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(start = 14.dp, end = 14.dp, bottom = 12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    HorizontalDivider(color = colors.hairline)
+                                    SeatFilterChipsSection(
+                                        filters = ui.seatFilters,
+                                        onFiltersChange = onSeatFiltersChange
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             if (!scan.isRunning && scan.strategies.isNotEmpty()) {
                 val safeIdx = ui.selectedStrategyIdx.coerceIn(0, scan.strategies.lastIndex)
                 val selectedStrategy = scan.strategies[safeIdx]
@@ -718,6 +782,7 @@ private fun JourneyTimeline(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun TimelineStepCard(
     step: PathStep,
@@ -784,6 +849,29 @@ private fun TimelineStepCard(
                         fontWeight = FontWeight.Bold,
                         fontSize = 13.sp
                     )
+                }
+            }
+
+            if (!step.isStanding && step.seatTags.isNotEmpty()) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    step.seatTags.forEach { tag ->
+                        val restricted = GrmParser.isRestrictedTag(tag)
+                        Surface(
+                            color = if (restricted) colors.corridorAmberContainer else colors.cardTonal,
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text(
+                                text = GrmParser.formatSeatTagPl(tag),
+                                color = if (restricted) colors.corridorAmber else colors.textSecondary,
+                                fontSize = 11.sp,
+                                fontWeight = if (restricted) FontWeight.SemiBold else FontWeight.Medium,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
                 }
             }
 

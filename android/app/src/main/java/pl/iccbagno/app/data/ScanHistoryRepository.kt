@@ -50,6 +50,10 @@ object ScanHistorySerializer {
                     for ((wagon, seats) in seg.carriages) {
                         carObj.put(wagon, JSONArray(seats))
                     }
+                    val tagsObj = JSONObject()
+                    for ((uid, tags) in seg.seatTags) {
+                        tagsObj.put(uid, JSONArray(tags))
+                    }
                     segArr.put(
                         JSONObject().apply {
                             put("segmentIndex", seg.segmentIndex)
@@ -61,6 +65,7 @@ object ScanHistorySerializer {
                             put("toEva", seg.toEva)
                             put("segmentDate", seg.segmentDate)
                             put("carriages", carObj)
+                            put("seatTags", tagsObj)
                             put("status", seg.status)
                             put("errorReason", seg.errorReason ?: JSONObject.NULL)
                         }
@@ -112,6 +117,21 @@ object ScanHistorySerializer {
                         }
                         carriages[w] = seatList
                     }
+                    val tagsJsonObj = sObj.optJSONObject("seatTags")
+                    val seatTags = LinkedHashMap<String, List<String>>()
+                    if (tagsJsonObj != null) {
+                        val tKeys = tagsJsonObj.keys()
+                        while (tKeys.hasNext()) {
+                            val uid = tKeys.next()
+                            val tArr = tagsJsonObj.optJSONArray(uid) ?: continue
+                            val tList = ArrayList<String>(tArr.length())
+                            for (k in 0 until tArr.length()) {
+                                val t = tArr.optString(k, "")
+                                if (t.isNotEmpty()) tList.add(t)
+                            }
+                            if (tList.isNotEmpty()) seatTags[uid] = tList
+                        }
+                    }
                     segs.add(
                         SegmentAvailabilityMap(
                             segmentIndex = sObj.optInt("segmentIndex", j),
@@ -123,6 +143,7 @@ object ScanHistorySerializer {
                             toEva = sObj.optString("toEva", ""),
                             segmentDate = sObj.optString("segmentDate", ""),
                             carriages = carriages,
+                            seatTags = seatTags,
                             status = sObj.optString("status", "OK"),
                             errorReason = if (sObj.isNull("errorReason")) null else sObj.optString("errorReason")
                         )

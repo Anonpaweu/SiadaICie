@@ -1,6 +1,7 @@
 package pl.iccbagno.app.optimizer
 
 import pl.iccbagno.app.domain.FullTrainAvailabilityMap
+import pl.iccbagno.app.domain.SeatFilterPrefs
 import pl.iccbagno.app.domain.StationInfo
 import pl.iccbagno.app.scraper.GrmParser
 import kotlin.math.abs
@@ -18,7 +19,8 @@ data class SeatMeta(
     val seatUid: String,
     val carriageNo: Int,
     val seatNo: String,
-    val compartmentNo: Int? = null
+    val compartmentNo: Int? = null,
+    val seatTags: List<String> = emptyList()
 )
 
 data class AvailabilityBlock(
@@ -42,6 +44,7 @@ data class PathStep(
     val isStanding: Boolean = false,
     val transferInstruction: String? = null,
     val compartment: Int? = null,
+    val seatTags: List<String> = emptyList(),
     val alternativeSeatsInSameCarriage: List<String> = emptyList(),
     val bookingUrl: String? = null
 )
@@ -60,6 +63,7 @@ data class OptimizationStrategy(
 
 data class OptimizerConfig(
     val profile: OptimizationProfile = OptimizationProfile.BALANCED,
+    val seatFilters: SeatFilterPrefs = SeatFilterPrefs(),
     val wDuration: Double = 1000.0,
     val wFinalBonus: Double = 250.0,
     val pBaseTransfer: Double = 1000.0,
@@ -180,6 +184,7 @@ object SeatOptimizer {
     private data class EquivalenceKey(
         val carriageNo: Int,
         val compartmentNo: Int?,
+        val tier: Int,
         val vec: List<Int>
     )
 
@@ -187,7 +192,8 @@ object SeatOptimizer {
         availabilityMatrix: Map<String, List<Int>>,
         seatsMeta: Map<String, SeatMeta>,
         excludedSeats: Set<String>,
-        excludedCarriages: Set<Int>
+        excludedCarriages: Set<Int>,
+        seatFilters: SeatFilterPrefs = SeatFilterPrefs()
     ): Map<String, List<Int>> {
         val groupedCounts = HashMap<EquivalenceKey, Int>()
         val pruned = LinkedHashMap<String, List<Int>>()
@@ -195,7 +201,9 @@ object SeatOptimizer {
             if (seatUid in excludedSeats) continue
             val meta = seatsMeta[seatUid] ?: continue
             if (meta.carriageNo in excludedCarriages) continue
-            val key = EquivalenceKey(meta.carriageNo, meta.compartmentNo, vec)
+            if (!GrmParser.isSeatAllowed(meta.seatTags, seatFilters)) continue
+            val tier = GrmParser.seatPriorityTier(meta.seatTags)
+            val key = EquivalenceKey(meta.carriageNo, meta.compartmentNo, tier, vec)
             val cnt = groupedCounts[key] ?: 0
             if (cnt < 2) {
                 groupedCounts[key] = cnt + 1
@@ -265,6 +273,7 @@ object SeatOptimizer {
         if (block.endSeg == numSegments) {
             score += config.wFinalBonus * ratio
         }
+        score -= GrmParser.seatTierPenalty(block.seat.seatTags)
         return score
     }
 
@@ -378,11 +387,18 @@ object SeatOptimizer {
             val sInt = sNo.toIntOrNull() ?: 1
             val cInt = cNo.toIntOrNull() ?: 1
             val comp = if (sInt >= 10) sInt / 10 else 1
-            seatsMeta[seatUid] = SeatMeta(seatUid, cInt, sNo, comp)
-            availMatrix[seatUid] = segs.map { seg ->
+            val mergedTags = LinkedHashSet<String>()
+            val vec = segs.map { seg ->
                 val freeInC = seg.carriages[cNo].orEmpty()
-                if (sNo in freeInC) 1 else 0
+                if (sNo in freeInC) {
+                    seg.seatTags[seatUid]?.let { mergedTags.addAll(it) }
+                    1
+                } else {
+                    0
+                }
             }
+            seatsMeta[seatUid] = SeatMeta(seatUid, cInt, sNo, comp, mergedTags.toList())
+            availMatrix[seatUid] = vec
         }
 
         return MatrixData(availMatrix, seatsMeta, stationNames, segmentDurations)
@@ -400,6 +416,14 @@ object SeatOptimizer {
         segmentDates: List<String> = emptyList(),
         defaultTravelDate: String = ""
     ): List<OptimizationStrategy> {
+        val hasAnyAllowedSeat = availabilityMatrix.keys.any { uid ->
+            val m = seatsMeta[uid]
+            m != null && GrmParser.isSeatAllowed(m.seatTags, config.seatFilters)
+        }
+        if (availabilityMatrix.isNotEmpty() && !hasAnyAllowedSeat) {
+            return emptyList()
+        }
+
         val strategies = ArrayList<OptimizationStrategy>()
         val excludedSeats = HashSet<String>()
         val excludedCarriages = HashSet<Int>()
@@ -408,7 +432,13 @@ object SeatOptimizer {
         for (rank in 1..topK) {
             var res: Pair<Double, List<AvailabilityBlock>>? = null
             if (excludedCarriages.isNotEmpty()) {
-                val prunedDiv = pruneEquivalentSeats(availabilityMatrix, seatsMeta, excludedSeats, excludedCarriages)
+                val prunedDiv = pruneEquivalentSeats(
+                    availabilityMatrix,
+                    seatsMeta,
+                    excludedSeats,
+                    excludedCarriages,
+                    config.seatFilters
+                )
                 if (prunedDiv.isNotEmpty()) {
                     val blocksDiv = generateCandidateBlocks(prunedDiv, seatsMeta, segmentDurations)
                     val candidate = findOptimalPath(blocksDiv, segmentDurations, config)
@@ -419,7 +449,13 @@ object SeatOptimizer {
             }
 
             if (res == null) {
-                val pruned = pruneEquivalentSeats(availabilityMatrix, seatsMeta, excludedSeats, emptySet())
+                val pruned = pruneEquivalentSeats(
+                    availabilityMatrix,
+                    seatsMeta,
+                    excludedSeats,
+                    emptySet(),
+                    config.seatFilters
+                )
                 val blocks = generateCandidateBlocks(pruned, seatsMeta, segmentDurations)
                 res = findOptimalPath(blocks, segmentDurations, config)
             }
@@ -457,19 +493,30 @@ object SeatOptimizer {
                     }
                 } else null
 
-                val altSeats = ArrayList<String>()
+                val altSeatMetas = ArrayList<SeatMeta>()
                 if (!b.isStanding) {
                     for ((oUid, oVec) in availabilityMatrix) {
                         if (oUid != b.seat.seatUid) {
                             val oMeta = seatsMeta[oUid]
-                            if (oMeta != null && oMeta.carriageNo == b.seat.carriageNo) {
+                            if (oMeta != null &&
+                                oMeta.carriageNo == b.seat.carriageNo &&
+                                GrmParser.isSeatAllowed(oMeta.seatTags, config.seatFilters)
+                            ) {
                                 if ((b.startSeg until b.endSeg).all { k -> oVec[k] == 1 }) {
-                                    altSeats.add(oMeta.seatNo)
+                                    altSeatMetas.add(oMeta)
                                 }
                             }
                         }
                     }
                 }
+                val sortedAlts = altSeatMetas
+                    .sortedWith(
+                        compareBy<SeatMeta>(
+                            { GrmParser.seatPriorityTier(it.seatTags) },
+                            { it.seatNo.toIntOrNull() ?: 999 }
+                        )
+                    )
+                    .map { it.seatNo }
 
                 val sInt = b.seat.seatNo.toIntOrNull()
                 val compNo = b.seat.compartmentNo ?: if (sInt != null) { if (sInt >= 10) sInt / 10 else 1 } else null
@@ -499,7 +546,8 @@ object SeatOptimizer {
                         isStanding = b.isStanding,
                         transferInstruction = instruction,
                         compartment = compNo,
-                        alternativeSeatsInSameCarriage = altSeats.sortedBy { it.toIntOrNull() ?: 99 },
+                        seatTags = b.seat.seatTags,
+                        alternativeSeatsInSameCarriage = sortedAlts,
                         bookingUrl = bookingUrl
                     )
                 )

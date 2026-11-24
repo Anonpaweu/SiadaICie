@@ -101,6 +101,15 @@ class RouteSegment(BaseModel):
     train_number: str = ""
 
 
+class SeatFilterPrefs(BaseModel):
+    allow_bike: bool = True
+    allow_pregnant: bool = False
+    allow_child: bool = False
+    allow_elderly: bool = False
+    allow_prm_assist: bool = False
+    allow_wheelchair: bool = False
+
+
 class SegmentAvailabilityMap(BaseModel):
     segment_index: int
     from_station: str
@@ -111,6 +120,7 @@ class SegmentAvailabilityMap(BaseModel):
     to_eva: str = ""
     segment_date: str = ""
     carriages: Dict[str, List[str]] = Field(default_factory=dict)
+    seat_tags: Dict[str, List[str]] = Field(default_factory=dict)
     status: str = "OK"                       # "OK", "SOLD_OUT", "SCRAPE_ERROR"
     error_reason: Optional[str] = None
 

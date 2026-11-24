@@ -202,7 +202,7 @@
           </div>
           <div class="flex items-center gap-2">
             <label for="optProfile" class="text-slate-400 font-medium">Strategia:</label>
-            <select id="optProfile" class="bg-pkp-dark border border-pkp-borderLight rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-pkp-orange transition-colors">
+            <select id="optProfile" onchange="recomputeCurrentWithFilters()" class="bg-pkp-dark border border-pkp-borderLight rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-pkp-orange transition-colors">
               <option value="BALANCED" selected>Zrównoważona</option>
               <option value="MINIMAL_TRANSFERS">Najmniej przesiadek</option>
               <option value="MINIMAL_WALKING">Najkrótsze spacery</option>
@@ -217,6 +217,22 @@
             </svg>
             <span id="btnScanSeatsLabel">Wyszukaj i optymalizuj miejsca</span>
           </button>
+        </div>
+      </div>
+
+      <!-- Filtry typów miejsc -->
+      <div id="seatFiltersBar" class="pt-3 border-t border-pkp-border space-y-2">
+        <div class="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+          <span class="font-semibold text-slate-300">Filtry miejsc (zwykłe i strefa ciszy mają zawsze najwyższy priorytet):</span>
+          <span id="seatFiltersSummary" class="text-slate-400 font-mono">1/6 aktywne</span>
+        </div>
+        <div id="seatFilterButtons" class="flex flex-wrap gap-2 text-xs">
+          <button type="button" data-seat-filter="allow_bike" onclick="toggleSeatFilter('allow_bike')" class="px-3 py-1.5 rounded-lg font-semibold border transition-colors bg-pkp-orange text-white border-pkp-orange">Miejsce z rowerem</button>
+          <button type="button" data-seat-filter="allow_pregnant" onclick="toggleSeatFilter('allow_pregnant')" class="px-3 py-1.5 rounded-lg font-medium border transition-colors bg-pkp-dark text-slate-300 border-pkp-borderLight hover:border-slate-400">Kobieta w ciąży</button>
+          <button type="button" data-seat-filter="allow_child" onclick="toggleSeatFilter('allow_child')" class="px-3 py-1.5 rounded-lg font-medium border transition-colors bg-pkp-dark text-slate-300 border-pkp-borderLight hover:border-slate-400">Osoba z dzieckiem</button>
+          <button type="button" data-seat-filter="allow_elderly" onclick="toggleSeatFilter('allow_elderly')" class="px-3 py-1.5 rounded-lg font-medium border transition-colors bg-pkp-dark text-slate-300 border-pkp-borderLight hover:border-slate-400">Senior</button>
+          <button type="button" data-seat-filter="allow_prm_assist" onclick="toggleSeatFilter('allow_prm_assist')" class="px-3 py-1.5 rounded-lg font-medium border transition-colors bg-pkp-dark text-slate-300 border-pkp-borderLight hover:border-slate-400">Niepełnosprawność (bez wózka)</button>
+          <button type="button" data-seat-filter="allow_wheelchair" onclick="toggleSeatFilter('allow_wheelchair')" class="px-3 py-1.5 rounded-lg font-medium border transition-colors bg-pkp-dark text-slate-300 border-pkp-borderLight hover:border-slate-400">Osoba na wózku</button>
         </div>
       </div>
 
@@ -429,6 +445,22 @@
 
   </main>
 
+  <!-- Okno potwierdzenia filtra Osoba na wózku -->
+  <div id="wheelchairConfirmModal" class="hidden fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 sm:p-8">
+    <div class="w-full max-w-lg bg-pkp-surface border-2 border-pkp-borderLight rounded-2xl p-6 shadow-2xl text-center space-y-5">
+      <img src="/static/the-rock-rock.gif" alt="Potwierdzenie" class="w-full max-h-[52vh] object-contain rounded-xl border border-pkp-border mx-auto" />
+      <p class="text-xl font-extrabold text-white">Na pewno jesteś niepełnosprawny?</p>
+      <div class="grid grid-cols-2 gap-3">
+        <button type="button" onclick="confirmWheelchairModal(false)" class="px-4 py-3 rounded-xl border border-pkp-borderLight bg-pkp-dark hover:bg-pkp-surfaceHover text-slate-200 font-bold text-sm transition-colors">
+          Nie
+        </button>
+        <button type="button" onclick="confirmWheelchairModal(true)" class="px-4 py-3 rounded-xl bg-pkp-orange hover:bg-pkp-orangeHover text-white font-bold text-sm transition-colors">
+          Tak
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- Stopka -->
   <footer class="border-t border-pkp-border bg-pkp-dark/90 text-center py-4 text-xs text-slate-400">
     <div class="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between px-6 gap-2">
@@ -438,6 +470,100 @@
   </footer>
 
   <script>
+    const RESTRICTED_SEAT_TAGS = new Set(['BIKE', 'PREGNANT', 'CHILD', 'ELDERLY', 'PRM_ASSIST', 'WHEELCHAIR']);
+    const SEAT_TAG_LABELS_PL = {
+      BIKE: 'Rower',
+      PREGNANT: 'Kobieta w ciąży',
+      CHILD: 'Z dzieckiem',
+      ELDERLY: 'Senior',
+      PRM_ASSIST: 'Niepełnosprawność',
+      WHEELCHAIR: 'Osoba na wózku',
+      QUIET: 'Strefa ciszy',
+      WINDOW: 'Okno',
+      AISLE: 'Korytarz',
+      TABLE: 'Stolik',
+    };
+
+    const seatFiltersState = {
+      allow_bike: true,
+      allow_pregnant: false,
+      allow_child: false,
+      allow_elderly: false,
+      allow_prm_assist: false,
+      allow_wheelchair: false,
+    };
+
+    function renderSeatTagsBadges(tags) {
+      if (!Array.isArray(tags) || !tags.length) return '';
+      return tags.map(tag => {
+        const label = SEAT_TAG_LABELS_PL[tag] || tag;
+        const isRestricted = RESTRICTED_SEAT_TAGS.has(tag);
+        const cls = isRestricted
+          ? 'bg-amber-950/80 text-amber-300 border border-amber-600/70'
+          : 'bg-slate-800/80 text-slate-300 border border-slate-600/60';
+        return `<span class="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold ${cls}">${escapeHtml(label)}</span>`;
+      }).join(' ');
+    }
+
+    function updateSeatFiltersUi() {
+      let activeCount = 0;
+      Object.keys(seatFiltersState).forEach(key => {
+        const on = Boolean(seatFiltersState[key]);
+        if (on) activeCount += 1;
+        const btn = document.querySelector(`[data-seat-filter="${key}"]`);
+        if (!btn) return;
+        btn.className = on
+          ? 'px-3 py-1.5 rounded-lg font-semibold border transition-colors bg-pkp-orange text-white border-pkp-orange'
+          : 'px-3 py-1.5 rounded-lg font-medium border transition-colors bg-pkp-dark text-slate-300 border-pkp-borderLight hover:border-slate-400';
+      });
+      const summary = document.getElementById('seatFiltersSummary');
+      if (summary) summary.innerText = `${activeCount}/6 aktywne`;
+    }
+
+    function toggleSeatFilter(key) {
+      if (key === 'allow_wheelchair' && !seatFiltersState.allow_wheelchair) {
+        const modal = document.getElementById('wheelchairConfirmModal');
+        if (modal) modal.classList.remove('hidden');
+        return;
+      }
+      seatFiltersState[key] = !seatFiltersState[key];
+      updateSeatFiltersUi();
+      recomputeCurrentWithFilters();
+    }
+
+    function confirmWheelchairModal(confirmed) {
+      const modal = document.getElementById('wheelchairConfirmModal');
+      if (modal) modal.classList.add('hidden');
+      if (confirmed) {
+        seatFiltersState.allow_wheelchair = true;
+        updateSeatFiltersUi();
+        recomputeCurrentWithFilters();
+      }
+    }
+
+    async function recomputeCurrentWithFilters() {
+      if (!currentAnalysisData) return;
+      const profile = document.getElementById('optProfile')?.value || 'BALANCED';
+      try {
+        const res = await fetch('/api/v1/recompute', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            profile: profile,
+            seat_filters: { ...seatFiltersState },
+          }),
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        currentAnalysisData = data;
+        selectedStrategyIndex = 0;
+        renderPurchaseInstructions(data);
+        renderCarriageFilter(data.seat_matrix);
+        renderStrategies(data.strategies);
+        renderMatrix();
+      } catch (e) {}
+    }
+
     function escapeHtml(str) {
       if (!str) return '';
       return String(str)
@@ -769,6 +895,7 @@
             headless: true,
             force_full_scan: forceFullScan,
             scan_id: currentScanId,
+            seat_filters: { ...seatFiltersState },
           }),
         });
 
@@ -851,6 +978,7 @@
           body: JSON.stringify({
             raw_text: rawText,
             profile: profile,
+            seat_filters: { ...seatFiltersState },
           }),
         });
 
@@ -988,6 +1116,9 @@
 
         const item = document.createElement('div');
         item.className = 'bg-pkp-dark border border-pkp-borderLight rounded-lg p-3 text-xs text-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow';
+        const tagsBadgesHtml = (step && !step.is_standing && step.seat_tags && step.seat_tags.length)
+          ? `<div class="mt-1 flex flex-wrap gap-1">${renderSeatTagsBadges(step.seat_tags)}</div>`
+          : '';
         item.innerHTML = `
           <div class="flex items-start gap-3 flex-1">
             <div class="w-6 h-6 rounded-full bg-pkp-orange/20 text-pkp-orange font-bold flex items-center justify-center text-xs flex-shrink-0 mt-0.5">
@@ -995,6 +1126,7 @@
             </div>
             <div class="flex-1 leading-relaxed">
               <span class="font-medium text-white">${escapeHtml(instr)}</span>
+              ${tagsBadgesHtml}
             </div>
           </div>
           ${linkHtml}
@@ -1059,6 +1191,9 @@
               </div>`;
           } else {
             const transferText = step.transfer_instruction || step.transfer_Instruction || '';
+            const stepTagsHtml = (step.seat_tags && step.seat_tags.length)
+              ? `<div class="mt-1 flex flex-wrap gap-1">${renderSeatTagsBadges(step.seat_tags)}</div>`
+              : '';
             stepsHtml += `
               <div class="text-xs flex items-center gap-2 text-emerald-300 bg-emerald-950/30 p-2 rounded border border-emerald-900/50 my-1">
                 <svg class="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1066,6 +1201,7 @@
                 </svg>
                 <div class="flex-1">
                   <strong>${escapeHtml(step.from_station_name)} → ${escapeHtml(step.to_station_name)}</strong>: Wagon ${escapeHtml(step.carriage_no)}, m. ${escapeHtml(step.seat_no)}${compStr} (${escapeHtml(step.duration_min)} min)
+                  ${stepTagsHtml}
                   ${transferText ? `<div class="text-[10px] text-amber-300 italic">↳ ${escapeHtml(transferText)}</div>` : ''}
                   ${altsStr}
                 </div>
@@ -1175,11 +1311,15 @@
         const compartment = !isNaN(seatInt) && seatInt >= 10 ? Math.floor(seatInt / 10) : 1;
 
         bodyHtml += `<tr class="hover:bg-pkp-surfaceHover/50 transition-colors">`;
+        const rowTagsHtml = (seat.seat_tags && seat.seat_tags.length)
+          ? `<div class="mt-1 flex flex-wrap gap-1">${renderSeatTagsBadges(seat.seat_tags)}</div>`
+          : '';
         bodyHtml += `<td class="p-2.5 border border-pkp-border font-medium text-left bg-pkp-surface/90 text-slate-200">
-          <div class="flex items-center justify-between">
+          <div class="flex items-center justify-between gap-2">
             <span>W${escapeHtml(seat.carriage_no)} / Miejsce <strong>${escapeHtml(seat.seat_no)}</strong></span>
             <span class="text-[10px] text-slate-400 font-mono">Przedział ${compartment}</span>
           </div>
+          ${rowTagsHtml}
         </td>`;
 
         seat.availability.forEach((isFree, segIdx) => {
@@ -1557,6 +1697,7 @@ W6 m14/m16`;
 
     window.addEventListener('DOMContentLoaded', () => {
       initCalendar();
+      updateSeatFiltersUi();
       checkMaintenanceWindow();
       setInterval(checkMaintenanceWindow, 30000);
     });

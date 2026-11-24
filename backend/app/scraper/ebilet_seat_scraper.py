@@ -38,6 +38,7 @@ from backend.app.db.database import (
 from backend.app.models.domain import (
     SegmentAvailabilityMap,
     FullTrainAvailabilityMap,
+    SeatFilterPrefs,
 )
 from backend.app.engine.availability_parser import format_availability_map
 from backend.app.scraper.dom_scripts import CAROUSEL_METADATA_JS, SVG_SEATS_EXTRACTOR_JS
@@ -47,8 +48,10 @@ from backend.app.scraper.grm_parser import (
     TARGET_CLASS,
     build_eic_search_url,
     is_prm_wheelchair_label,
+    is_seat_allowed,
     is_sold_out_reason,
     parse_grm_wagon_svg,
+    parse_grm_wagon_svg_with_meta,
     sanitize_filename,
     select_grm_target_wagons,
     shift_query_time,
@@ -469,6 +472,19 @@ class EbiletSeatScraper:
         """Instance/static wrapper for parse_grm_wagon_svg."""
         return parse_grm_wagon_svg(svg_xml, ticket_class=ticket_class)
 
+    @staticmethod
+    def parse_grm_wagon_svg_with_meta(
+        svg_xml: str,
+        ticket_class: int = TARGET_CLASS,
+        include_wheelchair: bool = True,
+    ) -> Tuple[List[str], Dict[str, List[str]]]:
+        """Instance/static wrapper for parse_grm_wagon_svg_with_meta."""
+        return parse_grm_wagon_svg_with_meta(
+            svg_xml,
+            ticket_class=ticket_class,
+            include_wheelchair=include_wheelchair,
+        )
+
     def build_direct_search_url(
         self,
         from_station: str,
@@ -650,6 +666,7 @@ class EbiletSeatScraper:
         wagon_svg_template: Dict[str, Any],
         intercepted_svg_by_wagon: Dict[str, str],
         ticket_class: int = TARGET_CLASS,
+        seat_tags_out: Optional[Dict[str, List[str]]] = None,
     ) -> Optional[Dict[str, List[str]]]:
         """
         Authoritative seat extraction using intercepted /grm/sklad/wbnet/ JSON and
@@ -703,8 +720,15 @@ class EbiletSeatScraper:
         for w_no, schema_id in targets:
             svg_xml = intercepted_svg_by_wagon.get(w_no)
             if svg_xml and "<svg" in svg_xml.lower():
-                seats = self.parse_grm_wagon_svg(svg_xml, ticket_class=ticket_class)
+                seats, per_seat_tags = self.parse_grm_wagon_svg_with_meta(
+                    svg_xml,
+                    ticket_class=ticket_class,
+                    include_wheelchair=(seat_tags_out is not None),
+                )
                 carriages[w_no] = seats
+                if seat_tags_out is not None:
+                    for s_no, tags in per_seat_tags.items():
+                        seat_tags_out[f"{w_no}_{s_no}"] = tags
                 fetched_count += 1
                 logger.info(f"[GRM API] Wagon {w_no} (schema={schema_id}, Klasa {ticket_class}): {len(seats)} wolnych miejsc")
             else:
@@ -1170,6 +1194,7 @@ class EbiletSeatScraper:
             carriages_data: Dict[str, List[str]] = {}
 
             # Priority 1: Authoritative GRM API (/grm/sklad/wbnet/ + /grm/wagon/svg/wbnet/ XML)
+            collected_tags: Dict[str, List[str]] = {}
             if sklad_info["data"] is not None:
                 api_carriages = await self._extract_seats_via_grm_api(
                     page=page,
@@ -1177,9 +1202,13 @@ class EbiletSeatScraper:
                     wagon_svg_template=wagon_svg_template,
                     intercepted_svg_by_wagon=intercepted_svg_by_wagon,
                     ticket_class=ticket_class,
+                    seat_tags_out=collected_tags,
                 )
                 if api_carriages is not None:
                     carriages_data = api_carriages
+                    if not hasattr(self, "_last_seat_tags_map"):
+                        self._last_seat_tags_map = {}
+                    self._last_seat_tags_map[f"{from_station}_{to_station}_{date_str}_c{ticket_class}"] = collected_tags
                     await self._close_seatmap_modal(page)
                     report(95, f"[GRM API] Odczytano wolne miejsca w {len(carriages_data)} wagonach.")
                     return carriages_data
@@ -1718,10 +1747,16 @@ class EbiletSeatScraper:
         so callers can distinguish honest sold-out segments from scrape failures.
         """
         cache_key = f"seatmap_{train_number}_{travel_date}_{from_station}_{to_station}_c{ticket_class}"
+        tags_key = f"{from_station}_{to_station}_{travel_date}_c{ticket_class}"
+        if not hasattr(self, "_last_seat_tags_map"):
+            self._last_seat_tags_map = {}
         if use_cache:
             cached = get_cached_item(cache_key, ttl_seconds=self.ttl_seconds)
             if cached and isinstance(cached, dict) and any(len(v) > 0 for v in cached.values()):
                 logger.info(f"[CACHE HIT] Seatmap for segment {from_station} -> {to_station} (Klasa {ticket_class})")
+                cached_tags = get_cached_item(f"{cache_key}_tags", ttl_seconds=self.ttl_seconds)
+                if isinstance(cached_tags, dict):
+                    self._last_seat_tags_map[tags_key] = cached_tags
                 return cached
 
         # Ultra-short jitter to stagger concurrent requests cleanly
@@ -1746,6 +1781,9 @@ class EbiletSeatScraper:
                     )
                     if carriages and any(len(v) > 0 for v in carriages.values()):
                         set_cached_item(cache_key, carriages)
+                        seg_tags = getattr(self, "_last_seat_tags_map", {}).get(tags_key, {})
+                        if seg_tags:
+                            set_cached_item(f"{cache_key}_tags", seg_tags)
                         return carriages
                     if attempt == 0:
                         logger.info(f"[RETRY] Brak danych dla {from_station} -> {to_station}, ponawiam próbę...")
@@ -1874,6 +1912,7 @@ class LiveTrainScanner:
         ticket_class: int = TARGET_CLASS,
         fast_path: bool = False,
         cancel_event: Optional[asyncio.Event] = None,
+        seat_filters: Optional[SeatFilterPrefs] = None,
     ) -> FullTrainAvailabilityMap:
         """
         1. Obtains all intermediate stops for the train (off the event loop).
@@ -2055,7 +2094,23 @@ class LiveTrainScanner:
                         except Exception:
                             pass
 
-                    if full_carriages and any(len(s) > 0 for s in full_carriages.values()):
+                    def _get_scraped_tags(f_st: str, t_st: str, d_str: str) -> Dict[str, List[str]]:
+                        return dict(
+                            getattr(self.scraper, "_last_seat_tags_map", {}).get(
+                                f"{f_st}_{t_st}_{d_str}_c{ticket_class}", {}
+                            )
+                        )
+
+                    full_tags = _get_scraped_tags(s_first.name, s_last.name, full_date)
+                    has_allowed_fp = bool(
+                        full_carriages
+                        and any(
+                            is_seat_allowed(full_tags.get(f"{w}_{s}", []), seat_filters)
+                            for w, seats in full_carriages.items()
+                            for s in seats
+                        )
+                    )
+                    if has_allowed_fp:
                         total_dur = _compute_duration_min(s_first, s_last, fallback_min=30 * num_segments)
                         fast_seg = SegmentAvailabilityMap(
                             segment_index=0,
@@ -2067,6 +2122,7 @@ class LiveTrainScanner:
                             to_eva=full_to_eva,
                             segment_date=full_date,
                             carriages=full_carriages,
+                            seat_tags=full_tags,
                             status="OK",
                             error_reason=None,
                         )
@@ -2125,6 +2181,7 @@ class LiveTrainScanner:
                                     timeout=60.0,
                                 )
                                 if sub_carriages and any(len(v) > 0 for v in sub_carriages.values()):
+                                    sub_tags = _get_scraped_tags(sa.name, sb.name, sub_date)
                                     return (
                                         SegmentAvailabilityMap(
                                             segment_index=0,
@@ -2138,6 +2195,7 @@ class LiveTrainScanner:
                                             to_eva=sub_to_eva,
                                             segment_date=sub_date,
                                             carriages=sub_carriages,
+                                            seat_tags=sub_tags,
                                             status="OK",
                                             error_reason=None,
                                         ),
@@ -2189,7 +2247,12 @@ class LiveTrainScanner:
                         if macro_segments:
                             common_seats = set.intersection(
                                 *[
-                                    {(w, s) for w, seats in seg.carriages.items() for s in seats}
+                                    {
+                                        (w, s)
+                                        for w, seats in seg.carriages.items()
+                                        for s in seats
+                                        if is_seat_allowed(seg.seat_tags.get(f"{w}_{s}", []), seat_filters)
+                                    }
                                     for seg in macro_segments
                                 ]
                             )
@@ -2347,6 +2410,15 @@ class LiveTrainScanner:
                         f"{s_from.name} -> {s_to.name}. Wolne miejsca: {c_summary}"
                     )
 
+                    seg_tags = (
+                        dict(
+                            getattr(self.scraper, "_last_seat_tags_map", {}).get(
+                                f"{s_from.name}_{s_to.name}_{seg_date}_c{ticket_class}", {}
+                            )
+                        )
+                        if seg_status == "OK"
+                        else {}
+                    )
                     return SegmentAvailabilityMap(
                         segment_index=idx,
                         from_station=s_from.name,
@@ -2357,6 +2429,7 @@ class LiveTrainScanner:
                         to_eva=seg_to_eva,
                         segment_date=seg_date,
                         carriages=carriages,
+                        seat_tags=seg_tags,
                         status=seg_status,
                         error_reason=seg_error_reason,
                     )
@@ -2404,6 +2477,12 @@ class LiveTrainScanner:
                             timeout=75.0,
                         )
                         if m_carriages and any(len(s) > 0 for s in m_carriages.values()):
+                            m_tags = dict(
+                                getattr(self.scraper, "_last_seat_tags_map", {}).get(
+                                    f"{first_seg.from_station}_{second_seg.to_station}_{first_seg.segment_date or travel_date}_c{ticket_class}",
+                                    {},
+                                )
+                            )
                             return SegmentAvailabilityMap(
                                 segment_index=first_seg.segment_index,
                                 from_station=first_seg.from_station,
@@ -2414,6 +2493,7 @@ class LiveTrainScanner:
                                 to_eva=second_seg.to_eva,
                                 segment_date=first_seg.segment_date,
                                 carriages=m_carriages,
+                                seat_tags=m_tags,
                                 status="OK",
                                 error_reason=None,
                             )

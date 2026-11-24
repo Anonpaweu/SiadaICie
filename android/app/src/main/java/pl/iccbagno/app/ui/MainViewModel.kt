@@ -27,6 +27,7 @@ data class SearchUiState(
     val fromSuggestions: List<StationInfo> = emptyList(),
     val toSuggestions: List<StationInfo> = emptyList(),
     val travelDate: String = LocalDate.now().plusDays(1).format(DateTimeFormatter.ISO_LOCAL_DATE),
+    val minDepartureTime: String = "00:00",
     val ticketClass: Int = 2,
     val profile: OptimizationProfile = OptimizationProfile.BALANCED,
     val directOnly: Boolean = true,
@@ -103,6 +104,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setTravelDate(isoDate: String) {
         _uiState.update { it.copy(travelDate = isoDate) }
+    }
+
+    fun setMinDepartureTime(hhMm: String) {
+        _uiState.update { it.copy(minDepartureTime = hhMm) }
     }
 
     fun setTicketClass(cls: Int) {

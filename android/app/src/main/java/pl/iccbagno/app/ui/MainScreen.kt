@@ -29,6 +29,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SwapVert
@@ -57,9 +58,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimePicker
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -96,6 +99,7 @@ fun MainScreen(viewModel: MainViewModel) {
 
     var showSettings by remember { mutableStateOf(false) }
     var showDatePicker by remember { mutableStateOf(false) }
+    var showTimePicker by remember { mutableStateOf(false) }
     var showLogs by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -146,6 +150,8 @@ fun MainScreen(viewModel: MainViewModel) {
                 onSelectTo = viewModel::selectToStation,
                 onSwap = viewModel::swapStations,
                 onOpenDate = { showDatePicker = true },
+                onOpenTime = { showTimePicker = true },
+                onResetTime = { viewModel.setMinDepartureTime("00:00") },
                 onSelectClass = viewModel::setTicketClass,
                 onSearchTrains = viewModel::searchTrains
             )
@@ -200,18 +206,47 @@ fun MainScreen(viewModel: MainViewModel) {
             }
 
             if (ui.trains.isNotEmpty()) {
+                val visibleTrains = ui.trains.filter { train ->
+                    train.departure.trim().padStart(5, '0') >= ui.minDepartureTime
+                }
+                val headerLabel = if (ui.minDepartureTime != "00:00") {
+                    "Pociągi PKP Intercity (widoczne ${visibleTrains.size} z ${ui.trains.size}, od ${ui.minDepartureTime})"
+                } else {
+                    "Pociągi PKP Intercity (${ui.trains.size})"
+                }
                 Text(
-                    text = "Pociągi PKP Intercity (${ui.trains.size})",
+                    text = headerLabel,
                     fontWeight = FontWeight.Bold,
                     color = PkpTextPrimary,
                     fontSize = 15.sp
                 )
-                for (train in ui.trains) {
-                    TrainConnectionCard(
-                        train = train,
-                        enabled = !scan.isRunning,
-                        onScanClick = { viewModel.startTrainScan(train) }
-                    )
+                if (visibleTrains.isEmpty()) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = PkpSurface),
+                        border = BorderStroke(1.dp, PkpBorder)
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                text = "Brak pociągów po godzinie ${ui.minDepartureTime}.",
+                                color = PkpTextSecondary,
+                                fontSize = 13.sp
+                            )
+                            OutlinedButton(
+                                onClick = { viewModel.setMinDepartureTime("00:00") },
+                                border = BorderStroke(1.dp, PkpOrange)
+                            ) {
+                                Text("Pokaż cały dzień (od 00:00)", color = PkpOrange, fontSize = 12.sp)
+                            }
+                        }
+                    }
+                } else {
+                    for (train in visibleTrains) {
+                        TrainConnectionCard(
+                            train = train,
+                            enabled = !scan.isRunning,
+                            onScanClick = { viewModel.startTrainScan(train) }
+                        )
+                    }
                 }
             }
         }
@@ -244,6 +279,29 @@ fun MainScreen(viewModel: MainViewModel) {
         ) {
             DatePicker(state = pickerState)
         }
+    }
+
+    if (showTimePicker) {
+        val parts = ui.minDepartureTime.split(":")
+        val initH = parts.getOrNull(0)?.toIntOrNull()?.coerceIn(0, 23) ?: 0
+        val initM = parts.getOrNull(1)?.toIntOrNull()?.coerceIn(0, 59) ?: 0
+        val timeState = rememberTimePickerState(initialHour = initH, initialMinute = initM, is24Hour = true)
+        AlertDialog(
+            onDismissRequest = { showTimePicker = false },
+            containerColor = PkpSurface,
+            title = { Text("Od godziny", color = PkpTextPrimary, fontWeight = FontWeight.Bold) },
+            text = { TimePicker(state = timeState) },
+            confirmButton = {
+                TextButton(onClick = {
+                    val formatted = "%02d:%02d".format(timeState.hour, timeState.minute)
+                    viewModel.setMinDepartureTime(formatted)
+                    showTimePicker = false
+                }) { Text("Wybierz", color = PkpOrange) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showTimePicker = false }) { Text("Anuluj") }
+            }
+        )
     }
 
     if (showSettings) {
@@ -312,6 +370,8 @@ private fun SearchCard(
     onSelectTo: (StationInfo) -> Unit,
     onSwap: () -> Unit,
     onOpenDate: () -> Unit,
+    onOpenTime: () -> Unit,
+    onResetTime: () -> Unit,
     onSelectClass: (Int) -> Unit,
     onSearchTrains: () -> Unit
 ) {
@@ -369,7 +429,7 @@ private fun SearchCard(
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 OutlinedButton(
@@ -377,11 +437,27 @@ private fun SearchCard(
                     border = BorderStroke(1.dp, PkpBorder),
                     modifier = Modifier.weight(1f)
                 ) {
-                    Icon(Icons.Default.CalendarMonth, contentDescription = null, tint = PkpOrange, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Default.CalendarMonth, contentDescription = null, tint = PkpOrange, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text(ui.travelDate, color = PkpTextPrimary)
+                    Text(ui.travelDate, color = PkpTextPrimary, fontSize = 13.sp)
                 }
 
+                OutlinedButton(
+                    onClick = onOpenTime,
+                    border = BorderStroke(1.dp, if (ui.minDepartureTime != "00:00") PkpOrange else PkpBorder),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Default.Schedule, contentDescription = null, tint = PkpOrange, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Od ${ui.minDepartureTime}", color = PkpTextPrimary, fontSize = 13.sp)
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf(2 to "Kl. 2", 1 to "Kl. 1").forEach { (cls, label) ->
                         FilterChip(
@@ -395,6 +471,11 @@ private fun SearchCard(
                                 labelColor = PkpTextSecondary
                             )
                         )
+                    }
+                }
+                if (ui.minDepartureTime != "00:00") {
+                    TextButton(onClick = onResetTime) {
+                        Text("Cały dzień", color = PkpOrange, fontSize = 12.sp)
                     }
                 }
             }

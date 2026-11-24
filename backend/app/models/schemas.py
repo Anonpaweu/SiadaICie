@@ -2,6 +2,8 @@
 from typing import List, Optional
 from pydantic import BaseModel, Field
 
+from backend.app.models.domain import SeatFilterPrefs
+
 
 class AnalyzeRequest(BaseModel):
     from_station: str
@@ -14,6 +16,7 @@ class AnalyzeRequest(BaseModel):
     ticket_class: int = Field(default=2, ge=1, le=2)
     headless: Optional[bool] = None
     show_browser: Optional[bool] = None
+    seat_filters: SeatFilterPrefs = Field(default_factory=SeatFilterPrefs)
 
 
 class StepResponse(BaseModel):
@@ -28,6 +31,7 @@ class StepResponse(BaseModel):
     is_standing: bool = False
     transfer_instruction: Optional[str] = None
     compartment: Optional[int] = None
+    seat_tags: List[str] = []
     alternative_seats_in_same_carriage: List[str] = []
     booking_url: Optional[str] = None
 
@@ -54,6 +58,7 @@ class SeatAvailability(BaseModel):
     seat_uid: str
     carriage_no: int
     seat_no: str
+    seat_tags: List[str] = []
     availability: List[int]
 
 
@@ -74,6 +79,7 @@ OptimizationResponse = AnalyzeResponse
 class ManualMapRequest(BaseModel):
     raw_text: str
     profile: str = "BALANCED"
+    seat_filters: SeatFilterPrefs = Field(default_factory=SeatFilterPrefs)
 
 
 class LiveOptimizeRequest(BaseModel):
@@ -88,6 +94,12 @@ class LiveOptimizeRequest(BaseModel):
     show_browser: Optional[bool] = None
     force_full_scan: bool = False
     scan_id: Optional[str] = None
+    seat_filters: SeatFilterPrefs = Field(default_factory=SeatFilterPrefs)
+
+
+class RecomputeRequest(BaseModel):
+    profile: str = "BALANCED"
+    seat_filters: SeatFilterPrefs = Field(default_factory=SeatFilterPrefs)
 
 
 class CancelScanRequest(BaseModel):

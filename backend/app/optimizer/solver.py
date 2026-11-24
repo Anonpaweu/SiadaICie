@@ -13,8 +13,9 @@ Finds optimal seat strategies for a train journey, handling:
 from typing import List, Dict, Tuple, Optional, Set
 from pydantic import BaseModel
 
-from backend.app.models.domain import OptimizationProfile
+from backend.app.models.domain import OptimizationProfile, SeatFilterPrefs
 from backend.app.engine.scorer import get_profile_multipliers
+from backend.app.scraper.grm_parser import is_seat_allowed, seat_priority_tier, seat_tier_penalty
 
 
 class SeatMeta(BaseModel):
@@ -22,6 +23,7 @@ class SeatMeta(BaseModel):
     carriage_no: int            # np. 10
     seat_no: str                # np. "12"
     compartment_no: Optional[int] = None  # Numer przedziału (lub rzędu w bezprzedziałowym)
+    seat_tags: List[str] = []
 
 
 class AvailabilityBlock(BaseModel):
@@ -45,6 +47,7 @@ class PathStep(BaseModel):
     is_standing: bool = False
     transfer_instruction: Optional[str] = None
     compartment: Optional[int] = None
+    seat_tags: List[str] = []
     alternative_seats_in_same_carriage: List[str] = []
 
 
@@ -62,6 +65,7 @@ class OptimizationStrategy(BaseModel):
 
 class OptimizerConfig(BaseModel):
     profile: OptimizationProfile = OptimizationProfile.BALANCED
+    seat_filters: SeatFilterPrefs = SeatFilterPrefs()
     w_duration: float = 1000.0
     w_final_bonus: float = 250.0
     p_base_transfer: float = 1000.0  # W_TICKET = 1000.0
@@ -176,13 +180,14 @@ def _prune_equivalent_seats(
     seats_meta: Dict[str, SeatMeta],
     excluded_seats: Set[str],
     excluded_carriages: Set[int],
+    seat_filters: Optional[SeatFilterPrefs] = None,
 ) -> Dict[str, List[int]]:
     """
-    Deduplicates seats sharing the exact same (carriage_no, compartment_no, availability_vector).
+    Deduplicates seats sharing the exact same (carriage_no, compartment_no, tier, availability_vector).
     Keeps up to 2 representatives per equivalence class (so same-compartment transfers are still possible)
-    which dramatically speeds up DP on large trains with 100+ free seats without losing optimality.
+    while filtering out seats excluded by SeatFilterPrefs.
     """
-    grouped_counts: Dict[Tuple[int, Optional[int], Tuple[int, ...]], int] = {}
+    grouped_counts: Dict[Tuple[int, Optional[int], int, Tuple[int, ...]], int] = {}
     pruned: Dict[str, List[int]] = {}
 
     for seat_uid, vec in availability_matrix.items():
@@ -191,7 +196,10 @@ def _prune_equivalent_seats(
         meta = seats_meta[seat_uid]
         if meta.carriage_no in excluded_carriages:
             continue
-        key = (meta.carriage_no, meta.compartment_no, tuple(vec))
+        if not is_seat_allowed(meta.seat_tags, seat_filters):
+            continue
+        tier = seat_priority_tier(meta.seat_tags)
+        key = (meta.carriage_no, meta.compartment_no, tier, tuple(vec))
         cnt = grouped_counts.get(key, 0)
         if cnt < 2:
             grouped_counts[key] = cnt + 1
@@ -269,6 +277,7 @@ def score_single_block(
     if block.end_seg == num_segments:
         score += config.w_final_bonus * ratio
 
+    score -= seat_tier_penalty(block.seat.seat_tags)
     return score
 
 
@@ -366,6 +375,13 @@ def solve_top_strategies(
     if config is None:
         config = OptimizerConfig()
 
+    has_any_allowed = any(
+        uid in seats_meta and is_seat_allowed(seats_meta[uid].seat_tags, config.seat_filters)
+        for uid in availability_matrix
+    )
+    if availability_matrix and not has_any_allowed:
+        return []
+
     strategies: List[OptimizationStrategy] = []
     excluded_seats: Set[str] = set()
     excluded_carriages: Set[int] = set()
@@ -375,7 +391,13 @@ def solve_top_strategies(
         # First attempt with carriage diversity (if we already picked carriages in previous ranks)
         res = None
         if excluded_carriages:
-            pruned_div = _prune_equivalent_seats(availability_matrix, seats_meta, excluded_seats, excluded_carriages)
+            pruned_div = _prune_equivalent_seats(
+                availability_matrix,
+                seats_meta,
+                excluded_seats,
+                excluded_carriages,
+                config.seat_filters,
+            )
             if pruned_div:
                 blocks_div = generate_candidate_blocks(pruned_div, seats_meta, segment_durations)
                 candidate = find_optimal_path(blocks_div, station_names, segment_durations, config)
@@ -387,7 +409,13 @@ def solve_top_strategies(
 
         # Fallback: exclude only previously chosen primary seats
         if res is None:
-            pruned = _prune_equivalent_seats(availability_matrix, seats_meta, excluded_seats, set())
+            pruned = _prune_equivalent_seats(
+                availability_matrix,
+                seats_meta,
+                excluded_seats,
+                set(),
+                config.seat_filters,
+            )
             blocks = generate_candidate_blocks(pruned, seats_meta, segment_durations)
             res = find_optimal_path(blocks, station_names, segment_durations, config)
 
@@ -425,14 +453,26 @@ def solve_top_strategies(
                 else:
                     instruction = f"Na stacji {st_name} przejdź z wagonu {prev_b.seat.carriage_no} (m. {prev_b.seat.seat_no}) do wagonu {b.seat.carriage_no} na miejsce {b.seat.seat_no}."
 
-            alt_seats = []
+            alt_metas: List[SeatMeta] = []
             if not b.is_standing:
                 for o_uid, o_vec in availability_matrix.items():
                     if o_uid != b.seat.seat_uid:
                         o_meta = seats_meta.get(o_uid)
-                        if o_meta and o_meta.carriage_no == b.seat.carriage_no:
+                        if (
+                            o_meta
+                            and o_meta.carriage_no == b.seat.carriage_no
+                            and is_seat_allowed(o_meta.seat_tags, config.seat_filters)
+                        ):
                             if all(o_vec[k] == 1 for k in range(b.start_seg, b.end_seg)):
-                                alt_seats.append(o_meta.seat_no)
+                                alt_metas.append(o_meta)
+
+            sorted_alts = [
+                m.seat_no
+                for m in sorted(
+                    alt_metas,
+                    key=lambda m: (seat_priority_tier(m.seat_tags), int(m.seat_no) if m.seat_no.isdigit() else 999),
+                )
+            ]
 
             comp_no = b.seat.compartment_no
             if comp_no is None and b.seat.seat_no.isdigit():
@@ -452,7 +492,8 @@ def solve_top_strategies(
                     is_standing=b.is_standing,
                     transfer_instruction=instruction,
                     compartment=comp_no,
-                    alternative_seats_in_same_carriage=sorted(alt_seats, key=lambda x: int(x) if x.isdigit() else 99),
+                    seat_tags=list(b.seat.seat_tags),
+                    alternative_seats_in_same_carriage=sorted_alts,
                 )
             )
 

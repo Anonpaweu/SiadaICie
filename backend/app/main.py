@@ -31,6 +31,7 @@ from backend.app.engine.availability_parser import (
     format_availability_map,
     parse_availability_text,
 )
+from backend.app.models.domain import SeatFilterPrefs
 from backend.app.models.schemas import (
     AnalyzeRequest,
     AnalyzeResponse,
@@ -39,6 +40,7 @@ from backend.app.models.schemas import (
     LiveOptimizeRequest,
     ManualMapRequest,
     OptimizationResponse,
+    RecomputeRequest,
     SeatAvailability,
     StationSearchResult,
     StrategyResponse,
@@ -47,7 +49,7 @@ from backend.app.models.schemas import (
 )
 from backend.app.optimizer.solver import OptimizerConfig, SeatMeta, parse_profile, solve_top_strategies
 from backend.app.scraper.ebilet_seat_scraper import LiveTrainScanner
-from backend.app.scraper.grm_parser import build_eic_search_url
+from backend.app.scraper.grm_parser import build_eic_search_url, is_seat_allowed
 from backend.app.scraper.ic_client import GraphicReservationUnavailableError, PKPIntercityScraper
 from backend.app.scraper.mock_provider import (
     scenario_classic_b_c_block,
@@ -206,6 +208,7 @@ class ScanJobManager:
 
 global_scan_tracker = ScanStatusTracker()
 scan_manager = ScanJobManager()
+_last_cached_analysis: Optional[dict] = None
 
 
 def _build_optimization_response(
@@ -214,6 +217,7 @@ def _build_optimization_response(
     station_names: List[str],
     segment_durations: List[int],
     profile: str = "BALANCED",
+    seat_filters: Optional[SeatFilterPrefs] = None,
     departure_times: Optional[List[str]] = None,
     raw_availability_report: Optional[str] = None,
     segment_statuses: Optional[List[dict]] = None,
@@ -224,7 +228,23 @@ def _build_optimization_response(
     total_route_segments: int = 0,
 ) -> OptimizationResponse:
     """Shared helper to solve optimal strategies and build the standardized API response."""
-    config = OptimizerConfig(profile=parse_profile(profile))
+    global _last_cached_analysis
+    active_filters = seat_filters or SeatFilterPrefs()
+    _last_cached_analysis = {
+        "avail": avail,
+        "meta": meta,
+        "station_names": station_names,
+        "segment_durations": segment_durations,
+        "departure_times": departure_times,
+        "raw_availability_report": raw_availability_report,
+        "segment_statuses": segment_statuses,
+        "travel_date": travel_date,
+        "station_evas": station_evas,
+        "segment_dates": segment_dates,
+        "fast_path_used": fast_path_used,
+        "total_route_segments": total_route_segments,
+    }
+    config = OptimizerConfig(profile=parse_profile(profile), seat_filters=active_filters)
     strategies = solve_top_strategies(avail, meta, station_names, segment_durations, config=config)
 
     segments_info = []
@@ -252,9 +272,11 @@ def _build_optimization_response(
             seat_uid=seat_uid,
             carriage_no=meta[seat_uid].carriage_no,
             seat_no=meta[seat_uid].seat_no,
+            seat_tags=list(meta[seat_uid].seat_tags),
             availability=availability,
         )
         for seat_uid, availability in avail.items()
+        if seat_uid in meta and is_seat_allowed(meta[seat_uid].seat_tags, active_filters)
     ]
 
     strategy_responses = []
@@ -417,6 +439,7 @@ async def analyze(request: AnalyzeRequest):
         station_names=station_names,
         segment_durations=segment_durations,
         profile=request.profile,
+        seat_filters=request.seat_filters,
         departure_times=departure_times,
         travel_date=travel_date,
         station_evas=station_evas,
@@ -471,9 +494,25 @@ def optimize_from_text(request: ManualMapRequest):
         station_names=station_names,
         segment_durations=segment_durations,
         profile=request.profile,
+        seat_filters=request.seat_filters,
         departure_times=departure_times,
         raw_availability_report=request.raw_text,
         segment_statuses=segment_statuses,
+    )
+
+
+@app.post("/api/v1/recompute", response_model=OptimizationResponse)
+def recompute_cached_analysis(request: RecomputeRequest):
+    """Recomputes optimal strategies from the last scanned/analyzed matrix without re-scraping."""
+    if not _last_cached_analysis:
+        raise HTTPException(
+            status_code=404,
+            detail="Brak zapisanej analizy do przeliczenia.",
+        )
+    return _build_optimization_response(
+        **_last_cached_analysis,
+        profile=request.profile,
+        seat_filters=request.seat_filters,
     )
 
 
@@ -557,6 +596,7 @@ async def optimize_live(request: LiveOptimizeRequest):
         ticket_class=request.ticket_class,
         fast_path=not request.force_full_scan,
         cancel_event=tracker.cancel_event,
+        seat_filters=request.seat_filters,
     )
     scan_task = asyncio.create_task(scan_coro)
     tracker.task = scan_task
@@ -632,6 +672,7 @@ async def optimize_live(request: LiveOptimizeRequest):
         station_names=station_names,
         segment_durations=segment_durations,
         profile=request.profile,
+        seat_filters=request.seat_filters,
         departure_times=departure_times,
         raw_availability_report=formatted_report,
         segment_statuses=segment_statuses,

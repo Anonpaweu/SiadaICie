@@ -264,19 +264,26 @@ def availability_map_to_matrix(
         # PKP UIC seat numbering: compartment is first digit(s)
         compartment = s_int // 10 if s_int >= 10 else 1
 
+        merged_tags: List[str] = []
+        vector: List[int] = []
+        for seg in avail_map.segments:
+            free_in_c = seg.carriages.get(c_no, [])
+            if s_no in free_in_c:
+                vector.append(1)
+                seg_tags = getattr(seg, "seat_tags", None) or {}
+                for t in seg_tags.get(seat_uid, []):
+                    if t not in merged_tags:
+                        merged_tags.append(t)
+            else:
+                vector.append(0)
+
         seats_meta[seat_uid] = SeatMeta(
             seat_uid=seat_uid,
             carriage_no=c_int,
             seat_no=s_no,
             compartment_no=compartment,
+            seat_tags=merged_tags,
         )
-
-        # 2. Vector: 1 if seat is present in segment's carriage free list, else 0
-        vector: List[int] = []
-        for seg in avail_map.segments:
-            free_in_c = seg.carriages.get(c_no, [])
-            vector.append(1 if s_no in free_in_c else 0)
-
         availability_matrix[seat_uid] = vector
 
     return availability_matrix, seats_meta, station_names, segment_durations

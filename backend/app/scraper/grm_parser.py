@@ -12,6 +12,39 @@ import bs4
 
 TARGET_CLASS = 2  # Hardcoded default: 2nd class sitting carriages
 
+TAG_BIKE = "BIKE"
+TAG_PREGNANT = "PREGNANT"
+TAG_CHILD = "CHILD"
+TAG_ELDERLY = "ELDERLY"
+TAG_PRM_ASSIST = "PRM_ASSIST"
+TAG_WHEELCHAIR = "WHEELCHAIR"
+TAG_QUIET = "QUIET"
+TAG_WINDOW = "WINDOW"
+TAG_AISLE = "AISLE"
+TAG_TABLE = "TABLE"
+
+RESTRICTED_TAGS = {
+    TAG_BIKE,
+    TAG_PREGNANT,
+    TAG_CHILD,
+    TAG_ELDERLY,
+    TAG_PRM_ASSIST,
+    TAG_WHEELCHAIR,
+}
+
+TAG_LABELS_PL = {
+    TAG_BIKE: "Rower",
+    TAG_PREGNANT: "Kobieta w ciąży",
+    TAG_CHILD: "Z dzieckiem",
+    TAG_ELDERLY: "Senior",
+    TAG_PRM_ASSIST: "Niepełnosprawność",
+    TAG_WHEELCHAIR: "Osoba na wózku",
+    TAG_QUIET: "Strefa ciszy",
+    TAG_WINDOW: "Okno",
+    TAG_AISLE: "Korytarz",
+    TAG_TABLE: "Stolik",
+}
+
 PRM_WHEELCHAIR_MARKERS = (
     "na wózku",
     "na wozku",
@@ -39,22 +72,91 @@ def is_prm_wheelchair_label(aria_label: str) -> bool:
     return any(marker in low for marker in PRM_WHEELCHAIR_MARKERS)
 
 
+def is_restricted_tag(tag: str) -> bool:
+    return tag in RESTRICTED_TAGS
+
+
+def format_seat_tag_pl(tag: str) -> str:
+    return TAG_LABELS_PL.get(tag, tag)
+
+
+def seat_priority_tier(tags: List[str]) -> int:
+    """
+    Hierarchy:
+    0 = Normal / Quiet zone / comfort-only
+    1 = Bike
+    2 = Pregnant / Child / Elderly / PRM without wheelchair
+    3 = Wheelchair
+    """
+    if TAG_WHEELCHAIR in tags:
+        return 3
+    if any(t in tags for t in (TAG_PREGNANT, TAG_CHILD, TAG_ELDERLY, TAG_PRM_ASSIST)):
+        return 2
+    if TAG_BIKE in tags:
+        return 1
+    return 0
+
+
+def seat_tier_penalty(tags: List[str]) -> float:
+    tier = seat_priority_tier(tags)
+    if tier == 1:
+        return 3.0
+    if tier == 2:
+        return 8.0
+    if tier == 3:
+        return 15.0
+    return 0.0
+
+
+def is_seat_allowed(tags: List[str], prefs: Any) -> bool:
+    if prefs is None:
+        allow_bike = True
+        allow_pregnant = allow_child = allow_elderly = allow_prm_assist = allow_wheelchair = False
+    else:
+        allow_bike = bool(getattr(prefs, "allow_bike", True))
+        allow_pregnant = bool(getattr(prefs, "allow_pregnant", False))
+        allow_child = bool(getattr(prefs, "allow_child", False))
+        allow_elderly = bool(getattr(prefs, "allow_elderly", False))
+        allow_prm_assist = bool(getattr(prefs, "allow_prm_assist", False))
+        allow_wheelchair = bool(getattr(prefs, "allow_wheelchair", False))
+
+    if TAG_WHEELCHAIR in tags and not allow_wheelchair:
+        return False
+    if TAG_PREGNANT in tags and not allow_pregnant:
+        return False
+    if TAG_CHILD in tags and not allow_child:
+        return False
+    if TAG_ELDERLY in tags and not allow_elderly:
+        return False
+    if TAG_PRM_ASSIST in tags and not allow_prm_assist:
+        return False
+    if TAG_BIKE in tags and not allow_bike:
+        return False
+    return True
+
+
 def is_sold_out_reason(reason: str) -> bool:
     """Distinguishes true sold-out errors from scrape/network/matching failures."""
     low = (reason or "").lower()
     return any(marker in low for marker in SOLD_OUT_MARKERS)
 
 
-def parse_grm_wagon_svg(svg_xml: str, ticket_class: int = TARGET_CLASS) -> List[str]:
+def parse_grm_wagon_svg_with_meta(
+    svg_xml: str,
+    ticket_class: int = TARGET_CLASS,
+    include_wheelchair: bool = True,
+) -> Tuple[List[str], Dict[str, List[str]]]:
     """
     Deterministically parses a GRM wagon SVG XML payload from /grm/wagon/svg/wbnet/...
-    Extracts free seat numbers matching ticket_class (1 or 2) and excludes wheelchair-only PRM seats.
+    Returns (sorted_seats, {seat_no: [tags...]}), extracting attributes from aria-label,
+    <eic:special>, and <title>.
     """
     if not svg_xml or not svg_xml.strip():
-        return []
+        return [], {}
 
     is_class1 = int(ticket_class) == 1
     seats: set[str] = set()
+    seat_tags: Dict[str, List[str]] = {}
 
     def should_skip_class(aria_l: str, d_class_l: str) -> bool:
         if is_class1:
@@ -67,7 +169,18 @@ def parse_grm_wagon_svg(svg_xml: str, ticket_class: int = TARGET_CLASS) -> List[
             or (("klasa 1" in aria_l or "kl. 1" in aria_l) and "klasa 2" not in aria_l and "kl. 2" not in aria_l)
         )
 
-    def extract_from_g_attrs(aria: str, d_class: str, text_num: str) -> None:
+    def add_unique_tag(tag_list: List[str], tag: str) -> None:
+        if tag not in tag_list:
+            tag_list.append(tag)
+
+    def extract_from_g_attrs(
+        aria: str,
+        d_class: str,
+        text_num: str,
+        extra_texts: List[str],
+        icon_code: str,
+        carriage_code: str,
+    ) -> None:
         aria_l = (aria or "").lower()
         d_class_l = (d_class or "").lower()
         if "wolne" not in aria_l:
@@ -76,7 +189,10 @@ def parse_grm_wagon_svg(svg_xml: str, ticket_class: int = TARGET_CLASS) -> List[
             return
         if should_skip_class(aria_l, d_class_l):
             return
-        if is_prm_wheelchair_label(aria_l):
+
+        combined = " | ".join([aria_l] + [t.lower() for t in extra_texts if t])
+        is_wheelchair = is_prm_wheelchair_label(combined) or icon_code in ("6", "S6") or carriage_code == "6"
+        if is_wheelchair and not include_wheelchair:
             return
 
         num = (text_num or "").strip()
@@ -86,10 +202,30 @@ def parse_grm_wagon_svg(svg_xml: str, ticket_class: int = TARGET_CLASS) -> List[
                 num = m.group(1)
         if num and num.isdigit():
             seats.add(num)
+            tags = seat_tags.setdefault(num, [])
+            if is_wheelchair:
+                add_unique_tag(tags, TAG_WHEELCHAIR)
+            elif any(k in combined for k in ("niepełnosprawn", "niepelnosprawn", "ograniczon")):
+                add_unique_tag(tags, TAG_PRM_ASSIST)
+            if "rower" in combined or icon_code == "S1" or carriage_code == "24":
+                add_unique_tag(tags, TAG_BIKE)
+            if any(k in combined for k in ("w ciąży", "w ciazy", "ciężarn", "ciezarn")):
+                add_unique_tag(tags, TAG_PREGNANT)
+            if any(k in combined for k in ("z dzieckiem", "matk", "rodzin")):
+                add_unique_tag(tags, TAG_CHILD)
+            if any(k in combined for k in ("starsz", "senior")):
+                add_unique_tag(tags, TAG_ELDERLY)
+            if "strefa ciszy" in combined or "ciszy" in combined:
+                add_unique_tag(tags, TAG_QUIET)
+            if "okno" in combined:
+                add_unique_tag(tags, TAG_WINDOW)
+            if "korytarz" in combined:
+                add_unique_tag(tags, TAG_AISLE)
+            if "stolik" in combined:
+                add_unique_tag(tags, TAG_TABLE)
 
     parsed_via_xml = False
     try:
-        # Strip optional leading XML junk before <svg or <?xml
         cleaned = svg_xml.strip()
         if "<svg" in cleaned and not cleaned.startswith("<svg") and not cleaned.startswith("<?xml"):
             svg_start = cleaned.find("<svg")
@@ -106,12 +242,27 @@ def parse_grm_wagon_svg(svg_xml: str, ticket_class: int = TARGET_CLASS) -> List[
             aria = elem.attrib.get("aria-label", "")
             d_class = elem.attrib.get("data-class", "")
             text_num = ""
-            for child in elem:
+            extra_texts: List[str] = []
+            icon_code = ""
+            carriage_code = ""
+            for child in elem.iter():
                 c_tag = child.tag.split("}", 1)[-1].lower() if isinstance(child.tag, str) else ""
-                if c_tag == "text" and child.text:
+                if c_tag == "text" and child.text and not text_num:
                     text_num = child.text.strip()
-                    break
-            extract_from_g_attrs(aria, d_class, text_num)
+                elif c_tag == "special":
+                    for k, v in child.attrib.items():
+                        kl = k.lower()
+                        if kl in ("pl", "en") and v:
+                            extra_texts.append(v.strip())
+                        elif kl == "iconcode" and v and not icon_code:
+                            icon_code = v.strip().upper()
+                        elif kl == "carriagecode" and v and not carriage_code:
+                            carriage_code = v.strip()
+                    if child.text and child.text.strip():
+                        extra_texts.append(child.text.strip())
+                elif c_tag == "title" and child.text and child.text.strip():
+                    extra_texts.append(child.text.strip())
+            extract_from_g_attrs(aria, d_class, text_num, extra_texts, icon_code, carriage_code)
     except ET.ParseError:
         parsed_via_xml = False
 
@@ -122,9 +273,36 @@ def parse_grm_wagon_svg(svg_xml: str, ticket_class: int = TARGET_CLASS) -> List[
             d_class = str(g.get("data-class") or "")
             t_el = g.find("text")
             text_num = t_el.get_text(strip=True) if t_el else ""
-            extract_from_g_attrs(aria, d_class, text_num)
+            extra_texts = []
+            icon_code = ""
+            carriage_code = ""
+            for sp in g.find_all(lambda el: getattr(el, "name", "") and el.name.lower().endswith("special")):
+                for attr_name in ("pl", "en"):
+                    if sp.get(attr_name):
+                        extra_texts.append(str(sp.get(attr_name)).strip())
+                if sp.get("iconcode") and not icon_code:
+                    icon_code = str(sp.get("iconcode")).strip().upper()
+                if sp.get("carriagecode") and not carriage_code:
+                    carriage_code = str(sp.get("carriagecode")).strip()
+                if sp.get_text(strip=True):
+                    extra_texts.append(sp.get_text(strip=True))
+            for ttl in g.find_all("title"):
+                if ttl.get_text(strip=True):
+                    extra_texts.append(ttl.get_text(strip=True))
+            extract_from_g_attrs(aria, d_class, text_num, extra_texts, icon_code, carriage_code)
 
-    return sorted(seats, key=lambda x: int(x))
+    sorted_seats = sorted(seats, key=lambda x: int(x))
+    filtered_tags = {s: seat_tags[s] for s in sorted_seats if seat_tags.get(s)}
+    return sorted_seats, filtered_tags
+
+
+def parse_grm_wagon_svg(svg_xml: str, ticket_class: int = TARGET_CLASS) -> List[str]:
+    """
+    Deterministically parses a GRM wagon SVG XML payload from /grm/wagon/svg/wbnet/...
+    Extracts free seat numbers matching ticket_class (1 or 2) and excludes wheelchair-only PRM seats.
+    """
+    seats, _ = parse_grm_wagon_svg_with_meta(svg_xml, ticket_class=ticket_class, include_wheelchair=False)
+    return seats
 
 
 def select_grm_target_wagons(

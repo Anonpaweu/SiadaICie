@@ -1,7 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.IccBagno" parent="android:Theme.Material.NoActionBar">
-        <item name="android:statusBarColor">#0B1221</item>
-        <item name="android:navigationBarColor">#0B1221</item>
-    </style>
+    <style name="Theme.IccBagno" parent="android:Theme.Material.NoActionBar" />
 </resources>

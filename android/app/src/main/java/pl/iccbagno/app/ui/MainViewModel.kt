@@ -21,7 +21,14 @@ import pl.iccbagno.app.service.ScanProgressState
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
+enum class AppScreen {
+    SEARCH,
+    SCAN_RESULT
+}
+
 data class SearchUiState(
+    val activeScreen: AppScreen = AppScreen.SEARCH,
+    val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val fromQuery: String = "Warszawa Centralna",
     val toQuery: String = "Kraków Główny",
     val fromSuggestions: List<StationInfo> = emptyList(),
@@ -36,7 +43,8 @@ data class SearchUiState(
     val isLoadingTrains: Boolean = false,
     val trainsError: String? = null,
     val trains: List<TrainConnection> = emptyList(),
-    val selectedStrategyIdx: Int = 0
+    val selectedStrategyIdx: Int = 0,
+    val lastScannedTrain: TrainConnection? = null
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -52,7 +60,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var toSearchJob: Job? = null
 
     fun onFromQueryChange(q: String) {
-        _uiState.update { it.copy(fromQuery = q) }
+        _uiState.update { it.copy(fromQuery = q, toSuggestions = emptyList()) }
         fromSearchJob?.cancel()
         if (q.trim().length < 2) {
             _uiState.update { it.copy(fromSuggestions = emptyList()) }
@@ -60,13 +68,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         fromSearchJob = viewModelScope.launch(Dispatchers.IO) {
             delay(150)
-            val list = stationsRepo.searchStations(q, 12)
+            val list = stationsRepo.searchStations(q, 10)
             _uiState.update { it.copy(fromSuggestions = list) }
         }
     }
 
     fun onToQueryChange(q: String) {
-        _uiState.update { it.copy(toQuery = q) }
+        _uiState.update { it.copy(toQuery = q, fromSuggestions = emptyList()) }
         toSearchJob?.cancel()
         if (q.trim().length < 2) {
             _uiState.update { it.copy(toSuggestions = emptyList()) }
@@ -74,7 +82,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         toSearchJob = viewModelScope.launch(Dispatchers.IO) {
             delay(150)
-            val list = stationsRepo.searchStations(q, 12)
+            val list = stationsRepo.searchStations(q, 10)
             _uiState.update { it.copy(toSuggestions = list) }
         }
     }
@@ -114,6 +122,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(ticketClass = cls) }
     }
 
+    fun setThemeMode(mode: ThemeMode) {
+        _uiState.update { it.copy(themeMode = mode) }
+    }
+
     fun setProfile(profile: OptimizationProfile) {
         _uiState.update { it.copy(profile = profile, selectedStrategyIdx = 0) }
         viewModelScope.launch(Dispatchers.Default) {
@@ -135,6 +147,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun selectStrategy(idx: Int) {
         _uiState.update { it.copy(selectedStrategyIdx = idx) }
+    }
+
+    fun navigateBackToSearch() {
+        _uiState.update { it.copy(activeScreen = AppScreen.SEARCH) }
+    }
+
+    fun openScanScreen() {
+        _uiState.update { it.copy(activeScreen = AppScreen.SCAN_RESULT) }
     }
 
     fun searchTrains() {
@@ -173,7 +193,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun startTrainScan(train: TrainConnection) {
         val st = _uiState.value
-        _uiState.update { it.copy(selectedStrategyIdx = 0) }
+        _uiState.update {
+            it.copy(
+                selectedStrategyIdx = 0,
+                activeScreen = AppScreen.SCAN_RESULT,
+                lastScannedTrain = train
+            )
+        }
         ScanForegroundService.startScan(
             context = getApplication<Application>().applicationContext,
             fromStation = st.fromQuery.trim(),
@@ -185,6 +211,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             profile = st.profile,
             forceFull = st.forceFullScan
         )
+    }
+
+    fun retryLastScan() {
+        val last = _uiState.value.lastScannedTrain ?: return
+        startTrainScan(last)
     }
 
     fun cancelScan() {

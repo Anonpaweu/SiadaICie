@@ -82,6 +82,7 @@ fun MainScreen(viewModel: MainViewModel) {
     var showDatePicker by remember { mutableStateOf(false) }
     var showTimePicker by remember { mutableStateOf(false) }
     var showWheelchairConfirm by remember { mutableStateOf(false) }
+    var showClearHistoryConfirm by remember { mutableStateOf(false) }
 
     val handleSeatFilterChange: (SeatFilterPrefs) -> Unit = { next ->
         if (!ui.seatFilters.allowWheelchair && next.allowWheelchair) {
@@ -121,7 +122,7 @@ fun MainScreen(viewModel: MainViewModel) {
                 onOpenSettings = { showSettings = true },
                 onOpenCurrentScan = viewModel::openScanScreen,
                 onOpenHistoryItem = viewModel::openHistoryItem,
-                onClearHistory = viewModel::clearHistory
+                onClearHistory = { showClearHistoryConfirm = true }
             )
 
             AppScreen.SCAN_RESULT -> ResultScreen(
@@ -280,6 +281,39 @@ fun MainScreen(viewModel: MainViewModel) {
             },
             onDismiss = {
                 showWheelchairConfirm = false
+            }
+        )
+    }
+
+    if (showClearHistoryConfirm) {
+        AlertDialog(
+            onDismissRequest = { showClearHistoryConfirm = false },
+            containerColor = colors.card,
+            title = {
+                Text(
+                    text = "Wyczyść historię",
+                    color = colors.textPrimary,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    text = "Czy na pewno chcesz wyczyścić historię ostatnich analiz?",
+                    color = colors.textSecondary
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.clearHistory()
+                    showClearHistoryConfirm = false
+                }) {
+                    Text("Tak", color = colors.accent)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearHistoryConfirm = false }) {
+                    Text("Nie")
+                }
             }
         )
     }

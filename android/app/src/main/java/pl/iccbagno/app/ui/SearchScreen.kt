@@ -651,7 +651,7 @@ fun SearchScreen(
                             )
                         }
                         TextButton(onClick = onClearHistory) {
-                            Text("Wyczyść", fontSize = 12.sp, color = colors.textSecondary)
+                            Text("Wyczyść historię", fontSize = 12.sp, color = colors.textSecondary)
                         }
                     }
                 }

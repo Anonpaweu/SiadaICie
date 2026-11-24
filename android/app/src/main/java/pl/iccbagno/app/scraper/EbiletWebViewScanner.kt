@@ -1,6 +1,7 @@
 package pl.iccbagno.app.scraper
 
 import android.annotation.SuppressLint
+import android.app.ActivityManager
 import android.content.Context
 import android.graphics.Bitmap
 import android.os.Handler
@@ -53,7 +54,27 @@ class EbiletWebViewScanner(
     private val onAttachDebugWebView: ((WebView?) -> Unit)? = null
 ) {
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val concurrency = 2
+    private val hardwareProfile: Pair<Int, Int> by lazy {
+        val cores = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
+        val totalRamMb = try {
+            val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+            val mi = ActivityManager.MemoryInfo()
+            if (am != null) {
+                am.getMemoryInfo(mi)
+                mi.totalMem / (1024L * 1024L)
+            } else 4096L
+        } catch (_: Exception) {
+            4096L
+        }
+        val resolved = resolveHardwareConcurrency(totalRamMb, cores)
+        Log.i(
+            TAG,
+            "Hardware profile: RAM=${totalRamMb}MB, cores=$cores -> webViewConcurrency=${resolved.first}, directGrmConcurrency=${resolved.second}"
+        )
+        resolved
+    }
+    private val webViewConcurrency: Int get() = hardwareProfile.first
+    private val directGrmConcurrency: Int get() = hardwareProfile.second
     private val stationsRepo by lazy { StationsRepository(context.applicationContext) }
     private val capturedGrmHeaders = ConcurrentHashMap<String, String>()
     private val capturedGrmTemplate = AtomicReference<GrmParser.GrmUrlTemplate?>(null)
@@ -84,6 +105,18 @@ class EbiletWebViewScanner(
 
         private val TRAIN_DIGITS_REGEX = Regex("\\b(\\d{3,5})\\b")
         private const val TAG = "IccScanner"
+
+        /**
+         * Resolves (webViewConcurrency, directGrmConcurrency) from device RAM and CPU cores,
+         * bounded to avoid Android WebView single-renderer contention and Akamai WAF rate-limiting.
+         */
+        internal fun resolveHardwareConcurrency(totalRamMb: Long, cpuCores: Int): Pair<Int, Int> {
+            return when {
+                totalRamMb >= 10_000L && cpuCores >= 8 -> 3 to 4
+                totalRamMb >= 5_500L && cpuCores >= 6 -> 3 to 3
+                else -> 2 to 2
+            }
+        }
 
         private const val FIND_CARDS_JS = """
             function __iccFindCards() {
@@ -1449,13 +1482,11 @@ class EbiletWebViewScanner(
             stops.map { resolveStationEpa(it) }
         }
 
-        val pool = ArrayList<WorkerWebView>(concurrency)
+        val pool = ArrayList<WorkerWebView>(webViewConcurrency)
         try {
-            repeat(concurrency) { idx ->
-                val w = createWorkerWebView()
-                pool.add(w)
-                if (idx == 0) onAttachDebugWebView?.invoke(w.webView)
-            }
+            val firstWorker = createWorkerWebView()
+            pool.add(firstWorker)
+            onAttachDebugWebView?.invoke(firstWorker.webView)
 
             // Dynamic warmup on e-IC home page (capped at 1200ms) so Akamai & Cookiebot initialize naturally
             onProgress(12, "Inicjalizacja sesji e-IC i ciasteczek...")
@@ -1774,8 +1805,8 @@ class EbiletWebViewScanner(
             if (directTemplate != null) {
                 val pendingDirect = (0 until numSegments).filter { resultsByIdx[it] == null }
                 if (pendingDirect.isNotEmpty()) {
-                    Log.i(TAG, "[DIRECT GRM] Starting fast API scan for ${pendingDirect.size} segments using template=$directTemplate")
-                    val directSem = Semaphore(2)
+                    Log.i(TAG, "[DIRECT GRM] Starting fast API scan for ${pendingDirect.size} segments using template=$directTemplate (concurrency=$directGrmConcurrency)")
+                    val directSem = Semaphore(directGrmConcurrency)
                     val consecutiveAuthFailures = AtomicInteger(0)
                     val abortDirect = AtomicBoolean(false)
 
@@ -1860,7 +1891,12 @@ class EbiletWebViewScanner(
             // Phase 3B: WebView UI pool fallback for any remaining segments
             val remainingIndices = (0 until numSegments).filter { resultsByIdx[it] == null }
             if (remainingIndices.isNotEmpty()) {
-                val sem = Semaphore(concurrency)
+                val targetWorkers = minOf(webViewConcurrency, remainingIndices.size).coerceAtLeast(1)
+                while (pool.size < targetWorkers) {
+                    ensureActive()
+                    pool.add(createWorkerWebView())
+                }
+                val sem = Semaphore(pool.size)
                 val availablePool = ArrayDeque<WorkerWebView>(pool)
                 val poolLock = Any()
 

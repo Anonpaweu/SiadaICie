@@ -17,8 +17,8 @@ if not exist "%APK%" (
 echo Instalacja aktualizacji (%APK%) bez kasowania poprzedniej wersji...
 "%ADB%" install -r "%APK%"
 if errorlevel 1 (
-    echo [BLAD] Instalacja nie powiodla sie. Upewnij sie, ze Pixel ma ponad 1 GB wolnego miejsca i wlaczone Debugowanie USB lub bezprzewodowe.
+    echo [BLAD] Instalacja nie powiodla sie. Upewnij sie, ze telefon ma ponad 1 GB wolnego miejsca i wlaczone Debugowanie USB lub bezprzewodowe.
     exit /b 1
 )
-echo [OK] Aplikacja zainstalowana i zaktualizowana na Pixelu!
+echo [OK] Aplikacja zainstalowana i zaktualizowana na urzadzeniu Android!
 endlocal

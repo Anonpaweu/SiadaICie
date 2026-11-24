@@ -1,72 +1,116 @@
-# PKP Seat Optimizer
-> *Koniec z koczowaniem na korytarzu przy toalecie. Usiądź jak człowiek.*
+<p align="center">
+  <img src="docs/logo.jpg" alt="IC Seat Optimizer" width="160" />
+</p>
 
-[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688.svg)](https://fastapi.tiangolo.com)
-[![Playwright](https://img.shields.io/badge/Playwright-Async-45ba4b.svg)](https://playwright.dev/python/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-orange.svg)]()
+<h1 align="center">IC Seat Optimizer</h1>
+
+<p align="center">
+  <em>Koniec z koczowaniem na korytarzu przy toalecie. Usiądź jak człowiek.</em>
+</p>
+
+<p align="center">
+  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.12-blue.svg" alt="Python 3.12" /></a>
+  <a href="https://fastapi.tiangolo.com"><img src="https://img.shields.io/badge/FastAPI-0.115+-009688.svg" alt="FastAPI" /></a>
+  <a href="https://playwright.dev/python/"><img src="https://img.shields.io/badge/Playwright-Async-45ba4b.svg" alt="Playwright" /></a>
+  <img src="https://img.shields.io/badge/Android-Kotlin%20%2F%20Jetpack%20Compose-3DDC84.svg" alt="Android Kotlin Jetpack Compose" />
+  <img src="https://img.shields.io/badge/license-MIT-orange.svg" alt="License MIT" />
+</p>
 
 ---
 
 ## O co w tym w ogóle chodzi?
 
-Znasz to uczucie? Jest niedzielne popołudnie, koniec długiego weekendu albo święta. Chcesz kupić bilet na pociąg przez pół Polski (np. z Warszawy do Wrocławia przez Koluszki, Piotrków, Częstochowę i Opole). Wchodzisz do systemu, a tam czerwony komunikat: **„Brak wolnych miejsc do siedzenia”**. Do wyboru masz bilet bez gwarancji miejsca (czyli 5 godzin siedzenia na walizce obok wagonowego kibla) albo rezygnację z podróży.
+Znasz to uczucie? Jest niedzielne popołudnie, koniec długiego weekendu albo święta. Chcesz kupić bilet na pociąg przez pół Polski (np. z Warszawy do Wrocławia przez Koluszki, Piotrków, Częstochowę i Opole). Wchodzisz do systemu, a tam komunikat: **„Brak wolnych miejsc do siedzenia”**. Do wyboru masz bilet bez gwarancji miejsca albo rezygnację z podróży.
 
-**Ale kolej to nie samolot!** Pociąg zatrzymuje się po drodze na kilkunastu stacjach. Ludzie nieustannie wsiadają i wysiadają:
-- Ktoś wysiada w Koluszkach – jego fotel zwalnia się na resztę trasy.
-- Ktoś inny wsiada dopiero w Opolu – do Opola to miejsce stoi puste.
+**Ale kolej to nie samolot.** Pociąg zatrzymuje się po drodze na kilkunastu stacjach. Ludzie nieustannie wsiadają i wysiadają:
+- Ktoś wysiada w Koluszkach — jego fotel zwalnia się na resztę trasy.
+- Ktoś inny wsiada dopiero w Opolu — do Opola to miejsce stoi puste.
 
-System kolejowy przy próbie zakupu biletu na **całą relację** mówi „nie ma miejsc”, bo żaden pojedynczy fotel nie jest wolny od stacji początkowej do samego końca. Ale wystarczy kupić **dwa lub trzy bilety cząstkowe** na kolejne odcinki i po prostu w trakcie podróży przesiąść się na sąsiedni fotel – i całą trasę pokonujesz wygodnie na siedząco.
+System kolejowy przy próbie zakupu biletu na **całą relację** mówi „nie ma miejsc”, bo żaden pojedynczy fotel nie jest wolny od stacji początkowej do samego końca. Wystarczy jednak kupić **dwa lub trzy bilety cząstkowe** na kolejne odcinki i w trakcie podróży przesiąść się na inny wolny fotel — i całą trasę pokonujesz wygodnie na siedząco.
 
-**PKP Seat Optimizer** robi za Ciebie całą czarną robotę, której nikomu nie chciałoby się przeklikiwać ręcznie: w kilkadziesiąt sekund skanuje rozkład, wchodzi na schematy wszystkich wagonów, zdejmuje wolne fotele i układa matematycznie optymalną podróż z minimalną liczbą przesiadek.
+**IC Seat Optimizer** (dostępny zarówno jako **aplikacja PC Web**, jak i natywna **aplikacja na Androida**) robi za Ciebie całą czarną robotę: pobiera rozkład, sprawdza schematy wagonów, zbiera wolne fotele na poszczególnych odcinkach i układa matematycznie optymalną podróż z minimalną liczbą przesiadek.
 
 ---
 
 ## Co potrafi aplikacja?
 
-- **Szybkie skanowanie na żywo (Playwright + in-page V8 JS):**
-  Zamiast powolnego klikania, scraper wyciąga mapę wolnych foteli bezpośrednio w silniku JavaScript V8 przeglądarki. Parsowanie całego wagonu trwa **mniej niż 5 milisekund**, a wieloetapowa trasa przez pół kraju analizowana jest równolegle w około 40 sekund. Obsługuje wagony **Klasy 2** oraz **Klasy 1**.
+- **Dwie wersje do wyboru — PC Web oraz Android:**
+  - **PC Web (FastAPI + Playwright):** lokalny serwer z interfejsem w przeglądarce (`http://localhost:8000`) i równoległym skanowaniem w kontekstach Chromium.
+  - **Android (Kotlin + Jetpack Compose):** natywna aplikacja w Material 3 (jasny i ciemny motyw) z wbudowaną bazą stacji offline, usługą skanowania działającą **w tle** (możesz zminimalizować aplikację w trakcie analizy), historią **5 ostatnich analiz** oraz adaptacyjnym dopasowaniem równoległości do RAM/CPU telefonu.
+- **Wielowarstwowe przyspieszanie skanowania:**
+  - **Fast-Path A -> B:** najpierw błyskawicznie sprawdza bezpośrednią dostępność na całej trasie — jeśli jest choć jedno wolne miejsce na 100% drogi, wynik wraca od razu.
+  - **Adaptive Split Fast-Path:** na długich trasach (8+ odcinków), gdzie system blokuje schemat dla całej relacji, dzieli trasę na mniejsze odcinki zbiorcze zanim przejdzie do pełnego skanu stacja po stacji.
+  - **Bezpośredni odczyt API GRM (`/grm/sklad/wbnet/` + `/grm/wagon/svg/wbnet/`):** przechwytuje sesję z e-IC i pobiera czysty XML schematów wagonów bezpośrednio przez API bez powolnego przeklikiwania karuzeli DOM.
+- **Filtry miejsc specjalnych i hierarchia priorytetów:**
+  - Domyślna hierarchia wygody: **zwykłe miejsca / Strefa ciszy** (najwyższy priorytet) > **miejsce z rowerem** (domyślnie włączone) > opcjonalne filtry (**kobieta w ciąży**, **osoba z dzieckiem**, **senior**, **niepełnosprawność bez wózka**, **osoba na wózku**).
+  - Kolorowe plakietki z typem miejsca (np. *Rower*, *Strefa ciszy*, *Senior*, *Okno*) na kartach strategii i w tabeli Gantta.
+  - Zmiana filtrów po zakończeniu skanu przelicza warianty **natychmiast lokalnie** (`/api/v1/recompute` w Web / przeliczenie w pamięci na Androidzie) bez ponownego skanowania.
 - **Matematyczny silnik optymalizacji (DAG + Programowanie Dynamiczne):**
-  Algorytm nie rzuca losowych foteli. Buduje skierowany graf acykliczny (DAG) i optymalizuje podróż według realnej wygody:
-  - **Maksymalny bonus** za siedzenie na jednym fotelu przez całą trasę (zero przesiadek).
-  - **Minimalny koszt spaceru:** gdy przesiadka jest konieczna, algorytm szuka wolnego miejsca w **tym samym przedziale** lub **tym samym wagonie**, żebyś nie musiał biegać z bagażami przez 8 wagonów.
-  - **3 profile optymalizacji do wyboru:** *Zrównoważona*, *Najmniej przesiadek* oraz *Najkrótsze spacery*.
-  - Wykrywanie rozłącznych jednostek EZT (np. Dart / Flirt) – algorytm wie, kiedy przejście między członami jest fizycznie niemożliwe.
-- **Gotowy „Plan Zakupu Biletów”:**
-  Aplikacja wyświetla jasną instrukcję krok po kroku dla wybranego wariantu:
-  *„Bilet 1: Warszawa -> Częstochowa (Wagon 5, Miejsce 82) • Bilet 2: Częstochowa -> Wrocław (Wagon 5, Miejsce 88) — przesiadka na sąsiedni fotel w tym samym wagonie”*.
-- **Wizualna tablica dostępności (Wykres Gantta):**
-  Przejrzysta siatka wszystkich foteli i wagonów z podziałem na przedziały oraz odcinki trasy. Zobacz na własne oczy, gdzie były wolne miejsca i jak przebiega wybrany wariant.
+  - **3 profile do wyboru:** *Zrównoważona*, *Najmniej przesiadek* oraz *Najkrótsze spacery*.
+  - Preferuje przesiadki w **tym samym przedziale** lub **tym samym wagonie** oraz uwzględnia nieprzechodnie człony EZT (np. podwójne składy).
+  - Obsługuje wagony **Klasy 2** oraz **Klasy 1**, a także **filtr odjazdu po wybranej godzinie** i **filtr połączeń bezpośrednich**.
+- **Gotowy „Plan Zakupu Biletów” i Wykres Gantta:**
+  - Czytelna oś czasu podróży oraz lista biletów cząstkowych krok po kroku z bezpośrednim przejściem do e-IC.
+  - W wersji Web interaktywna siatka dostępności wszystkich wagonów i miejsc na każdym odcinku oraz tryb offline (wklejanie własnej rozpiski).
 - **Radar nocnej przerwy serwisowej:**
-  Automatycznie wykrywa codzienne okno konserwacyjne systemów kolejowych (**23:45 – 00:30**, a na przełomie miesięcy do **01:00**) i dyskretnie ostrzega użytkownika, gdy serwery mogą mieć przerwę techniczną.
-- **Tryb edytora tekstowego (Offline):**
-  Możesz wkleić własną rozpiskę wolnych foteli z notatek i natychmiast przeliczyć optymalną trasę bez łączenia się ze stroną www.
+  - Ostrzega o codziennym oknie konserwacyjnym systemów kolejowych (**23:45 – 00:30**, a na przełomie miesięcy do **01:00**).
+
+---
+
+## Aplikacja na Androida
+
+Gotowy plik `.apk` (Android 10+ / API 29+) możesz pobrać bezpośrednio z zakładki **[GitHub Releases](https://github.com/Anonpaweu/Icc-Seat-Finder/releases)** (kod źródłowy wersji mobilnej znajduje się na gałęzi `android-dev`).
+
+### Instalacja na telefonie z pliku APK:
+1. Pobierz najnowszy plik `.apk` z **[Releases](https://github.com/Anonpaweu/Icc-Seat-Finder/releases)** bezpośrednio na telefon.
+2. Zezwól na instalację z nieznanych źródeł dla przeglądarki lub Menedżera plików (oraz wybierz *„Zainstaluj mimo to”*, jeśli Google Play Protect poprosi o potwierdzenie dla aplikacji spoza Sklepu Play).
+
+### Budowanie lokalne z kodu (dla deweloperów):
+```bash
+# Przełącz się na gałąź android-dev
+git checkout android-dev
+
+# Uruchom testy i zbuduj podpisany plik release APK (wymagany JDK 17 i Android SDK)
+cd android
+./gradlew testDebugUnitTest assembleRelease
+```
+Na Windowsie do szybkiego wgrania zbudowanej aktualizacji na telefon przez ADB służy skrypt `android/install_on_android.bat` (zachowuje historię i ustawienia bez odinstalowywania poprzedniej wersji).
 
 ---
 
 ## Architektura projektu
 
 ```text
-IccBagno/
-├── backend/
+Icc-Seat-Finder/
+├── backend/                     # Aplikacja PC Web (FastAPI + Playwright)
 │   ├── app/
-│   │   ├── engine/          # Parsowanie dostępności, profile wag i topologia pociągu
-│   │   ├── optimizer/       # Solwer grafowy DAG + Programowanie Dynamiczne
-│   │   ├── scraper/         # Playwright scraper (silnik V8 JS, radar błędów, cache)
-│   │   ├── db/              # Baza SQLite (auto-inicjalizacja i seed stacji przy starcie)
-│   │   ├── models/          # Schematy Pydantic i modele domenowe
-│   │   └── main.py          # Aplikacja FastAPI (REST API + serwowanie UI)
+│   │   ├── engine/              # Parsowanie dostępności, profile wag i topologia pociągu
+│   │   ├── optimizer/           # Solwer grafowy DAG + Programowanie Dynamiczne
+│   │   ├── scraper/             # Playwright scraper + parser SVG GRM + radar błędów
+│   │   ├── db/                  # Baza SQLite (auto-inicjalizacja i seed stacji przy starcie)
+│   │   ├── models/              # Schematy Pydantic i modele domenowe
+│   │   └── main.py              # Aplikacja FastAPI (REST API + /api/v1/recompute)
 │   ├── static/
-│   │   └── index.html       # Interfejs (Tailwind CSS, Vanilla JS)
-│   ├── tests/               # Zestaw testów jednostkowych i integracyjnych (pytest)
-│   └── requirements.txt     # Zależności Pythona
-├── start_server.bat         # Launcher serwera dla systemu Windows
+│   │   └── index.html           # Interfejs Web (Tailwind CSS, Vanilla JS)
+│   ├── tests/                   # Zestaw testów jednostkowych i integracyjnych (pytest)
+│   └── requirements.txt         # Zależności Pythona
+├── android/                     # Natywna aplikacja Android (Kotlin + Jetpack Compose, gałąź android-dev)
+│   ├── app/src/main/java/pl/iccbagno/app/
+│   │   ├── data/                # Baza stacji offline (stations.db) + historia 5 skanów
+│   │   ├── optimizer/           # Solwer DAG w Kotlinie z hierarchią priorytetów miejsc
+│   │   ├── scraper/             # Skaner WebView + bezpośrednie zapytania GRM API
+│   │   ├── service/             # ScanForegroundService (skanowanie w tle)
+│   │   └── ui/                  # Ekrany Compose (Wyszukiwanie, Filtry, Wyniki, Ustawienia)
+│   └── install_on_android.bat   # Skrypt aktualizacji APK przez ADB
+├── docs/
+│   └── logo.jpg                 # Logo projektu
+├── start_server.bat             # Launcher serwera PC Web dla systemu Windows
 └── README.md
 ```
 
 ---
 
-## Szybki start (Instalacja i uruchomienie)
+## Szybki start (PC Web)
 
 ### Wymagania:
 - **Python 3.10+** (zalecany Python 3.12)
@@ -98,44 +142,41 @@ pip install -r backend/requirements.txt
 playwright install chromium
 ```
 
-### 3. Odpal aplikację
-- **Na Windows:** po prostu kliknij dwukrotnie w plik:
-  ```text
-  start_server.bat
-  ```
+### 3. Odpal aplikację:
+- **Na Windows:** kliknij dwukrotnie w plik `start_server.bat`.
 - **Albo ręcznie z konsoli:**
   ```bash
   python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
   ```
 
-Przy pierwszym uruchomieniu serwer automatycznie utworzy bazę SQLite i pobierze słownik oficjalnych stacji.
+Przy pierwszym uruchomieniu serwer automatycznie utworzy bazę SQLite i przygotuje słownik oficjalnych stacji.
 Otwórz w przeglądarce: **[http://localhost:8000](http://localhost:8000)**.
 
 ---
 
 ## Uruchamianie testów
 
-Wszystkie kluczowe moduły (algorytm optymalizatora, profile, topologia wagonów, parsowanie DOM, odporność na błędy serwera, cache SQLite) są pokryte testami:
-
-```bash
-pytest backend/tests/ -v
-```
+- **PC Web / Backend (`pytest`):**
+  ```bash
+  pytest backend/tests/ -v
+  ```
+- **Android (testy jednostkowe JUnit):**
+  ```bash
+  cd android
+  .\gradlew.bat testDebugUnitTest
+  ```
 
 ---
 
 ## Jak tego używać?
 
-1. **Wpisz stację odjazdu i docelową** – np. *Koluszki* do *Opole Główne* (inteligentna wyszukiwarka podpowie oficjalne nazwy węzłów).
-2. **Wybierz datę i godzinę** – system domyślnie podpowiada aktualny czas z Twojego komputera i blokuje omyłkowy wybór dat z przeszłości.
-3. **Kliknij „Szukaj połączeń”** – lista automatycznie wybierze najbliższy pociąg po wskazanej godzinie (np. 1646).
-4. **Wybierz klasę (2 lub 1) oraz strategię optymalizacji** i kliknij **„Wyszukaj i optymalizuj miejsca”**:
-   - Aplikacja natychmiast pokaże listę stacji pośrednich z godzinami.
-   - Skaner sprawdzi wagony wybranej klasy na każdym etapie podróży.
-   - Na koniec otrzymasz 3 zróżnicowane warianty podróży, gotowy plan zakupu biletów oraz kolorową mapę zajętości miejsc.
-5. Idziesz na oficjalną stronę przewoźnika lub do kasy biletowej, kupujesz bilety według wygenerowanej listy i podróżujesz na siedząco.
+1. **Wpisz stację odjazdu i docelową** — np. *Warszawa Centralna* -> *Wrocław Główny* (autouzupełnianie podpowie oficjalne nazwy węzłów).
+2. **Wybierz datę, opcjonalnie minimalną godzinę odjazdu, klasę (2 lub 1) oraz filtry miejsc** (domyślnie aktywne są zwykłe fotele, Strefa ciszy oraz miejsca z rowerem).
+3. **Wyszukaj połączenia i uruchom skanowanie pociągu** — aplikacja automatycznie uruchomi Fast-Path albo przeskanuje kolejne odcinki trasy.
+4. **Wybierz najwygodniejszy wariant podróży** (np. *Zrównoważona* lub *Najmniej przesiadek*), przejrzyj instrukcję zakupu biletów i kup wskazane bilety cząstkowe w oficjalnym serwisie przewoźnika lub w kasie.
 
 ---
 
 ## Zastrzeżenie prawne (Disclaimer)
 
-Projekt ma charakter wyłącznie edukacyjny, badawczy i hobbystyczny. Program służy do wspomagania planowania podróży i **nie dokonuje zakupu biletów ani nie rezerwuje miejsc na stałe** (działa w 100% w trybie odczytu / read-only). Projekt nie jest w żaden sposób powiązany z żadnym przewoźnikiem kolejowym.
+Projekt ma charakter wyłącznie edukacyjny, badawczy i hobbystyczny. Program służy do wspomagania planowania podróży i **nie dokonuje zakupu biletów ani nie rezerwuje miejsc na stałe** (działa w trybie odczytu / read-only). Projekt nie jest w żaden sposób powiązany z żadnym przewoźnikiem kolejowym.

@@ -22,6 +22,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import pl.iccbagno.app.MainActivity
+import pl.iccbagno.app.data.ScanHistoryItem
+import pl.iccbagno.app.data.ScanHistoryStore
 import pl.iccbagno.app.data.StationsRepository
 import pl.iccbagno.app.domain.FullTrainAvailabilityMap
 import pl.iccbagno.app.optimizer.OptimizationProfile
@@ -41,6 +43,9 @@ data class ScanProgressState(
     val error: String? = null,
     val ticketClass: Int = 2,
     val trainNumber: String = "",
+    val fromStation: String = "",
+    val toStation: String = "",
+    val travelDate: String = "",
     val fastPathUsed: Boolean = false,
     val debugWebView: android.webkit.WebView? = null
 )
@@ -107,8 +112,36 @@ class ScanForegroundService : Service() {
         fun recomputeProfile(profile: OptimizationProfile) {
             val current = _state.value
             val map = current.availabilityMap ?: return
+            val strategies = computeStrategiesForMap(map, profile)
+            if (strategies.isEmpty()) return
+            _state.value = current.copy(strategies = strategies)
+        }
+
+        fun loadFromHistory(item: ScanHistoryItem, profile: OptimizationProfile) {
+            val strategies = computeStrategiesForMap(item.availabilityMap, profile)
+            _state.value = ScanProgressState(
+                isRunning = false,
+                progress = 100,
+                statusMessage = "Wczytano z historii analiz",
+                logs = emptyList(),
+                availabilityMap = item.availabilityMap,
+                strategies = strategies,
+                error = if (strategies.isEmpty()) "Brak wariantów siedzących w zapisanej analizie." else null,
+                ticketClass = item.ticketClass,
+                trainNumber = item.trainNumber,
+                fromStation = item.fromStation,
+                toStation = item.toStation,
+                travelDate = item.travelDate,
+                fastPathUsed = item.availabilityMap.fastPathUsed
+            )
+        }
+
+        private fun computeStrategiesForMap(
+            map: FullTrainAvailabilityMap,
+            profile: OptimizationProfile
+        ): List<OptimizationStrategy> {
             val matrix = SeatOptimizer.availabilityMapToMatrix(map)
-            if (matrix.availabilityMatrix.isEmpty()) return
+            if (matrix.availabilityMatrix.isEmpty()) return emptyList()
             val evas = HashMap<String, String>()
             val depTimes = ArrayList<String>(map.segments.size)
             val segDates = ArrayList<String>(map.segments.size)
@@ -118,7 +151,7 @@ class ScanForegroundService : Service() {
                 depTimes.add(seg.departureTime)
                 segDates.add(seg.segmentDate.ifBlank { map.travelDate })
             }
-            val strategies = SeatOptimizer.solveTopStrategies(
+            return SeatOptimizer.solveTopStrategies(
                 availabilityMatrix = matrix.availabilityMatrix,
                 seatsMeta = matrix.seatsMeta,
                 stationNames = matrix.stationNames,
@@ -129,7 +162,6 @@ class ScanForegroundService : Service() {
                 segmentDates = segDates,
                 defaultTravelDate = map.travelDate
             )
-            _state.value = current.copy(strategies = strategies)
         }
     }
 
@@ -192,7 +224,10 @@ class ScanForegroundService : Service() {
             statusMessage = "Przygotowywanie skanera...",
             logs = listOf("Start skanowania $trainNumber ($fromStation -> $toStation)"),
             ticketClass = ticketClass,
-            trainNumber = trainNumber
+            trainNumber = trainNumber,
+            fromStation = fromStation,
+            toStation = toStation,
+            travelDate = travelDate
         )
 
         scanJob = serviceScope.launch {
@@ -246,26 +281,44 @@ class ScanForegroundService : Service() {
                     return@launch
                 }
 
-                val evas = HashMap<String, String>()
-                val depTimes = ArrayList<String>(map.segments.size)
-                val segDates = ArrayList<String>(map.segments.size)
-                for (seg in map.segments) {
-                    if (seg.fromEva.isNotBlank()) evas[seg.fromStation] = seg.fromEva
-                    if (seg.toEva.isNotBlank()) evas[seg.toStation] = seg.toEva
-                    depTimes.add(seg.departureTime)
-                    segDates.add(seg.segmentDate.ifBlank { travelDate })
+                val strategies = computeStrategiesForMap(map, profile)
+                if (strategies.isEmpty()) {
+                    val freeSegments = map.segments.filter { seg -> seg.carriages.values.any { it.isNotEmpty() } }
+                    val errSegs = map.segments.filter { it.status == "SCRAPE_ERROR" }
+                    val details = when {
+                        freeSegments.isNotEmpty() -> {
+                            val listStr = freeSegments.take(3).joinToString("; ") { seg ->
+                                "${seg.fromStation} -> ${seg.toStation}"
+                            }
+                            "Większość trasy jest wyprzedana - znaleziono tylko pojedyncze krótkie odcinki ($listStr), na których nie opłaca się przesiadka w optymalizatorze."
+                        }
+                        errSegs.isNotEmpty() -> {
+                            val reason = errSegs.mapNotNull { it.errorReason }.firstOrNull() ?: "Błąd odczytu."
+                            "Błąd odczytu (${errSegs.size}/${map.segments.size} odcinków): $reason"
+                        }
+                        else -> "Brak wariantów podróży z miejscem siedzącym w Klasie $ticketClass."
+                    }
+                    _state.value = _state.value.copy(
+                        isRunning = false,
+                        progress = 100,
+                        statusMessage = details,
+                        availabilityMap = map,
+                        strategies = emptyList(),
+                        error = details,
+                        debugWebView = null
+                    )
+                    return@launch
                 }
 
-                val strategies = SeatOptimizer.solveTopStrategies(
-                    availabilityMatrix = matrix.availabilityMatrix,
-                    seatsMeta = matrix.seatsMeta,
-                    stationNames = matrix.stationNames,
-                    segmentDurations = matrix.segmentDurations,
-                    config = OptimizerConfig(profile = profile),
-                    stationEvas = evas,
-                    departureTimes = depTimes,
-                    segmentDates = segDates,
-                    defaultTravelDate = travelDate
+                ScanHistoryStore.saveScan(
+                    context = applicationContext,
+                    fromStation = fromStation,
+                    toStation = toStation,
+                    travelDate = travelDate,
+                    trainNumber = trainNumber,
+                    ticketClass = ticketClass,
+                    map = map,
+                    strategies = strategies
                 )
 
                 _state.value = _state.value.copy(

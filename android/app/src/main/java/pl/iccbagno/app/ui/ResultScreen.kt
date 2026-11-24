@@ -111,9 +111,12 @@ fun ResultScreen(
                     }
                 },
                 title = {
+                    val headerFrom = scan.fromStation.ifBlank { ui.fromQuery }
+                    val headerTo = scan.toStation.ifBlank { ui.toQuery }
+                    val headerDate = scan.travelDate.ifBlank { ui.travelDate }
                     Column {
                         Text(
-                            text = "${ui.fromQuery} -> ${ui.toQuery}",
+                            text = "$headerFrom -> $headerTo",
                             fontWeight = FontWeight.Bold,
                             fontSize = 15.sp,
                             maxLines = 1,
@@ -121,7 +124,7 @@ fun ResultScreen(
                         )
                         val trainTitle = scan.trainNumber.ifBlank { ui.lastScannedTrain?.trainNumber.orEmpty() }
                         Text(
-                            text = "$trainTitle • ${formatDatePl(ui.travelDate)} • Klasa ${scan.ticketClass}",
+                            text = "$trainTitle • ${formatDatePl(headerDate)} • Klasa ${scan.ticketClass}",
                             fontSize = 12.sp,
                             color = colors.textSecondary,
                             maxLines = 1,
@@ -318,6 +321,104 @@ fun ResultScreen(
                                 text = scan.error,
                                 fontSize = 14.sp,
                                 color = colors.textPrimary
+                            )
+                            if (scan.logs.isNotEmpty()) {
+                                Surface(
+                                    color = colors.card.copy(alpha = 0.7f),
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { showLogs = !showLogs }
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "Dziennik skanowania (${scan.logs.size})",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = colors.textSecondary
+                                        )
+                                        Icon(
+                                            imageVector = if (showLogs) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                            contentDescription = null,
+                                            tint = colors.textSecondary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                                AnimatedVisibility(visible = showLogs) {
+                                    Surface(
+                                        color = colors.canvas,
+                                        shape = RoundedCornerShape(12.dp),
+                                        border = BorderStroke(1.dp, colors.hairline),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .heightIn(max = 180.dp)
+                                    ) {
+                                        Column(
+                                            modifier = Modifier
+                                                .verticalScroll(rememberScrollState())
+                                                .padding(10.dp),
+                                            verticalArrangement = Arrangement.spacedBy(3.dp)
+                                        ) {
+                                            for (line in scan.logs) {
+                                                Text(line, color = colors.textSecondary, fontSize = 11.sp)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Button(
+                                    onClick = onRetryScan,
+                                    colors = ButtonDefaults.buttonColors(containerColor = colors.accent),
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Ponów")
+                                }
+                                OutlinedButton(
+                                    onClick = onBack,
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text("Wróć do listy", color = colors.textPrimary)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!scan.isRunning && scan.error == null && scan.strategies.isEmpty()) {
+                item(key = "empty_fallback") {
+                    Surface(
+                        color = colors.card,
+                        shape = RoundedCornerShape(22.dp),
+                        border = BorderStroke(1.dp, colors.hairline),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(18.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Text(
+                                text = "Brak gotowych wariantów do wyświetlenia",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 16.sp,
+                                color = colors.textPrimary
+                            )
+                            Text(
+                                text = scan.statusMessage.ifBlank {
+                                    "Skanowanie nie zwróciło żadnego wariantu z miejscem siedzącym lub zostało przerwane."
+                                },
+                                fontSize = 14.sp,
+                                color = colors.textSecondary
                             )
                             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 Button(

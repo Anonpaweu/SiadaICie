@@ -33,6 +33,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
@@ -67,6 +68,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import pl.iccbagno.app.data.ScanHistoryItem
 import pl.iccbagno.app.domain.StationInfo
 import pl.iccbagno.app.domain.TrainConnection
 import pl.iccbagno.app.optimizer.SeatOptimizer
@@ -80,6 +82,7 @@ import java.util.Locale
 fun SearchScreen(
     ui: SearchUiState,
     scan: ScanProgressState,
+    history: List<ScanHistoryItem>,
     onFromChange: (String) -> Unit,
     onToChange: (String) -> Unit,
     onSelectFrom: (StationInfo) -> Unit,
@@ -92,7 +95,9 @@ fun SearchScreen(
     onSearchTrains: () -> Unit,
     onSelectTrain: (TrainConnection) -> Unit,
     onOpenSettings: () -> Unit,
-    onOpenCurrentScan: () -> Unit
+    onOpenCurrentScan: () -> Unit,
+    onOpenHistoryItem: (ScanHistoryItem) -> Unit,
+    onClearHistory: () -> Unit
 ) {
     val colors = LocalRailColors.current
 
@@ -518,6 +523,100 @@ fun SearchScreen(
                     }
                 }
             }
+
+            if (history.isNotEmpty()) {
+                item(key = "history_header") {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 6.dp, start = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.History,
+                                contentDescription = null,
+                                tint = colors.textSecondary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Ostatnie analizy (${history.size}/5)",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                color = colors.textPrimary
+                            )
+                        }
+                        TextButton(onClick = onClearHistory) {
+                            Text("Wyczyść", fontSize = 12.sp, color = colors.textSecondary)
+                        }
+                    }
+                }
+
+                items(
+                    items = history,
+                    key = { "hist_${it.id}" }
+                ) { item ->
+                    HistorySummaryCard(
+                        item = item,
+                        onClick = { onOpenHistoryItem(item) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HistorySummaryCard(
+    item: ScanHistoryItem,
+    onClick: () -> Unit
+) {
+    val colors = LocalRailColors.current
+    val isGolden = item.transfersCount == 0 && item.totalStandingMin == 0
+    Surface(
+        onClick = onClick,
+        color = colors.card,
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, colors.hairline),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(
+                    text = "${item.fromStation} -> ${item.toStation}",
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.sp,
+                    color = colors.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = "${item.trainNumber} • ${formatDatePl(item.travelDate)} • Kl. ${item.ticketClass}",
+                    fontSize = 11.sp,
+                    color = colors.textSecondary
+                )
+                Text(
+                    text = item.topStrategyTitle,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = if (isGolden) colors.seatEmerald else colors.accent,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                contentDescription = null,
+                tint = colors.textSecondary,
+                modifier = Modifier.size(18.dp)
+            )
         }
     }
 }

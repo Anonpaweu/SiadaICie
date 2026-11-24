@@ -11,6 +11,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import pl.iccbagno.app.data.ScanHistoryItem
+import pl.iccbagno.app.data.ScanHistoryStore
 import pl.iccbagno.app.data.StationsRepository
 import pl.iccbagno.app.domain.StationInfo
 import pl.iccbagno.app.domain.TrainConnection
@@ -55,6 +57,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val uiState: StateFlow<SearchUiState> = _uiState.asStateFlow()
 
     val scanState: StateFlow<ScanProgressState> = ScanForegroundService.state
+    val history: StateFlow<List<ScanHistoryItem>> = ScanHistoryStore.history
+
+    init {
+        ScanHistoryStore.refresh(application.applicationContext)
+    }
 
     private var fromSearchJob: Job? = null
     private var toSearchJob: Job? = null
@@ -155,6 +162,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openScanScreen() {
         _uiState.update { it.copy(activeScreen = AppScreen.SCAN_RESULT) }
+    }
+
+    fun openHistoryItem(item: ScanHistoryItem) {
+        val profile = _uiState.value.profile
+        ScanForegroundService.loadFromHistory(item, profile)
+        _uiState.update {
+            it.copy(
+                selectedStrategyIdx = 0,
+                activeScreen = AppScreen.SCAN_RESULT,
+                fromQuery = item.fromStation,
+                toQuery = item.toStation,
+                travelDate = item.travelDate,
+                ticketClass = item.ticketClass
+            )
+        }
+    }
+
+    fun clearHistory() {
+        ScanHistoryStore.clear(getApplication<Application>().applicationContext)
     }
 
     fun searchTrains() {

@@ -57,6 +57,7 @@ import java.time.format.DateTimeFormatter
 fun MainScreen(viewModel: MainViewModel) {
     val ui by viewModel.uiState.collectAsState()
     val scan by viewModel.scanState.collectAsState()
+    val history by viewModel.history.collectAsState()
     val context = LocalContext.current
     val colors = LocalRailColors.current
 
@@ -77,6 +78,7 @@ fun MainScreen(viewModel: MainViewModel) {
             AppScreen.SEARCH -> SearchScreen(
                 ui = ui,
                 scan = scan,
+                history = history,
                 onFromChange = viewModel::onFromQueryChange,
                 onToChange = viewModel::onToQueryChange,
                 onSelectFrom = viewModel::selectFromStation,
@@ -89,7 +91,9 @@ fun MainScreen(viewModel: MainViewModel) {
                 onSearchTrains = viewModel::searchTrains,
                 onSelectTrain = viewModel::startTrainScan,
                 onOpenSettings = { showSettings = true },
-                onOpenCurrentScan = viewModel::openScanScreen
+                onOpenCurrentScan = viewModel::openScanScreen,
+                onOpenHistoryItem = viewModel::openHistoryItem,
+                onClearHistory = viewModel::clearHistory
             )
 
             AppScreen.SCAN_RESULT -> ResultScreen(

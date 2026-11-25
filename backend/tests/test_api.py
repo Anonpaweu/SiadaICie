@@ -576,3 +576,126 @@ class TestImprovementsApi:
         for strat in data["strategies"]:
             for step in strat["steps"]:
                 assert step.get("booking_url") is None
+
+
+class TestStandingTicketLinksAndStatus:
+    """Test standing corridor booking URLs, status classification, and full-route alternative."""
+
+    def test_classify_standing_status_from_card_text(self):
+        from backend.app.scraper.ebilet_seat_scraper import classify_standing_status_from_card_text
+
+        avail_card = (
+            "Połączenie tam 15:27 Poznań Gł. Konin Informacja Klasa 2: Nie ma już miejsc "
+            "ogólnodostępnych. Można kupić bilet bez gwarancji miejsca siedzącego. Klasa 1 43,00 zł Klasa 2 21,45 zł"
+        )
+        overbooked_card = (
+            "Połączenie tam 15:20 Warszawa Centr. Piotrków Tryb. Błąd Klasa 2: Miejsca w wybranej klasie "
+            "zostały wyprzedane. Prosimy wybrać inną klasę lub inny pociąg. Klasa 1 57,00 zł Klasa 2 Niedostępna"
+        )
+        special_card = (
+            "Połączenie tam 17:20 Warszawa Centr. Piotrków Tryb. Informacja Klasa 2: Brak miejsc "
+            "ogólnodostępnych. Dostępne miejsca specjalne Klasa 1 57,00 zł Klasa 2 27,95 zł"
+        )
+        normal_card = "Połączenie tam 10:00 Warszawa Centr. Kraków Gł. Klasa 1 99 zł Klasa 2 59 zł KUP BILET"
+
+        assert classify_standing_status_from_card_text(avail_card, ticket_class=2) == "AVAILABLE"
+        assert classify_standing_status_from_card_text(overbooked_card, ticket_class=2) == "OVERBOOKED"
+        assert classify_standing_status_from_card_text(special_card, ticket_class=2) == "SPECIAL_ONLY"
+        assert classify_standing_status_from_card_text(normal_card, ticket_class=2) is None
+
+    def test_standing_corridor_has_merged_booking_url_and_full_route_alternative(self, monkeypatch):
+        from backend.app.models.domain import FullTrainAvailabilityMap, SegmentAvailabilityMap
+        from backend.app.scraper.ebilet_seat_scraper import LiveTrainScanner
+
+        async def mock_scan(self, **kwargs):
+            return FullTrainAvailabilityMap(
+                train_number="IC 1646",
+                travel_date="2026-11-27",
+                fast_path_used=False,
+                total_route_segments=3,
+                full_route_standing_status="AVAILABLE",
+                segments=[
+                    SegmentAvailabilityMap(
+                        segment_index=0,
+                        from_station="Warszawa Centralna",
+                        to_station="Koluszki",
+                        departure_time="17:20",
+                        duration_min=55,
+                        from_eva="5100065",
+                        to_eva="5100024",
+                        segment_date="2026-11-27",
+                        carriages={},
+                        status="SOLD_OUT",
+                        standing_status="AVAILABLE",
+                    ),
+                    SegmentAvailabilityMap(
+                        segment_index=1,
+                        from_station="Koluszki",
+                        to_station="Piotrków Trybunalski",
+                        departure_time="18:16",
+                        duration_min=25,
+                        from_eva="5100024",
+                        to_eva="5100190",
+                        segment_date="2026-11-27",
+                        carriages={},
+                        status="SOLD_OUT",
+                        standing_status="SPECIAL_ONLY",
+                    ),
+                    SegmentAvailabilityMap(
+                        segment_index=2,
+                        from_station="Piotrków Trybunalski",
+                        to_station="Wrocław Główny",
+                        departure_time="18:42",
+                        duration_min=160,
+                        from_eva="5100190",
+                        to_eva="5100069",
+                        segment_date="2026-11-27",
+                        carriages={"6": ["44"]},
+                        status="OK",
+                    ),
+                ],
+            )
+
+        monkeypatch.setattr(LiveTrainScanner, "scan_full_train", mock_scan)
+
+        resp = client.post(
+            "/api/v1/optimize",
+            json={
+                "from_station": "Warszawa Centralna",
+                "to_station": "Wrocław Główny",
+                "date": "2026-11-27",
+                "time": "17:20",
+                "train_number": "IC 1646",
+                "scan_id": "test-standing-links",
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+
+        # Full-route A->D booking link and status exposed at top level
+        assert data["full_route_standing_status"] == "AVAILABLE"
+        full_url = data["full_route_booking_url"]
+        assert full_url is not None
+        assert "swyj=5100065" in full_url
+        assert "sprzy=5100069" in full_url
+
+        # Consecutive sold-out segments 0..2 merged into a single standing step Warszawa Centralna -> Piotrków Tryb.
+        best = data["strategies"][0]
+        assert len(best["steps"]) == 2
+        standing_step = best["steps"][0]
+        assert standing_step["is_standing"] is True
+        assert standing_step["from_station_name"] == "Warszawa Centralna"
+        assert standing_step["to_station_name"] == "Piotrków Trybunalski"
+        # Worst-case status across (AVAILABLE, SPECIAL_ONLY) -> SPECIAL_ONLY
+        assert standing_step["standing_status"] == "SPECIAL_ONLY"
+        assert standing_step["booking_url"] is not None
+        assert "swyj=5100065" in standing_step["booking_url"]
+        assert "sprzy=5100190" in standing_step["booking_url"]
+
+        # Recompute preserves standing_status & full_route_booking_url
+        recomp = client.post("/api/v1/recompute", json={"profile": "MINIMAL_TRANSFERS"})
+        assert recomp.status_code == 200
+        rdata = recomp.json()
+        assert rdata["full_route_booking_url"] == full_url
+        assert rdata["full_route_standing_status"] == "AVAILABLE"
+        assert rdata["strategies"][0]["steps"][0]["standing_status"] == "SPECIAL_ONLY"

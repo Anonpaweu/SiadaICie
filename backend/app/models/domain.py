@@ -123,6 +123,7 @@ class SegmentAvailabilityMap(BaseModel):
     seat_tags: Dict[str, List[str]] = Field(default_factory=dict)
     status: str = "OK"                       # "OK", "SOLD_OUT", "SCRAPE_ERROR"
     error_reason: Optional[str] = None
+    standing_status: Optional[str] = None    # "AVAILABLE", "OVERBOOKED", "SPECIAL_ONLY", None
 
 
 class FullTrainAvailabilityMap(BaseModel):
@@ -130,6 +131,7 @@ class FullTrainAvailabilityMap(BaseModel):
     travel_date: str = ""
     fast_path_used: bool = False
     total_route_segments: int = 0
+    full_route_standing_status: Optional[str] = None
     segments: List[SegmentAvailabilityMap] = Field(default_factory=list)
 
 

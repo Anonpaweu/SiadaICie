@@ -190,6 +190,50 @@ async def get_browser_instance(p, headless: bool = True) -> Tuple[Any, bool]:
     return browser, False
 
 
+def classify_standing_status_from_card_text(card_text: str, ticket_class: int = 2) -> Optional[str]:
+    """
+    Classifies e-IC connection card availability for tickets without guaranteed seats:
+      - "AVAILABLE": e-IC explicitly says ticket without guaranteed seat can be bought
+      - "OVERBOOKED": chosen class is completely sold out / unavailable (no standing tickets)
+      - "SPECIAL_ONLY": general seats sold out, only special seats remain (requires login check)
+      - None: normal availability notice or no standing-specific message
+    """
+    low = re.sub(r"\s+", " ", (card_text or "")).strip().lower()
+    if not low:
+        return None
+
+    class_marker = f"klasa {ticket_class}:"
+    other_class = 1 if ticket_class == 2 else 2
+    other_marker = f"klasa {other_class}:"
+    if class_marker in low:
+        start = low.find(class_marker)
+        end_candidates = [
+            pos for pos in (
+                low.find(other_marker, start + len(class_marker)),
+                low.find("bezpośredni", start),
+                low.find("czas:", start),
+            )
+            if pos > start
+        ]
+        snippet = low[start:min(end_candidates)] if end_candidates else low[start:]
+    else:
+        snippet = low
+
+    if "bez gwarancji miejsca" in snippet or "bez gwarancji" in snippet:
+        return "AVAILABLE"
+    if (
+        "zostały wyprzedane" in snippet
+        or "wyprzedane" in snippet
+        or "brak możliwości zakupu" in snippet
+        or "przepełn" in snippet
+        or f"klasa {ticket_class} niedostępna" in low
+    ):
+        return "OVERBOOKED"
+    if "miejsca specjalne" in snippet:
+        return "SPECIAL_ONLY"
+    return None
+
+
 class EbiletSeatScraper:
     """
     Playwright-based scraper for ebilet.intercity.pl (e-IC 2.0 React SPA).
@@ -212,6 +256,7 @@ class EbiletSeatScraper:
 
         self.timeout_ms = timeout_ms
         self.ttl_seconds = ttl_seconds
+        self._last_standing_status_map: Dict[str, str] = {}
         DEBUG_SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
         LAST_SCAN_FILE.parent.mkdir(parents=True, exist_ok=True)
 
@@ -1041,6 +1086,16 @@ class EbiletSeatScraper:
                 except Exception:
                     break
                 await asyncio.sleep(0.25)
+
+            try:
+                card_text_raw = await chosen_card.inner_text() or ""
+                st_status = classify_standing_status_from_card_text(card_text_raw, ticket_class=ticket_class)
+                if st_status:
+                    if not hasattr(self, "_last_standing_status_map"):
+                        self._last_standing_status_map = {}
+                    self._last_standing_status_map[f"{from_station}_{to_station}_{date_str}_c{ticket_class}"] = st_status
+            except Exception:
+                pass
 
             # Expand train card (strictly buy/select buttons — never bare 'button' which hits 'DODATKOWE INFORMACJE')
             expand_buttons = [
@@ -2020,6 +2075,20 @@ class LiveTrainScanner:
 
                 _check_cancelled()
 
+                def _get_scraped_tags(f_st: str, t_st: str, d_str: str) -> Dict[str, List[str]]:
+                    return dict(
+                        getattr(self.scraper, "_last_seat_tags_map", {}).get(
+                            f"{f_st}_{t_st}_{d_str}_c{ticket_class}", {}
+                        )
+                    )
+
+                def _get_standing_status(f_st: str, t_st: str, d_str: str) -> Optional[str]:
+                    return getattr(self.scraper, "_last_standing_status_map", {}).get(
+                        f"{f_st}_{t_st}_{d_str}_c{ticket_class}"
+                    )
+
+                full_route_standing: Optional[str] = None
+
                 # 3. Fast-Path A -> B full-route check before scanning all elementary segments
                 if fast_path and num_segments > 1:
                     s_first = stops[0]
@@ -2094,13 +2163,7 @@ class LiveTrainScanner:
                         except Exception:
                             pass
 
-                    def _get_scraped_tags(f_st: str, t_st: str, d_str: str) -> Dict[str, List[str]]:
-                        return dict(
-                            getattr(self.scraper, "_last_seat_tags_map", {}).get(
-                                f"{f_st}_{t_st}_{d_str}_c{ticket_class}", {}
-                            )
-                        )
-
+                    full_route_standing = _get_standing_status(s_first.name, s_last.name, full_date)
                     full_tags = _get_scraped_tags(s_first.name, s_last.name, full_date)
                     has_allowed_fp = bool(
                         full_carriages
@@ -2125,12 +2188,14 @@ class LiveTrainScanner:
                             seat_tags=full_tags,
                             status="OK",
                             error_reason=None,
+                            standing_status=full_route_standing,
                         )
                         fast_map = FullTrainAvailabilityMap(
                             train_number=train_number,
                             travel_date=travel_date,
                             fast_path_used=True,
                             total_route_segments=num_segments,
+                            full_route_standing_status=full_route_standing,
                             segments=[fast_seg],
                         )
                         try:
@@ -2432,6 +2497,7 @@ class LiveTrainScanner:
                         seat_tags=seg_tags,
                         status=seg_status,
                         error_reason=seg_error_reason,
+                        standing_status=_get_standing_status(s_from.name, s_to.name, seg_date),
                     )
 
                 tasks = [scan_single_segment(i) for i in range(num_segments)]
@@ -2581,6 +2647,7 @@ class LiveTrainScanner:
             travel_date=travel_date,
             fast_path_used=False,
             total_route_segments=len(segments_map),
+            full_route_standing_status=full_route_standing,
             segments=segments_map,
         )
 

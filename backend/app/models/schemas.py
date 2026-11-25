@@ -34,6 +34,7 @@ class StepResponse(BaseModel):
     seat_tags: List[str] = []
     alternative_seats_in_same_carriage: List[str] = []
     booking_url: Optional[str] = None
+    standing_status: Optional[str] = None
 
 
 SeatBlockSchema = StepResponse
@@ -71,6 +72,8 @@ class AnalyzeResponse(BaseModel):
     purchase_instructions: List[str] = []
     fast_path_used: bool = False
     total_route_segments: int = 0
+    full_route_booking_url: Optional[str] = None
+    full_route_standing_status: Optional[str] = None
 
 
 OptimizationResponse = AnalyzeResponse

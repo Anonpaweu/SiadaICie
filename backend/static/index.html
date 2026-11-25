@@ -1545,6 +1545,39 @@
       banner.classList.remove('hidden');
     }
 
+    function getStandingBadgeInfo(status) {
+      if (status === 'AVAILABLE') {
+        return {
+          label: 'e-IC: możliwy bilet bez gwarancji miejsca',
+          bg: 'var(--emerald-bg)',
+          color: 'var(--emerald)',
+          btnLabel: 'Otwórz w e-IC (bez gwarancji)',
+        };
+      }
+      if (status === 'OVERBOOKED') {
+        return {
+          label: 'e-IC: klasa wyprzedana (brak biletów stojących)',
+          bg: 'color-mix(in srgb, var(--error, #dc2626) 14%, transparent)',
+          color: 'var(--error, #dc2626)',
+          btnLabel: 'Sprawdź w e-IC',
+        };
+      }
+      if (status === 'SPECIAL_ONLY') {
+        return {
+          label: 'e-IC: tylko miejsca specjalne (sprawdź po zalogowaniu)',
+          bg: 'var(--amber-bg)',
+          color: 'var(--amber)',
+          btnLabel: 'Sprawdź w e-IC',
+        };
+      }
+      return {
+        label: 'Bilet bez gwarancji miejsca — sprawdź dostępność w e-IC',
+        bg: 'var(--tonal)',
+        color: 'var(--muted)',
+        btnLabel: 'Otwórz w e-IC (bez gwarancji)',
+      };
+    }
+
     function renderPurchaseInstructions(data) {
       const section = document.getElementById('purchasePlanSection');
       const list = document.getElementById('purchaseInstructionsList');
@@ -1572,16 +1605,21 @@
 
       instructions.forEach((instr, idx) => {
         const step = activeStrategy && Array.isArray(activeStrategy.steps) ? activeStrategy.steps[idx] : null;
+        const isStanding = Boolean(step && step.is_standing);
         const bookingUrl = (
           step
-          && !step.is_standing
           && typeof step.booking_url === 'string'
           && step.booking_url.startsWith('https://ebilet.intercity.pl/')
         ) ? step.booking_url : '';
 
+        const standingInfo = isStanding ? getStandingBadgeInfo(step.standing_status) : null;
+        const btnText = isStanding ? standingInfo.btnLabel : 'Otwórz odcinek w e-IC';
+        const btnColor = isStanding ? standingInfo.color : 'var(--accent)';
+        const btnBg = isStanding ? standingInfo.bg : 'var(--accent-bg)';
+
         const linkHtml = bookingUrl
-          ? `<a href="${escapeHtml(bookingUrl)}" target="_blank" rel="noopener noreferrer" class="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-semibold text-xs transition-opacity hover:opacity-85" style="background-color: var(--accent-bg); color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);">
-              <span>Otwórz odcinek w e-IC</span>
+          ? `<a href="${escapeHtml(bookingUrl)}" target="_blank" rel="noopener noreferrer" class="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-semibold text-xs transition-opacity hover:opacity-85" style="background-color: ${btnBg}; color: ${btnColor}; border: 1px solid color-mix(in srgb, ${btnColor} 35%, transparent);">
+              <span>${escapeHtml(btnText)}</span>
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
               </svg>
@@ -1593,8 +1631,10 @@
         const tagsBadgesHtml = (step && !step.is_standing && step.seat_tags && step.seat_tags.length)
           ? `<div class="mt-1.5 flex flex-wrap gap-1">${renderSeatTagsBadges(step.seat_tags)}</div>`
           : '';
+        const standingBadgeHtml = isStanding
+          ? `<div class="mt-1.5"><span class="inline-block px-2 py-0.5 rounded-md text-[10px] font-semibold" style="background-color: ${standingInfo.bg}; color: ${standingInfo.color}; border: 1px solid color-mix(in srgb, ${standingInfo.color} 35%, transparent);">${escapeHtml(standingInfo.label)}</span></div>`
+          : '';
 
-        const isStanding = Boolean(step && step.is_standing);
         const dotStyle = isStanding
           ? 'background-color: var(--amber-bg); color: var(--amber);'
           : 'background-color: var(--emerald-bg); color: var(--emerald);';
@@ -1607,12 +1647,52 @@
             <div class="flex-1 leading-relaxed">
               <span class="font-semibold">${escapeHtml(instr)}</span>
               ${tagsBadgesHtml}
+              ${standingBadgeHtml}
             </div>
           </div>
           ${linkHtml}
         `;
         list.appendChild(item);
       });
+
+      const hasStandingLeg = Boolean(
+        activeStrategy
+        && (Number(activeStrategy.total_standing_min || 0) > 0 || (activeStrategy.steps || []).some(st => st && st.is_standing))
+      );
+      const fullRouteUrl = (
+        typeof data.full_route_booking_url === 'string'
+        && data.full_route_booking_url.startsWith('https://ebilet.intercity.pl/')
+      ) ? data.full_route_booking_url : '';
+
+      if (hasStandingLeg && fullRouteUrl && Array.isArray(data.stations) && data.stations.length >= 2) {
+        const firstSt = data.stations[0];
+        const lastSt = data.stations[data.stations.length - 1];
+        const fullInfo = getStandingBadgeInfo(data.full_route_standing_status);
+        const altCard = document.createElement('div');
+        altCard.className = 'rounded-2xl p-3.5 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3';
+        altCard.style.backgroundColor = 'var(--tonal)';
+        altCard.style.border = '1px dashed color-mix(in srgb, var(--amber) 55%, transparent)';
+        altCard.innerHTML = `
+          <div class="flex-1 space-y-1 leading-relaxed">
+            <div class="font-bold" style="color: var(--text);">
+              Alternatywa: 1 bilet na całą trasę bez gwarancji miejsca (${escapeHtml(firstSt)} &rarr; ${escapeHtml(lastSt)})
+            </div>
+            <div style="color: var(--muted);">
+              Zamiast kupować osobno bilet stojący i siedzący, możesz spróbować kupić 1 bilet bez gwarancji miejsca na całą relację.
+            </div>
+            <div>
+              <span class="inline-block px-2 py-0.5 rounded-md text-[10px] font-semibold" style="background-color: ${fullInfo.bg}; color: ${fullInfo.color}; border: 1px solid color-mix(in srgb, ${fullInfo.color} 35%, transparent);">${escapeHtml(fullInfo.label)}</span>
+            </div>
+          </div>
+          <a href="${escapeHtml(fullRouteUrl)}" target="_blank" rel="noopener noreferrer" class="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-semibold text-xs transition-opacity hover:opacity-85" style="background-color: ${fullInfo.bg}; color: ${fullInfo.color}; border: 1px solid color-mix(in srgb, ${fullInfo.color} 35%, transparent);">
+            <span>Otwórz całą trasę w e-IC</span>
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+            </svg>
+          </a>
+        `;
+        list.appendChild(altCard);
+      }
 
       section.classList.remove('hidden');
     }

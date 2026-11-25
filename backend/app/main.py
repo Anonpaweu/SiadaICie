@@ -211,6 +211,16 @@ scan_manager = ScanJobManager()
 _last_cached_analysis: Optional[dict] = None
 
 
+def _aggregate_standing_status(statuses: List[Optional[str]]) -> Optional[str]:
+    if "OVERBOOKED" in statuses:
+        return "OVERBOOKED"
+    if "SPECIAL_ONLY" in statuses:
+        return "SPECIAL_ONLY"
+    if "AVAILABLE" in statuses:
+        return "AVAILABLE"
+    return None
+
+
 def _build_optimization_response(
     avail: Dict[str, List[int]],
     meta: Dict[str, SeatMeta],
@@ -226,6 +236,7 @@ def _build_optimization_response(
     segment_dates: Optional[List[str]] = None,
     fast_path_used: bool = False,
     total_route_segments: int = 0,
+    full_route_standing_status: Optional[str] = None,
 ) -> OptimizationResponse:
     """Shared helper to solve optimal strategies and build the standardized API response."""
     global _last_cached_analysis
@@ -243,6 +254,7 @@ def _build_optimization_response(
         "segment_dates": segment_dates,
         "fast_path_used": fast_path_used,
         "total_route_segments": total_route_segments,
+        "full_route_standing_status": full_route_standing_status,
     }
     config = OptimizerConfig(profile=parse_profile(profile), seat_filters=active_filters)
     strategies = solve_top_strategies(avail, meta, station_names, segment_durations, config=config)
@@ -255,6 +267,7 @@ def _build_optimization_response(
         if hasattr(seg_status, "value"):
             seg_status = seg_status.value
         seg_error_reason = status_entry.get("error_reason", None) if isinstance(status_entry, dict) else None
+        seg_standing_status = status_entry.get("standing_status", None) if isinstance(status_entry, dict) else None
         segments_info.append(
             {
                 "seg_idx": i,
@@ -264,6 +277,7 @@ def _build_optimization_response(
                 "departure_time": dep_time,
                 "status": seg_status or "OK",
                 "error_reason": seg_error_reason,
+                "standing_status": seg_standing_status,
             }
         )
 
@@ -279,18 +293,26 @@ def _build_optimization_response(
         if seat_uid in meta and is_seat_allowed(meta[seat_uid].seat_tags, active_filters)
     ]
 
+    def _resolve_eva(name: str) -> str:
+        eva = (station_evas or {}).get(name) or ""
+        if not eva and name:
+            _, eva = get_station_info(name)
+        return eva
+
     strategy_responses = []
     for s in strategies:
         steps_payload = []
         for step in s.steps:
             step_dict = step.model_dump()
-            if not step.is_standing and travel_date:
-                from_eva = (station_evas or {}).get(step.from_station_name) or ""
-                to_eva = (station_evas or {}).get(step.to_station_name) or ""
-                if not from_eva:
-                    _, from_eva = get_station_info(step.from_station_name)
-                if not to_eva:
-                    _, to_eva = get_station_info(step.to_station_name)
+            if step.is_standing:
+                seg_statuses_for_step = [
+                    segments_info[i].get("standing_status")
+                    for i in range(max(0, step.from_station_idx), min(len(segments_info), step.to_station_idx))
+                ]
+                step_dict["standing_status"] = _aggregate_standing_status(seg_statuses_for_step)
+            if travel_date:
+                from_eva = _resolve_eva(step.from_station_name)
+                to_eva = _resolve_eva(step.to_station_name)
                 if from_eva and to_eva:
                     dep_time = (
                         departure_times[step.from_station_idx]
@@ -334,6 +356,21 @@ def _build_optimization_response(
         )
     top_purchase_instructions = strategy_responses[0].purchase_instructions if strategy_responses else []
 
+    full_route_booking_url: Optional[str] = None
+    if travel_date and len(station_names) >= 2:
+        first_eva = _resolve_eva(station_names[0])
+        last_eva = _resolve_eva(station_names[-1])
+        if first_eva and last_eva:
+            first_dep = departure_times[0] if (departure_times and departure_times[0]) else "08:00"
+            first_date = segment_dates[0] if (segment_dates and segment_dates[0]) else travel_date
+            full_route_booking_url = build_eic_search_url(
+                from_eva=first_eva,
+                to_eva=last_eva,
+                date_str=first_date,
+                departure_time=first_dep,
+                direct_only=True,
+            )
+
     return OptimizationResponse(
         stations=station_names,
         segments=segments_info,
@@ -343,6 +380,8 @@ def _build_optimization_response(
         purchase_instructions=top_purchase_instructions,
         fast_path_used=fast_path_used,
         total_route_segments=total_route_segments or len(segments_info),
+        full_route_booking_url=full_route_booking_url,
+        full_route_standing_status=full_route_standing_status,
     )
 
 
@@ -652,6 +691,7 @@ async def optimize_live(request: LiveOptimizeRequest):
         {
             "status": getattr(seg, "status", "OK") or "OK",
             "error_reason": getattr(seg, "error_reason", None),
+            "standing_status": getattr(seg, "standing_status", None),
         }
         for seg in avail_map.segments
     ]
@@ -681,6 +721,7 @@ async def optimize_live(request: LiveOptimizeRequest):
         segment_dates=segment_dates,
         fast_path_used=bool(getattr(avail_map, "fast_path_used", False)),
         total_route_segments=int(getattr(avail_map, "total_route_segments", 0) or len(avail_map.segments)),
+        full_route_standing_status=getattr(avail_map, "full_route_standing_status", None),
     )
 
 

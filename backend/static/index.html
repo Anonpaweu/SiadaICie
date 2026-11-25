@@ -426,7 +426,7 @@
     </section>
 
     <!-- Karta Postępu Skanowania -->
-    <div id="progressSection" class="hidden rail-card rounded-3xl p-5 space-y-3.5">
+    <div id="progressSection" class="hidden scroll-mt-20 rail-card rounded-3xl p-5 space-y-3.5">
       <div class="flex items-end justify-between gap-4">
         <div>
           <div class="text-[11px] font-medium" style="color: var(--muted);">Sprawdzanie wolnych miejsc</div>
@@ -458,7 +458,7 @@
     </div>
 
     <!-- Alert błędu -->
-    <div id="errorAlert" class="hidden rounded-2xl p-4 text-xs flex items-start gap-3" style="background-color: var(--error-bg); color: var(--error); border: 1px solid color-mix(in srgb, var(--error) 35%, transparent);">
+    <div id="errorAlert" class="hidden scroll-mt-20 rounded-2xl p-4 text-xs flex items-start gap-3" style="background-color: var(--error-bg); color: var(--error); border: 1px solid color-mix(in srgb, var(--error) 35%, transparent);">
       <svg class="w-5 h-5 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
       </svg>
@@ -482,7 +482,7 @@
     </div>
 
     <!-- Informacja o szybkim skanowaniu (Fast-Path) -->
-    <div id="fastPathBanner" class="hidden rounded-2xl p-4 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3" style="background-color: var(--emerald-bg); color: var(--emerald); border: 1px solid color-mix(in srgb, var(--emerald) 35%, transparent);">
+    <div id="fastPathBanner" class="hidden scroll-mt-20 rounded-2xl p-4 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3" style="background-color: var(--emerald-bg); color: var(--emerald); border: 1px solid color-mix(in srgb, var(--emerald) 35%, transparent);">
       <div class="flex items-start gap-3">
         <svg class="w-5 h-5 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
@@ -502,7 +502,7 @@
     </div>
 
     <!-- Plan Zakupu Biletów (Hero Timeline + Buy me a coffee) -->
-    <section id="purchasePlanSection" class="hidden rail-card rounded-3xl p-5 space-y-4">
+    <section id="purchasePlanSection" class="hidden scroll-mt-20 rail-card rounded-3xl p-5 space-y-4">
       <div class="flex flex-wrap items-center justify-between gap-3 pb-3 border-b rail-hairline">
         <div>
           <h2 class="text-base font-bold">Plan podróży i zakupu biletów</h2>
@@ -528,7 +528,7 @@
     </section>
 
     <!-- Sekcja Wariantów + Przełącznik Profilu Optymalizacji -->
-    <section id="strategiesSection" class="hidden space-y-3">
+    <section id="strategiesSection" class="hidden scroll-mt-20 space-y-3">
       <div class="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 class="text-sm font-bold">Rekomendowane warianty podróży</h2>
@@ -1161,6 +1161,13 @@
       }
     }
 
+    function scrollToElementSmooth(el, block = 'start') {
+      if (!el) return;
+      requestAnimationFrame(() => {
+        el.scrollIntoView({ behavior: 'smooth', block });
+      });
+    }
+
     async function runLiveScan(options = {}) {
       const forceFullScan = Boolean(options && options.forceFullScan);
       const fromSt = document.getElementById('fromStation').value.trim();
@@ -1184,6 +1191,7 @@
       if (!fromSt || !toSt) {
         errorAlert.classList.remove('hidden');
         document.getElementById('errorMessage').innerText = 'Wpisz stację początkową i docelową przed rozpoczęciem skanowania.';
+        scrollToElementSmooth(errorAlert, 'center');
         return;
       }
 
@@ -1210,6 +1218,7 @@
       const fastPathBanner = document.getElementById('fastPathBanner');
       if (fastPathBanner) fastPathBanner.classList.add('hidden');
       progressSection.classList.remove('hidden');
+      scrollToElementSmooth(progressSection, 'center');
       progressBar.style.width = '5%';
       progressPercent.innerText = '5%';
       progressMessage.innerText = forceFullScan
@@ -1310,6 +1319,7 @@
             </div>
           ` : ''}
         `;
+        scrollToElementSmooth(errorAlert, 'center');
       } finally {
         if (activeScanId === currentScanId) {
           activeScanController = null;
@@ -1342,6 +1352,7 @@
       if (fastPathBanner) fastPathBanner.classList.add('hidden');
 
       progressSection.classList.remove('hidden');
+      scrollToElementSmooth(progressSection, 'center');
       progressBar.style.width = '50%';
       progressMessage.innerText = 'Przeliczanie optymalnego grafu przesiadek...';
       progressPercent.innerText = '50%';
@@ -1368,6 +1379,7 @@
         progressSection.classList.add('hidden');
         errorAlert.classList.remove('hidden');
         document.getElementById('errorMessage').innerText = err.message;
+        scrollToElementSmooth(errorAlert, 'center');
       }
     }
 
@@ -1394,6 +1406,13 @@
       renderCarriageFilter(data.seat_matrix);
       renderStrategies(data.strategies);
       renderMatrix();
+
+      const scrollTarget = (!document.getElementById('fastPathBanner')?.classList.contains('hidden'))
+        ? document.getElementById('fastPathBanner')
+        : (!document.getElementById('purchasePlanSection')?.classList.contains('hidden')
+          ? document.getElementById('purchasePlanSection')
+          : document.getElementById('strategiesSection'));
+      scrollToElementSmooth(scrollTarget, 'start');
     }
 
     function renderFastPathBanner(data) {

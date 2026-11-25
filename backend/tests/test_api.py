@@ -29,6 +29,12 @@ class TestHealthEndpoint:
         assert "fastPathBanner" in response.text
         assert "Otwórz odcinek w e-IC" in response.text
 
+    def test_favicon_serves_brand_logo(self):
+        response = client.get("/favicon.ico")
+        assert response.status_code == 200
+        assert response.headers.get("content-type") == "image/png"
+        assert len(response.content) > 1000
+
 
 class TestStationsSearch:
     """Test /api/stations/search returns matching stations."""
@@ -699,3 +705,50 @@ class TestStandingTicketLinksAndStatus:
         assert rdata["full_route_booking_url"] == full_url
         assert rdata["full_route_standing_status"] == "AVAILABLE"
         assert rdata["strategies"][0]["steps"][0]["standing_status"] == "SPECIAL_ONLY"
+
+    def test_all_sold_out_returns_200_with_overbooked_standing_status(self, monkeypatch):
+        from backend.app.models.domain import FullTrainAvailabilityMap, SegmentAvailabilityMap
+        from backend.app.scraper.ebilet_seat_scraper import LiveTrainScanner
+
+        async def mock_scan_all_sold_out(self, **kwargs):
+            return FullTrainAvailabilityMap(
+                train_number="IC 1644",
+                travel_date="2026-11-27",
+                fast_path_used=False,
+                total_route_segments=1,
+                full_route_standing_status="OVERBOOKED",
+                segments=[
+                    SegmentAvailabilityMap(
+                        segment_index=0,
+                        from_station="Warszawa Centralna",
+                        to_station="Piotrków Trybunalski",
+                        departure_time="15:20",
+                        duration_min=81,
+                        from_eva="5100065",
+                        to_eva="5100190",
+                        segment_date="2026-11-27",
+                        carriages={},
+                        status="SOLD_OUT",
+                        standing_status="OVERBOOKED",
+                    )
+                ],
+            )
+
+        monkeypatch.setattr(LiveTrainScanner, "scan_full_train", mock_scan_all_sold_out)
+        resp = client.post(
+            "/api/v1/optimize",
+            json={
+                "from_station": "Warszawa Centralna",
+                "to_station": "Piotrków Trybunalski",
+                "date": "2026-11-27",
+                "time": "15:20",
+                "train_number": "IC 1644",
+                "scan_id": "test-all-sold-out",
+            },
+        )
+        assert resp.status_code == 200
+        d = resp.json()
+        assert d["strategies"] == []
+        assert d["seat_matrix"] == []
+        assert d["full_route_standing_status"] == "OVERBOOKED"
+        assert "swyj=5100065" in (d["full_route_booking_url"] or "")

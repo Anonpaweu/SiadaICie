@@ -334,6 +334,8 @@ def find_optimal_path(
                     continue
 
                 penalty = calculate_transfer_penalty(b.seat, next_b.seat, next_b.is_standing, config)
+                if require_at_least_one_seat and (b.is_standing != next_b.is_standing):
+                    penalty = 100.0
 
                 if next_b.block_id in dp:
                     candidate_val = b_score - penalty + dp[next_b.block_id][0]
@@ -408,6 +410,7 @@ def solve_top_strategies(
     for rank in range(1, top_k + 1):
         # First attempt with carriage diversity (if we already picked carriages in previous ranks)
         res = None
+        prev_had_standing = any(s.total_standing_min > 0 for s in strategies)
         if excluded_carriages:
             pruned_div = _prune_equivalent_seats(
                 availability_matrix,
@@ -419,10 +422,23 @@ def solve_top_strategies(
             if pruned_div:
                 blocks_div = generate_candidate_blocks(pruned_div, seats_meta, segment_durations)
                 candidate = find_optimal_path(blocks_div, station_names, segment_durations, config)
-                if candidate is not None:
-                    # Only accept carriage-diverse candidate if it doesn't force standing when seats exist
+                if (
+                    candidate is not None
+                    and prev_had_standing
+                    and all(b.is_standing for b in candidate[1])
+                    and any(not b.is_standing for b in blocks_div)
+                ):
+                    candidate = find_optimal_path(
+                        blocks_div,
+                        station_names,
+                        segment_durations,
+                        config,
+                        require_at_least_one_seat=True,
+                    )
+                if candidate is not None and any(not b.is_standing for b in candidate[1]):
+                    # Only accept carriage-diverse candidate if it doesn't force standing when seated strategies exist
                     has_standing = any(b.is_standing for b in candidate[1])
-                    if not has_standing:
+                    if not has_standing or prev_had_standing:
                         res = candidate
 
         # Fallback: exclude only previously chosen primary seats

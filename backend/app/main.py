@@ -674,7 +674,9 @@ async def optimize_live(request: LiveOptimizeRequest):
         )
 
     avail, meta, station_names, segment_durations = availability_map_to_matrix(avail_map)
-    if not avail:
+    has_sold_out_data = any(getattr(seg, "status", "") == "SOLD_OUT" for seg in avail_map.segments)
+    has_standing_info = bool(getattr(avail_map, "full_route_standing_status", None))
+    if not avail and not has_sold_out_data and not has_standing_info:
         err_msg = f"System rezerwacyjny nie udostępnił wolnych miejsc w Klasie {request.ticket_class} dla wybranego pociągu (brak miejsc ze schematu)."
         tracker.error(err_msg)
         global_scan_tracker.error(err_msg)
@@ -806,6 +808,15 @@ def list_trains(
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """Serve the SiadaICie logo icon without text as browser tab favicon."""
+    logo_file = STATIC_DIR / "brand-logo.png"
+    if logo_file.exists():
+        return FileResponse(str(logo_file), media_type="image/png")
+    raise HTTPException(status_code=404, detail="Favicon not found")
 
 
 @app.get("/")

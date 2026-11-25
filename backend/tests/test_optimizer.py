@@ -306,6 +306,26 @@ class TestStandingMergingAndPluralization:
         strategies = solve_top_strategies(avail, meta, station_names, segment_durations)
         assert len(strategies) >= 1
         assert all(any(not step.is_standing for step in st.steps) for st in strategies)
-        # Rank 1 or 2 offers the longest seated block (14_32 on Swarzędz -> Słupca)
-        all_step_uids = {step.seat_uid for st in strategies for step in st.steps}
-        assert "14_32" in all_step_uids
+        # Rank 1 must choose 14_32 (33 min seated Swarzędz -> Słupca, 59% of trip) over 9-min 12_13
+        best = strategies[0]
+        best_uids = {step.seat_uid for step in best.steps}
+        assert "14_32" in best_uids
+        assert best.total_standing_min == 23  # 9m + 14m standing
+
+    def test_standing_route_diversity_picks_distinct_carriages(self):
+        station_names = ["Poznań Główny", "Swarzędz", "Września", "Słupca", "Konin"]
+        segment_durations = [9, 21, 12, 14]
+        avail = {
+            "12_11": [1, 0, 0, 0],
+            "14_32": [0, 1, 1, 0],
+            "22_93": [1, 0, 0, 0],
+        }
+        meta = {
+            "12_11": SeatMeta(seat_uid="12_11", carriage_no=12, seat_no="11", compartment_no=1),
+            "14_32": SeatMeta(seat_uid="14_32", carriage_no=14, seat_no="32", compartment_no=3),
+            "22_93": SeatMeta(seat_uid="22_93", carriage_no=22, seat_no="93", compartment_no=9),
+        }
+        strategies = solve_top_strategies(avail, meta, station_names, segment_durations, top_k=3)
+        assert len(strategies) == 3
+        chosen_carriages = [s.carriages_used[0] for s in strategies]
+        assert chosen_carriages == [14, 12, 22]

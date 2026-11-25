@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SiadaICie</title>
+  <link rel="icon" type="image/png" href="/static/brand-logo.png">
+  <link rel="apple-touch-icon" href="/static/brand-logo.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -287,13 +289,22 @@
               </div>
             </div>
 
-            <!-- Time Chip -->
-            <div class="rail-tonal rounded-xl px-3 py-1.5 flex items-center gap-2">
-              <svg class="w-4 h-4 shrink-0" style="color: var(--navy);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <span class="text-[11px] font-medium" style="color: var(--muted);">Od</span>
-              <input type="time" id="travelTime" value="" class="bg-transparent text-xs font-semibold tabular-nums focus:outline-none" style="color: var(--text);" />
+            <!-- Time Chip (IC-style 30-min intervals, live train sync) -->
+            <div class="relative">
+              <button type="button" id="timePickerTrigger" class="rail-tonal rounded-xl px-3 py-2 flex items-center gap-2 hover:opacity-85 transition-opacity cursor-pointer" title="Wybierz godzinę odjazdu (co 30 min)">
+                <svg class="w-4 h-4 shrink-0" style="color: var(--navy);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span class="text-[11px] font-medium" style="color: var(--muted);">Od</span>
+                <span id="travelTimeDisplay" class="text-xs font-semibold tabular-nums" style="color: var(--text);">00:00</span>
+                <svg class="w-3.5 h-3.5 opacity-70" style="color: var(--muted);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              <input type="hidden" id="travelTime" value="" />
+              <div id="timePickerPopup" class="hidden absolute left-0 top-full mt-2 rail-popup rounded-2xl z-50 p-1.5 w-40 max-h-64 overflow-y-auto scrollbar-thin text-xs select-none" style="scroll-behavior: smooth;">
+                <div id="timePickerSlots" class="grid grid-cols-1 gap-1 tabular-nums"></div>
+              </div>
             </div>
 
             <!-- Segmented Class Switch -->
@@ -330,7 +341,7 @@
             <select id="trainSelect" onchange="onTrainSelected()" class="rail-tonal rounded-xl px-3 py-2 text-xs font-medium focus:outline-none">
               <option value="">-- Kliknij „Szukaj pociągów” lub wpisz numer po prawej --</option>
             </select>
-            <input type="text" id="trainNo" value="" placeholder="Nr pociągu ręcznie (np. 1646)" class="rail-tonal rounded-xl px-3 py-2 text-xs font-semibold tabular-nums focus:outline-none placeholder:font-normal placeholder:opacity-60" style="color: var(--text);" />
+            <input type="text" id="trainNo" value="" oninput="window.selectedTrainDepTime = null;" placeholder="Nr pociągu ręcznie (np. 1646)" class="rail-tonal rounded-xl px-3 py-2 text-xs font-semibold tabular-nums focus:outline-none placeholder:font-normal placeholder:opacity-60" style="color: var(--text);" />
           </div>
 
           <!-- Visual Train Cards Grid (populated by loadAvailableTrains) -->
@@ -1106,7 +1117,24 @@
       }
     }
 
-    function renderTrainCardHighlight(activeIndex) {
+    function scrollTrainCardIntoView(activeIndex) {
+      const cardsGrid = document.getElementById('trainCardsGrid');
+      if (!cardsGrid || activeIndex < 0 || activeIndex >= cardsGrid.children.length) return;
+      const card = cardsGrid.children[activeIndex];
+      if (!card) return;
+      requestAnimationFrame(() => {
+        const gridRect = cardsGrid.getBoundingClientRect();
+        const cardRect = card.getBoundingClientRect();
+        const cardTopInsideGrid = (cardRect.top - gridRect.top) + cardsGrid.scrollTop;
+        const targetTop = cardTopInsideGrid - Math.max(0, (cardsGrid.clientHeight - card.offsetHeight) / 2);
+        cardsGrid.scrollTo({
+          top: Math.max(0, targetTop),
+          behavior: 'smooth',
+        });
+      });
+    }
+
+    function renderTrainCardHighlight(activeIndex, shouldScroll = true) {
       const cardsGrid = document.getElementById('trainCardsGrid');
       if (!cardsGrid) return;
       Array.from(cardsGrid.children).forEach((card, idx) => {
@@ -1116,6 +1144,9 @@
           ? '1.5px solid var(--accent)'
           : '1px solid var(--hairline)';
       });
+      if (shouldScroll) {
+        scrollTrainCardIntoView(activeIndex);
+      }
     }
 
     async function loadAvailableTrains() {
@@ -1126,6 +1157,7 @@
       const select = document.getElementById('trainSelect');
       if (!fromSt || !toSt) return;
 
+      window.selectedTrainDepTime = null;
       select.innerHTML = '<option value="">Wyszukiwanie połączeń w rozkładzie PKP...</option>';
       try {
         const url = `/api/v1/trains?from_station=${encodeURIComponent(fromSt)}&to_station=${encodeURIComponent(toSt)}&date=${encodeURIComponent(date)}&time=${encodeURIComponent(depTime)}&direct_only=false`;
@@ -1148,9 +1180,9 @@
         const opt = select.options[select.selectedIndex];
         document.getElementById('trainNo').value = select.value;
         if (opt.dataset && opt.dataset.dep) {
-          document.getElementById('travelTime').value = opt.dataset.dep;
+          window.selectedTrainDepTime = opt.dataset.dep;
         }
-        renderTrainCardHighlight(select.selectedIndex - 1);
+        renderTrainCardHighlight(select.selectedIndex - 1, true);
         fetchTrainRoute(true);
       }
     }
@@ -1160,7 +1192,7 @@
       const toSt = document.getElementById('toStation').value.trim();
       const date = document.getElementById('travelDate').value;
       const trainNo = document.getElementById('trainNo').value.trim();
-      const depTime = document.getElementById('travelTime').value.trim();
+      const depTime = (window.selectedTrainDepTime || document.getElementById('travelTime').value.trim());
 
       const card = document.getElementById('routePreviewCard');
       const title = document.getElementById('routePreviewTitle');
@@ -1241,7 +1273,7 @@
       const toSt = document.getElementById('toStation').value.trim();
       const date = document.getElementById('travelDate').value;
       const trainNo = document.getElementById('trainNo').value.trim();
-      const depTime = document.getElementById('travelTime').value.trim();
+      const depTime = (window.selectedTrainDepTime || document.getElementById('travelTime').value.trim());
       const ticketClass = parseInt(document.getElementById('ticketClass')?.value || '2', 10);
       const profile = document.getElementById('optProfile')?.value || 'BALANCED';
 
@@ -1556,7 +1588,7 @@
       }
       if (status === 'OVERBOOKED') {
         return {
-          label: 'e-IC: klasa wyprzedana (brak biletów stojących)',
+          label: 'e-IC: pociąg przepełniony / klasa wyprzedana (brak nawet biletów stojących)',
           bg: 'color-mix(in srgb, var(--error, #dc2626) 14%, transparent)',
           color: 'var(--error, #dc2626)',
           btnLabel: 'Sprawdź w e-IC',
@@ -1605,17 +1637,33 @@
       const ticketsCount = activeStrategy && Array.isArray(activeStrategy.tickets_to_buy)
         ? activeStrategy.tickets_to_buy.length
         : instructions.length;
+      const standingStepsCount = activeStrategy && Array.isArray(activeStrategy.steps)
+        ? activeStrategy.steps.filter(st => st && st.is_standing).length
+        : 0;
 
-      countBadge.innerText = instructions.length
-        ? `Liczba biletów: ${ticketsCount}`
-        : 'Bilet bez gwarancji miejsca';
+      if (instructions.length) {
+        countBadge.innerText = standingStepsCount > 0
+          ? `Bilety: ${ticketsCount} siedzące + ${standingStepsCount} bez gwarancji`
+          : `Liczba biletów: ${ticketsCount}`;
+      } else {
+        countBadge.innerText = data.full_route_standing_status === 'OVERBOOKED'
+          ? 'Brak biletów w tej klasie'
+          : 'Bilet bez gwarancji miejsca';
+      }
       list.innerHTML = '';
 
       if (!instructions.length) {
         const notice = document.createElement('div');
         notice.className = 'rail-tonal rounded-2xl p-3.5 text-xs';
-        notice.style.color = 'var(--amber)';
-        notice.innerText = 'Brak wariantu siedzącego dla aktywnych filtrów — na części lub całości tej trasy brak wolnych miejsc siedzących (sprawdź filtry specjalne powyżej lub poniższy wariant bez gwarancji miejsca).';
+        if (data.full_route_standing_status === 'OVERBOOKED') {
+          notice.style.backgroundColor = 'var(--error-bg)';
+          notice.style.color = 'var(--error)';
+          notice.style.border = '1px solid color-mix(in srgb, var(--error) 40%, transparent)';
+          notice.innerText = 'PKP Intercity zablokowało sprzedaż w tej klasie (pociąg przepełniony / wyprzedany — nie można kupić nawet biletu bez gwarancji miejsca). Sprawdź inną klasę lub inny pociąg.';
+        } else {
+          notice.style.color = 'var(--amber)';
+          notice.innerText = 'Brak pełnego wariantu siedzącego dla aktywnych filtrów — na części lub całości tej trasy brak wolnych miejsc siedzących (sprawdź filtry specjalne powyżej lub poniższy wariant bez gwarancji miejsca).';
+        }
         list.appendChild(notice);
       }
 
@@ -2048,6 +2096,7 @@ W6 m14/m16`;
       const popup = document.getElementById('calendarPopup');
 
       function openCalendar() {
+        closeTimePicker();
         if (!popup) return;
         popup.classList.remove('hidden');
         renderCalendar();
@@ -2091,11 +2140,18 @@ W6 m14/m16`;
         if (popup && !popup.contains(e.target) && e.target !== dateInput && e.target !== toggleBtn) {
           closeCalendar();
         }
+        const timePopupEl = document.getElementById('timePickerPopup');
+        const timeTrigEl = document.getElementById('timePickerTrigger');
+        if (timePopupEl && !timePopupEl.contains(e.target) && (!timeTrigEl || !timeTrigEl.contains(e.target))) {
+          closeTimePicker();
+        }
         const fSugg = document.getElementById('fromSuggestions');
         const tSugg = document.getElementById('toSuggestions');
         if (fSugg && !fSugg.contains(e.target) && e.target.id !== 'fromStation') fSugg.classList.add('hidden');
         if (tSugg && !tSugg.contains(e.target) && e.target.id !== 'toStation') tSugg.classList.add('hidden');
       });
+
+      initCustomTimePicker();
 
       const prevBtn = document.getElementById('calPrevMonth');
       if (prevBtn) {
@@ -2127,13 +2183,92 @@ W6 m14/m16`;
       }
     }
 
+    function openTimePicker() {
+      const calPopup = document.getElementById('calendarPopup');
+      if (calPopup) calPopup.classList.add('hidden');
+      const tp = document.getElementById('timePickerPopup');
+      if (!tp) return;
+      renderTimePickerSlots();
+      tp.classList.remove('hidden');
+      requestAnimationFrame(() => {
+        const activeBtn = tp.querySelector('[data-active-slot="true"]');
+        if (activeBtn) {
+          const topPos = activeBtn.offsetTop - Math.max(0, (tp.clientHeight - activeBtn.offsetHeight) / 2);
+          tp.scrollTo({ top: Math.max(0, topPos), behavior: 'smooth' });
+        }
+      });
+    }
+
+    function closeTimePicker() {
+      const tp = document.getElementById('timePickerPopup');
+      if (tp) tp.classList.add('hidden');
+    }
+
+    function selectTimeSlot(slotVal) {
+      const tTime = document.getElementById('travelTime');
+      const tDisp = document.getElementById('travelTimeDisplay');
+      if (tTime) tTime.value = slotVal;
+      if (tDisp) tDisp.innerText = slotVal;
+      closeTimePicker();
+      if (window.allFetchedTrains && window.allFetchedTrains.length > 0) {
+        renderTrainSelect();
+      }
+    }
+
+    function renderTimePickerSlots() {
+      const container = document.getElementById('timePickerSlots');
+      if (!container) return;
+      const currentVal = (document.getElementById('travelTime')?.value || '00:00').trim();
+      container.innerHTML = '';
+      for (let h = 0; h < 24; h++) {
+        for (const m of [0, 30]) {
+          const label = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+          const isActive = label === currentVal;
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.innerText = label;
+          if (isActive) btn.dataset.activeSlot = 'true';
+          btn.className = 'w-full px-3 py-1.5 rounded-xl text-left text-xs transition-colors flex items-center justify-between';
+          if (isActive) {
+            btn.style.backgroundColor = 'var(--accent)';
+            btn.style.color = '#ffffff';
+            btn.classList.add('font-bold');
+          } else {
+            btn.style.color = 'var(--text)';
+            btn.classList.add('font-medium', 'hover:opacity-80');
+          }
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            selectTimeSlot(label);
+          });
+          container.appendChild(btn);
+        }
+      }
+    }
+
+    function initCustomTimePicker() {
+      const trigger = document.getElementById('timePickerTrigger');
+      const popup = document.getElementById('timePickerPopup');
+      if (trigger && popup) {
+        trigger.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (popup.classList.contains('hidden')) openTimePicker();
+          else closeTimePicker();
+        });
+      }
+      renderTimePickerSlots();
+    }
+
     function setInitialDateTime() {
       const now = new Date();
       const y = now.getFullYear();
       const m = String(now.getMonth() + 1).padStart(2, '0');
       const d = String(now.getDate()).padStart(2, '0');
-      const hh = String(now.getHours()).padStart(2, '0');
-      const mm = String(now.getMinutes()).padStart(2, '0');
+      const rawTotalMin = now.getHours() * 60 + now.getMinutes();
+      const roundedMin = Math.min(23 * 60 + 30, Math.floor(rawTotalMin / 30) * 30);
+      const hh = String(Math.floor(roundedMin / 60)).padStart(2, '0');
+      const mm = String(roundedMin % 60).padStart(2, '0');
+      const slot = `${hh}:${mm}`;
 
       const iso = `${y}-${m}-${d}`;
       const display = `${d}.${m}.${y}`;
@@ -2141,23 +2276,12 @@ W6 m14/m16`;
       const tDate = document.getElementById('travelDate');
       const tDisp = document.getElementById('travelDateDisplay');
       const tTime = document.getElementById('travelTime');
+      const tTimeDisp = document.getElementById('travelTimeDisplay');
 
       if (tDate) tDate.value = iso;
       if (tDisp) tDisp.value = display;
-      if (tTime) {
-        tTime.value = `${hh}:${mm}`;
-        tTime.addEventListener('blur', () => {
-          const curDateVal = document.getElementById('travelDate')?.value;
-          const nowCheck = new Date();
-          const todayIso = `${nowCheck.getFullYear()}-${String(nowCheck.getMonth() + 1).padStart(2, '0')}-${String(nowCheck.getDate()).padStart(2, '0')}`;
-          if (curDateVal === todayIso && tTime.value) {
-            const nowMin = nowCheck.getHours() * 60 + nowCheck.getMinutes();
-            if (timeToMinutesJS(tTime.value) < nowMin) {
-              tTime.value = `${String(nowCheck.getHours()).padStart(2, '0')}:${String(nowCheck.getMinutes()).padStart(2, '0')}`;
-            }
-          }
-        });
-      }
+      if (tTime) tTime.value = slot;
+      if (tTimeDisp) tTimeDisp.innerText = slot;
     }
 
     function parseAndSetDateFromInput(raw) {

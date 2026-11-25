@@ -75,7 +75,7 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(
-    title="PKP Seat Optimizer API",
+    title="SiadaICie API",
     version="0.2.0",
     description="System optymalizacji miejsc siedzących i przesiadek w pociągach dalekobieżnych.",
     lifespan=lifespan,
@@ -773,4 +773,4 @@ async def root():
     index_file = STATIC_DIR / "index.html"
     if index_file.exists():
         return FileResponse(str(index_file))
-    return {"message": "PKP Seat Optimizer API running. Visit /docs."}
+    return {"message": "SiadaICie API running. Visit /docs."}

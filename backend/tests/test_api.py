@@ -21,7 +21,7 @@ class TestHealthEndpoint:
     def test_root_serves_html(self):
         response = client.get("/")
         assert response.status_code == 200
-        assert "PKP Seat Optimizer" in response.text
+        assert "SiadaICie" in response.text
         assert "BŁĄD ODCZYTU" in response.text
         assert "Błąd odczytu odcinka" in response.text
         assert "scrapeErrorWarningBanner" in response.text

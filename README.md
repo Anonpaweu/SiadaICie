@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/logo.jpg" alt="IC Seat Optimizer" width="160" />
+  <img src="docs/logo.jpg" alt="SiadaICie" width="160" />
 </p>
 
-<h1 align="center">IC Seat Optimizer</h1>
+<h1 align="center">SiadaICie</h1>
 
 <p align="center">
   <em>Koniec z koczowaniem na korytarzu przy toalecie. Usiądź jak człowiek.</em>
@@ -14,6 +14,7 @@
   <a href="https://playwright.dev/python/"><img src="https://img.shields.io/badge/Playwright-Async-45ba4b.svg" alt="Playwright" /></a>
   <img src="https://img.shields.io/badge/Android-Kotlin%20%2F%20Jetpack%20Compose-3DDC84.svg" alt="Android Kotlin Jetpack Compose" />
   <img src="https://img.shields.io/badge/license-MIT-orange.svg" alt="License MIT" />
+  <a href="https://buycoffee.to/anonpaweu"><img src="https://img.shields.io/badge/Buy%20me%20a%20coffee-buycoffee.to-f36f21.svg" alt="Pomogłem? Buy me a coffee" /></a>
 </p>
 
 ---
@@ -28,7 +29,7 @@ Znasz to uczucie? Jest niedzielne popołudnie, koniec długiego weekendu albo ś
 
 System kolejowy przy próbie zakupu biletu na **całą relację** mówi „nie ma miejsc”, bo żaden pojedynczy fotel nie jest wolny od stacji początkowej do samego końca. Wystarczy jednak kupić **dwa lub trzy bilety cząstkowe** na kolejne odcinki i w trakcie podróży przesiąść się na inny wolny fotel — i całą trasę pokonujesz wygodnie na siedząco.
 
-**IC Seat Optimizer** (dostępny zarówno jako **aplikacja PC Web**, jak i natywna **aplikacja na Androida**) robi za Ciebie całą czarną robotę: pobiera rozkład, sprawdza schematy wagonów, zbiera wolne fotele na poszczególnych odcinkach i układa matematycznie optymalną podróż z minimalną liczbą przesiadek.
+**SiadaICie** (dostępne zarówno jako **aplikacja PC Web**, jak i natywna **aplikacja na Androida**) robi za Ciebie całą czarną robotę: pobiera rozkład, sprawdza schematy wagonów, zbiera wolne fotele na poszczególnych odcinkach i układa matematycznie optymalną podróż z minimalną liczbą przesiadek.
 
 ---
 
@@ -36,7 +37,7 @@ System kolejowy przy próbie zakupu biletu na **całą relację** mówi „nie m
 
 - **Dwie wersje do wyboru — PC Web oraz Android:**
   - **PC Web (FastAPI + Playwright):** lokalny serwer z interfejsem w przeglądarce (`http://localhost:8000`) i równoległym skanowaniem w kontekstach Chromium.
-  - **Android (Kotlin + Jetpack Compose):** natywna aplikacja w Material 3 (jasny i ciemny motyw) z wbudowaną bazą stacji offline, usługą skanowania działającą **w tle** (możesz zminimalizować aplikację w trakcie analizy), historią **5 ostatnich analiz** oraz adaptacyjnym dopasowaniem równoległości do RAM/CPU telefonu.
+  - **Android (Kotlin + Jetpack Compose):** natywna aplikacja w Material 3 (jasny i ciemny motyw) z wbudowaną bazą stacji offline, usługą skanowania działającą **w tle** (możesz zminimalizować aplikację w trakcie analizy), historią **3 ostatnich analiz (wygasających po 1 godzinie)** oraz adaptacyjnym dopasowaniem równoległości do RAM/CPU telefonu.
 - **Wielowarstwowe przyspieszanie skanowania:**
   - **Fast-Path A -> B:** najpierw błyskawicznie sprawdza bezpośrednią dostępność na całej trasie — jeśli jest choć jedno wolne miejsce na 100% drogi, wynik wraca od razu.
   - **Adaptive Split Fast-Path:** na długich trasach (8+ odcinków), gdzie system blokuje schemat dla całej relacji, dzieli trasę na mniejsze odcinki zbiorcze zanim przejdzie do pełnego skanu stacja po stacji.
@@ -59,10 +60,10 @@ System kolejowy przy próbie zakupu biletu na **całą relację** mówi „nie m
 
 ## Aplikacja na Androida
 
-Gotowy plik `.apk` (Android 10+ / API 29+) możesz pobrać bezpośrednio z zakładki **[GitHub Releases](https://github.com/Anonpaweu/Icc-Seat-Finder/releases)** (kod źródłowy wersji mobilnej znajduje się na gałęzi `android-dev`).
+Gotowy plik `.apk` (Android 10+ / API 29+) możesz pobrać bezpośrednio z zakładki **[GitHub Releases](https://github.com/Anonpaweu/SiadaICie/releases)** (kod źródłowy wersji mobilnej znajduje się na gałęzi `android-dev`).
 
 ### Instalacja na telefonie z pliku APK:
-1. Pobierz najnowszy plik `.apk` z **[Releases](https://github.com/Anonpaweu/Icc-Seat-Finder/releases)** bezpośrednio na telefon.
+1. Pobierz najnowszy plik `.apk` z **[Releases](https://github.com/Anonpaweu/SiadaICie/releases)** bezpośrednio na telefon.
 2. Zezwól na instalację z nieznanych źródeł dla przeglądarki lub Menedżera plików (oraz wybierz *„Zainstaluj mimo to”*, jeśli Google Play Protect poprosi o potwierdzenie dla aplikacji spoza Sklepu Play).
 
 ### Budowanie lokalne z kodu (dla deweloperów):
@@ -81,7 +82,7 @@ Na Windowsie do szybkiego wgrania zbudowanej aktualizacji na telefon przez ADB s
 ## Architektura projektu
 
 ```text
-Icc-Seat-Finder/
+SiadaICie/
 ├── backend/                     # Aplikacja PC Web (FastAPI + Playwright)
 │   ├── app/
 │   │   ├── engine/              # Parsowanie dostępności, profile wag i topologia pociągu
@@ -96,7 +97,7 @@ Icc-Seat-Finder/
 │   └── requirements.txt         # Zależności Pythona
 ├── android/                     # Natywna aplikacja Android (Kotlin + Jetpack Compose, gałąź android-dev)
 │   ├── app/src/main/java/pl/iccbagno/app/
-│   │   ├── data/                # Baza stacji offline (stations.db) + historia 5 skanów
+│   │   ├── data/                # Baza stacji offline (stations.db) + historia 3 skanów (1h TTL)
 │   │   ├── optimizer/           # Solwer DAG w Kotlinie z hierarchią priorytetów miejsc
 │   │   ├── scraper/             # Skaner WebView + bezpośrednie zapytania GRM API
 │   │   ├── service/             # ScanForegroundService (skanowanie w tle)
@@ -118,8 +119,8 @@ Icc-Seat-Finder/
 
 ### 1. Sklonuj repozytorium:
 ```bash
-git clone https://github.com/Anonpaweu/Icc-Seat-Finder.git
-cd Icc-Seat-Finder
+git clone https://github.com/Anonpaweu/SiadaICie.git
+cd SiadaICie
 ```
 
 ### 2. Przygotuj wirtualne środowisko i zainstaluj zależności:
@@ -174,6 +175,12 @@ Otwórz w przeglądarce: **[http://localhost:8000](http://localhost:8000)**.
 2. **Wybierz datę, opcjonalnie minimalną godzinę odjazdu, klasę (2 lub 1) oraz filtry miejsc** (domyślnie aktywne są zwykłe fotele, Strefa ciszy oraz miejsca z rowerem).
 3. **Wyszukaj połączenia i uruchom skanowanie pociągu** — aplikacja automatycznie uruchomi Fast-Path albo przeskanuje kolejne odcinki trasy.
 4. **Wybierz najwygodniejszy wariant podróży** (np. *Zrównoważona* lub *Najmniej przesiadek*), przejrzyj instrukcję zakupu biletów i kup wskazane bilety cząstkowe w oficjalnym serwisie przewoźnika lub w kasie.
+
+---
+
+## Wsparcie projektu
+
+Jeśli aplikacja pomogła Ci uniknąć stania na korytarzu — **Pomogłem? [Buy me a coffee (BLIK / karta)](https://buycoffee.to/anonpaweu)**.
 
 ---
 

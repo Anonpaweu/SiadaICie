@@ -59,10 +59,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -99,6 +102,17 @@ fun ResultScreen(
     val colors = LocalRailColors.current
     var showLogs by remember { mutableStateOf(false) }
     var showResultFilters by remember { mutableStateOf(false) }
+    var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+
+    LaunchedEffect(scan.loadedFromHistoryAtMs) {
+        if (scan.loadedFromHistoryAtMs != null) {
+            nowMs = System.currentTimeMillis()
+            while (true) {
+                delay(30_000L)
+                nowMs = System.currentTimeMillis()
+            }
+        }
+    }
 
     Scaffold(
         containerColor = colors.canvas,
@@ -529,6 +543,56 @@ fun ResultScreen(
                                     SeatFilterChipsSection(
                                         filters = ui.seatFilters,
                                         onFiltersChange = onSeatFiltersChange
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!scan.isRunning && scan.loadedFromHistoryAtMs != null) {
+                item(key = "history_expiry_strip") {
+                    Surface(
+                        color = colors.cardTonal,
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.dp, colors.hairline),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 9.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Wynik z historii • ${formatHistoryRemainingPl(scan.loadedFromHistoryAtMs, nowMs)}",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = colors.textPrimary
+                                )
+                                Text(
+                                    text = "Dostępność ostatnich miejsc może się szybko zmienić",
+                                    fontSize = 11.sp,
+                                    color = colors.textSecondary
+                                )
+                            }
+                            if (ui.lastScannedTrain != null) {
+                                androidx.compose.material3.TextButton(onClick = onRetryScan) {
+                                    Icon(
+                                        imageVector = Icons.Default.Refresh,
+                                        contentDescription = null,
+                                        tint = colors.accent,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "Skanuj ponownie",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = colors.accent
                                     )
                                 }
                             }

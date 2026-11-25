@@ -1946,7 +1946,12 @@ class EbiletWebViewScanner(
             fun isUnsellableMetroBoundary(seg: SegmentAvailabilityMap): Boolean {
                 if (seg.status != "SCRAPE_ERROR") return false
                 val errLow = (seg.errorReason ?: "").lowercase()
-                if ("nie znaleziono pociągu" !in errLow || "po 35s" in errLow) return false
+                val matchesKnown = listOf(
+                    "nie znaleziono pociągu",
+                    "nie znalazł żadnych połączeń",
+                    "timeout"
+                ).any { it in errLow }
+                if (!matchesKnown) return false
                 if (!RouteHelpers.isSameMetroHub(seg.fromStation, seg.toStation)) return false
                 return seg.durationMin <= 15
             }

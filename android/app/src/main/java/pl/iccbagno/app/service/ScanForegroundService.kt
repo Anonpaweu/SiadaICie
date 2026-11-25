@@ -8,9 +8,13 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.media.AudioAttributes
+import android.media.RingtoneManager
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -49,6 +53,7 @@ data class ScanProgressState(
     val toStation: String = "",
     val travelDate: String = "",
     val fastPathUsed: Boolean = false,
+    val loadedFromHistoryAtMs: Long? = null,
     val debugWebView: android.webkit.WebView? = null
 )
 
@@ -59,7 +64,7 @@ class ScanForegroundService : Service() {
 
     companion object {
         const val CHANNEL_ID = "iccbagno_scan_channel"
-        const val CHANNEL_ID_DONE = "iccbagno_scan_done_channel"
+        const val CHANNEL_ID_DONE = "iccbagno_scan_done_v2"
         const val NOTIFICATION_ID = 1001
         private const val NOTIFICATION_ID_DONE = 2002
         const val ACTION_START = "pl.iccbagno.app.action.START_SCAN"
@@ -85,6 +90,11 @@ class ScanForegroundService : Service() {
 
         @Volatile
         private var currentSeatFilters: SeatFilterPrefs = SeatFilterPrefs()
+        private val appInForeground = AtomicBoolean(true)
+
+        fun setAppInForeground(inFg: Boolean) {
+            appInForeground.set(inFg)
+        }
 
         fun startScan(
             context: Context,
@@ -165,7 +175,8 @@ class ScanForegroundService : Service() {
                 fromStation = item.fromStation,
                 toStation = item.toStation,
                 travelDate = item.travelDate,
-                fastPathUsed = item.availabilityMap.fastPathUsed
+                fastPathUsed = item.availabilityMap.fastPathUsed,
+                loadedFromHistoryAtMs = item.savedAtEpochMs
             )
         }
 
@@ -298,6 +309,14 @@ class ScanForegroundService : Service() {
         )
 
         scanJob = serviceScope.launch {
+            val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager
+            val wakeLock = try {
+                pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "SiadaICie:ScanWakeLock")?.apply {
+                    acquire(10 * 60 * 1000L)
+                }
+            } catch (_: Exception) {
+                null
+            }
             val repo = StationsRepository(applicationContext)
             val scheduleClient = ScheduleClient(repo)
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -432,6 +451,10 @@ class ScanForegroundService : Service() {
                 )
                 notifyScanCompleted(nm, trainNumber, errMsg)
             } finally {
+                try {
+                    if (wakeLock?.isHeld == true) wakeLock.release()
+                } catch (_: Exception) {
+                }
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
@@ -441,6 +464,10 @@ class ScanForegroundService : Service() {
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            try {
+                nm.deleteNotificationChannel("iccbagno_scan_done_channel")
+            } catch (_: Exception) {
+            }
             val progressChannel = NotificationChannel(
                 CHANNEL_ID,
                 "Skanowanie pociągów",
@@ -448,13 +475,20 @@ class ScanForegroundService : Service() {
             ).apply {
                 description = "Postęp wyszukiwania wolnych miejsc PKP"
             }
+            val soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+            val audioAttrs = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build()
             val doneChannel = NotificationChannel(
                 CHANNEL_ID_DONE,
-                "Wyniki skanowania",
+                "Powiadomienia o wynikach skanowania",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "Powiadomienia o zakończeniu wyszukiwania miejsc"
+                description = "Wyskakujące powiadomienia push po zakończeniu wyszukiwania w tle"
                 enableVibration(true)
+                vibrationPattern = longArrayOf(0L, 220L, 120L, 220L)
+                setSound(soundUri, audioAttrs)
             }
             nm.createNotificationChannel(progressChannel)
             nm.createNotificationChannel(doneChannel)
@@ -486,6 +520,7 @@ class ScanForegroundService : Service() {
     }
 
     private fun notifyScanCompleted(nm: NotificationManager, trainNumber: String, summary: String) {
+        if (appInForeground.get()) return
         try {
             val openIntent = Intent(this, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -493,14 +528,16 @@ class ScanForegroundService : Service() {
             val openPending = PendingIntent.getActivity(
                 this, 2, openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
+            val soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
             val notification = NotificationCompat.Builder(this, CHANNEL_ID_DONE)
                 .setSmallIcon(android.R.drawable.stat_sys_download_done)
                 .setContentTitle("Zakończono skanowanie ($trainNumber)")
                 .setContentText(summary)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(summary))
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
-                .setDefaults(NotificationCompat.DEFAULT_ALL)
-                .setCategory(NotificationCompat.CATEGORY_STATUS)
+                .setCategory(NotificationCompat.CATEGORY_REMINDER)
+                .setSound(soundUri)
+                .setVibrate(longArrayOf(0L, 220L, 120L, 220L))
                 .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
                 .setAutoCancel(true)
                 .setContentIntent(openPending)

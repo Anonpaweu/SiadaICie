@@ -12,6 +12,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.json.JSONArray
+import org.json.JSONObject
 import pl.iccbagno.app.data.ScanHistoryItem
 import pl.iccbagno.app.data.ScanHistoryStore
 import pl.iccbagno.app.data.StationsRepository
@@ -30,6 +32,11 @@ enum class AppScreen {
     SCAN_RESULT
 }
 
+data class FavoriteRoute(
+    val fromStation: String,
+    val toStation: String
+)
+
 data class SearchUiState(
     val activeScreen: AppScreen = AppScreen.SEARCH,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
@@ -45,6 +52,8 @@ data class SearchUiState(
     val seatFilters: SeatFilterPrefs = SeatFilterPrefs(),
     val forceFullScan: Boolean = false,
     val debugWebViewEnabled: Boolean = false,
+    val favorites: List<FavoriteRoute> = emptyList(),
+    val favoritesHint: String? = null,
     val isLoadingTrains: Boolean = false,
     val trainsError: String? = null,
     val trains: List<TrainConnection> = emptyList(),
@@ -73,6 +82,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun loadInitialUiState(): SearchUiState {
         return SearchUiState(
             directOnly = prefs.getBoolean("direct_only", true),
+            favorites = loadFavorites(),
             seatFilters = SeatFilterPrefs(
                 allowBike = prefs.getBoolean("allow_bike", true),
                 allowPregnant = prefs.getBoolean("allow_pregnant", false),
@@ -82,6 +92,85 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 allowWheelchair = prefs.getBoolean("allow_wheelchair", false)
             )
         )
+    }
+
+    private fun loadFavorites(): List<FavoriteRoute> {
+        val raw = prefs.getString("favorite_routes_json", null) ?: return emptyList()
+        return try {
+            val arr = JSONArray(raw)
+            val out = ArrayList<FavoriteRoute>(arr.length())
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val f = o.optString("from", "").trim()
+                val t = o.optString("to", "").trim()
+                if (f.isNotEmpty() && t.isNotEmpty()) {
+                    out.add(FavoriteRoute(f, t))
+                }
+            }
+            out.take(4)
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun saveFavorites(list: List<FavoriteRoute>) {
+        val arr = JSONArray()
+        for (fav in list.take(4)) {
+            arr.put(
+                JSONObject().apply {
+                    put("from", fav.fromStation)
+                    put("to", fav.toStation)
+                }
+            )
+        }
+        prefs.edit().putString("favorite_routes_json", arr.toString()).apply()
+    }
+
+    fun toggleFavoriteCurrentRoute() {
+        val st = _uiState.value
+        val from = st.fromQuery.trim()
+        val to = st.toQuery.trim()
+        if (from.isEmpty() || to.isEmpty()) {
+            _uiState.update { it.copy(favoritesHint = "Podaj stację początkową i docelową, aby dodać do ulubionych.") }
+            return
+        }
+        val existingIdx = st.favorites.indexOfFirst {
+            it.fromStation.equals(from, ignoreCase = true) && it.toStation.equals(to, ignoreCase = true)
+        }
+        if (existingIdx >= 0) {
+            val updated = st.favorites.filterIndexed { i, _ -> i != existingIdx }
+            saveFavorites(updated)
+            _uiState.update { it.copy(favorites = updated, favoritesHint = null) }
+            return
+        }
+        if (st.favorites.size >= 4) {
+            _uiState.update { it.copy(favoritesHint = "Możesz zapisać maksymalnie 4 ulubione trasy.") }
+            return
+        }
+        val updated = listOf(FavoriteRoute(from, to)) + st.favorites
+        saveFavorites(updated)
+        _uiState.update { it.copy(favorites = updated, favoritesHint = null) }
+    }
+
+    fun applyFavorite(fav: FavoriteRoute) {
+        _uiState.update {
+            it.copy(
+                fromQuery = fav.fromStation,
+                toQuery = fav.toStation,
+                fromSuggestions = emptyList(),
+                toSuggestions = emptyList(),
+                favoritesHint = null
+            )
+        }
+    }
+
+    fun removeFavorite(fav: FavoriteRoute) {
+        val updated = _uiState.value.favorites.filterNot {
+            it.fromStation.equals(fav.fromStation, ignoreCase = true) &&
+                it.toStation.equals(fav.toStation, ignoreCase = true)
+        }
+        saveFavorites(updated)
+        _uiState.update { it.copy(favorites = updated, favoritesHint = null) }
     }
 
     private fun saveFilterPrefs(directOnly: Boolean, filters: SeatFilterPrefs) {
@@ -212,6 +301,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun openHistoryItem(item: ScanHistoryItem) {
         val st = _uiState.value
         ScanForegroundService.loadFromHistory(item, st.profile, st.seatFilters)
+        val depTime = item.availabilityMap.segments.firstOrNull()?.departureTime?.ifBlank { "12:00" } ?: "12:00"
         _uiState.update {
             it.copy(
                 selectedStrategyIdx = 0,
@@ -219,9 +309,55 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 fromQuery = item.fromStation,
                 toQuery = item.toStation,
                 travelDate = item.travelDate,
-                ticketClass = item.ticketClass
+                ticketClass = item.ticketClass,
+                lastScannedTrain = TrainConnection(
+                    trainNumber = item.trainNumber,
+                    departure = depTime,
+                    arrival = "",
+                    duration = "",
+                    changes = 0
+                )
             )
         }
+    }
+
+    fun rescanHistoryItem(item: ScanHistoryItem) {
+        val st = _uiState.value
+        val depTime = item.availabilityMap.segments.firstOrNull()?.departureTime?.ifBlank { "12:00" } ?: "12:00"
+        val conn = TrainConnection(
+            trainNumber = item.trainNumber,
+            departure = depTime,
+            arrival = "",
+            duration = "",
+            changes = 0
+        )
+        _uiState.update {
+            it.copy(
+                selectedStrategyIdx = 0,
+                activeScreen = AppScreen.SCAN_RESULT,
+                fromQuery = item.fromStation,
+                toQuery = item.toStation,
+                travelDate = item.travelDate,
+                ticketClass = item.ticketClass,
+                lastScannedTrain = conn
+            )
+        }
+        ScanForegroundService.startScan(
+            context = getApplication<Application>().applicationContext,
+            fromStation = item.fromStation,
+            toStation = item.toStation,
+            travelDate = item.travelDate,
+            trainNumber = item.trainNumber,
+            depTime = depTime,
+            ticketClass = item.ticketClass,
+            profile = st.profile,
+            forceFull = st.forceFullScan,
+            seatFilters = st.seatFilters
+        )
+    }
+
+    fun refreshHistory() {
+        ScanHistoryStore.refresh(getApplication<Application>().applicationContext)
     }
 
     fun clearHistory() {

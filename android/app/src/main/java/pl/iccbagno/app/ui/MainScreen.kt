@@ -125,6 +125,11 @@ fun MainScreen(viewModel: MainViewModel) {
                 onOpenSupport = { openUrlSafe(context, SUPPORT_COFFEE_URL) },
                 onOpenCurrentScan = viewModel::openScanScreen,
                 onOpenHistoryItem = viewModel::openHistoryItem,
+                onRescanHistoryItem = viewModel::rescanHistoryItem,
+                onRefreshHistory = viewModel::refreshHistory,
+                onToggleFavorite = viewModel::toggleFavoriteCurrentRoute,
+                onApplyFavorite = viewModel::applyFavorite,
+                onRemoveFavorite = viewModel::removeFavorite,
                 onClearHistory = { showClearHistoryConfirm = true }
             )
 

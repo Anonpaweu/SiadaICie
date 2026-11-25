@@ -37,12 +37,17 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LocalCafe
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -64,10 +69,13 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -87,6 +95,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import pl.iccbagno.app.R
 import pl.iccbagno.app.data.ScanHistoryItem
+import pl.iccbagno.app.data.ScanHistorySerializer
 import pl.iccbagno.app.domain.SeatFilterPrefs
 import pl.iccbagno.app.domain.StationInfo
 import pl.iccbagno.app.domain.TrainConnection
@@ -119,12 +128,28 @@ fun SearchScreen(
     onOpenSupport: () -> Unit,
     onOpenCurrentScan: () -> Unit,
     onOpenHistoryItem: (ScanHistoryItem) -> Unit,
+    onRescanHistoryItem: (ScanHistoryItem) -> Unit,
+    onRefreshHistory: () -> Unit,
+    onToggleFavorite: () -> Unit,
+    onApplyFavorite: (FavoriteRoute) -> Unit,
+    onRemoveFavorite: (FavoriteRoute) -> Unit,
     onClearHistory: () -> Unit
 ) {
     val colors = LocalRailColors.current
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
     var showFilters by remember { mutableStateOf(false) }
+    var showHistoryInfoDialog by remember { mutableStateOf(false) }
+    var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+
+    LaunchedEffect(history.size) {
+        nowMs = System.currentTimeMillis()
+        while (true) {
+            delay(30_000L)
+            nowMs = System.currentTimeMillis()
+            onRefreshHistory()
+        }
+    }
 
     val visibleTrains = ui.trains.filter { train ->
         train.departure.trim().padStart(5, '0') >= ui.minDepartureTime
@@ -334,21 +359,56 @@ fun SearchScreen(
 
                             Spacer(modifier = Modifier.width(8.dp))
 
-                            Surface(
-                                onClick = onSwap,
-                                shape = CircleShape,
-                                color = colors.cardTonal,
-                                modifier = Modifier.size(42.dp)
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
                             ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Default.SwapVert,
-                                        contentDescription = "Zamień stacje",
-                                        tint = colors.brandNavy,
-                                        modifier = Modifier.size(20.dp)
-                                    )
+                                Surface(
+                                    onClick = onSwap,
+                                    shape = CircleShape,
+                                    color = colors.cardTonal,
+                                    modifier = Modifier.size(40.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.SwapVert,
+                                            contentDescription = "Zamień stacje",
+                                            tint = colors.brandNavy,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                }
+
+                                val fromTrim = ui.fromQuery.trim()
+                                val toTrim = ui.toQuery.trim()
+                                val isFav = fromTrim.isNotEmpty() && toTrim.isNotEmpty() && ui.favorites.any {
+                                    it.fromStation.equals(fromTrim, ignoreCase = true) &&
+                                        it.toStation.equals(toTrim, ignoreCase = true)
+                                }
+                                Surface(
+                                    onClick = onToggleFavorite,
+                                    shape = CircleShape,
+                                    color = if (isFav) colors.accentContainer else colors.cardTonal,
+                                    modifier = Modifier.size(40.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = if (isFav) Icons.Default.Star else Icons.Default.StarBorder,
+                                            contentDescription = if (isFav) "Usuń z ulubionych" else "Dodaj do ulubionych",
+                                            tint = if (isFav) colors.accent else colors.textSecondary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
                                 }
                             }
+                        }
+
+                        AnimatedVisibility(visible = ui.favoritesHint != null) {
+                            Text(
+                                text = ui.favoritesHint.orEmpty(),
+                                fontSize = 11.sp,
+                                color = colors.corridorAmber
+                            )
                         }
 
                         // Date, time filter & class controls
@@ -491,6 +551,85 @@ fun SearchScreen(
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text("Szukaj pociągów", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Favorite routes ("Moje ulubione", max 4)
+            if (ui.favorites.isNotEmpty()) {
+                item(key = "favorites_bar") {
+                    Surface(
+                        color = colors.card,
+                        shape = RoundedCornerShape(18.dp),
+                        border = BorderStroke(1.dp, colors.hairline),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Star,
+                                    contentDescription = null,
+                                    tint = colors.accent,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = "Moje ulubione (${ui.favorites.size}/4)",
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 13.sp,
+                                    color = colors.textPrimary
+                                )
+                            }
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                ui.favorites.forEach { fav ->
+                                    Surface(
+                                        onClick = { onApplyFavorite(fav) },
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = colors.cardTonal,
+                                        border = BorderStroke(1.dp, colors.hairline)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(start = 10.dp, end = 6.dp, top = 7.dp, bottom = 7.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Text(
+                                                text = "${fav.fromStation} -> ${fav.toStation}",
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                color = colors.textPrimary,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(20.dp)
+                                                    .clip(CircleShape)
+                                                    .clickable { onRemoveFavorite(fav) },
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Close,
+                                                    contentDescription = "Usuń ulubioną trasę",
+                                                    tint = colors.textSecondary,
+                                                    modifier = Modifier.size(13.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -694,6 +833,17 @@ fun SearchScreen(
                                 fontSize = 14.sp,
                                 color = colors.textPrimary
                             )
+                            IconButton(
+                                onClick = { showHistoryInfoDialog = true },
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Info,
+                                    contentDescription = "Informacja o ważności wyników",
+                                    tint = colors.textSecondary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
                         }
                         TextButton(onClick = onClearHistory) {
                             Text("Wyczyść historię", fontSize = 12.sp, color = colors.textSecondary)
@@ -707,21 +857,61 @@ fun SearchScreen(
                 ) { item ->
                     HistorySummaryCard(
                         item = item,
-                        onClick = { onOpenHistoryItem(item) }
+                        nowMs = nowMs,
+                        canRescan = !scan.isRunning,
+                        onClick = { onOpenHistoryItem(item) },
+                        onRescan = { onRescanHistoryItem(item) }
                     )
                 }
             }
         }
     }
+
+    if (showHistoryInfoDialog) {
+        AlertDialog(
+            onDismissRequest = { showHistoryInfoDialog = false },
+            containerColor = colors.card,
+            title = {
+                Text(
+                    text = "Ważność ostatnich analiz",
+                    color = colors.textPrimary,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    text = "Ostatnie wolne miejsca w pociągu potrafią bardzo szybko się wyprzedawać lub zmieniać, więc nie można zakładać, że będą wolne przez cały czas. Zapisane wyniki wygasają automatycznie po 1 godzinie — w każdej chwili możesz je odświeżyć przyciskiem ponownego skanu.",
+                    color = colors.textSecondary,
+                    fontSize = 13.sp,
+                    lineHeight = 19.sp
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showHistoryInfoDialog = false }) {
+                    Text("Rozumiem", color = colors.accent)
+                }
+            }
+        )
+    }
+}
+
+internal fun formatHistoryRemainingPl(savedAtEpochMs: Long, nowMs: Long): String {
+    val remainingMs = (ScanHistorySerializer.MAX_AGE_MS - (nowMs - savedAtEpochMs)).coerceAtLeast(0L)
+    val remainingMin = remainingMs / 60_000L
+    return if (remainingMin < 1L) "wygasa za <1 min" else "wygasa za $remainingMin min"
 }
 
 @Composable
 private fun HistorySummaryCard(
     item: ScanHistoryItem,
-    onClick: () -> Unit
+    nowMs: Long,
+    canRescan: Boolean,
+    onClick: () -> Unit,
+    onRescan: () -> Unit
 ) {
     val colors = LocalRailColors.current
     val isGolden = item.transfersCount == 0 && item.totalStandingMin == 0
+    val expiryLabel = formatHistoryRemainingPl(item.savedAtEpochMs, nowMs)
     Surface(
         onClick = onClick,
         color = colors.card,
@@ -730,7 +920,7 @@ private fun HistorySummaryCard(
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            modifier = Modifier.padding(start = 14.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
@@ -744,7 +934,7 @@ private fun HistorySummaryCard(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = "${item.trainNumber} • ${formatDatePl(item.travelDate)} • Kl. ${item.ticketClass}",
+                    text = "${item.trainNumber} • ${formatDatePl(item.travelDate)} • Kl. ${item.ticketClass} • $expiryLabel",
                     fontSize = 11.sp,
                     color = colors.textSecondary
                 )
@@ -757,12 +947,25 @@ private fun HistorySummaryCard(
                     overflow = TextOverflow.Ellipsis
                 )
             }
-            Spacer(modifier = Modifier.width(8.dp))
+            IconButton(
+                onClick = onRescan,
+                enabled = canRescan,
+                modifier = Modifier.size(36.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = "Skanuj ponownie",
+                    tint = colors.accent,
+                    modifier = Modifier.size(19.dp)
+                )
+            }
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.ArrowForward,
                 contentDescription = null,
                 tint = colors.textSecondary,
-                modifier = Modifier.size(18.dp)
+                modifier = Modifier
+                    .padding(end = 6.dp)
+                    .size(18.dp)
             )
         }
     }

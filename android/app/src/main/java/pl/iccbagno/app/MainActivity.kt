@@ -48,6 +48,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        ScanForegroundService.setAppInForeground(true)
+    }
+
+    override fun onStop() {
+        ScanForegroundService.setAppInForeground(false)
+        super.onStop()
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleDebugScanIntent(intent)

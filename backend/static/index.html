@@ -501,6 +501,28 @@
       </button>
     </div>
 
+    <!-- Filtry miejsc na żywo (po zakończeniu skanu — jak w aplikacji Android) -->
+    <section id="resultSeatFiltersSection" class="hidden scroll-mt-20 rail-card rounded-2xl px-4 py-3.5 space-y-2.5">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div class="flex items-center gap-2">
+          <svg class="w-4 h-4" style="color: var(--navy);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+          </svg>
+          <span class="text-xs font-bold">Filtry miejsc na żywo</span>
+          <span id="resultSeatFiltersCount" class="text-[11px] font-semibold px-2 py-0.5 rounded-full tabular-nums rail-tonal" style="color: var(--muted);">1/6 aktywne</span>
+        </div>
+        <span id="resultFiltersStatus" class="text-[11px] font-medium" style="color: var(--muted);">Przełączaj kategorie, aby od razu przeliczyć warianty</span>
+      </div>
+      <div class="flex flex-wrap gap-2 text-xs">
+        <button type="button" data-seat-filter="allow_bike" onclick="toggleSeatFilter('allow_bike')" class="px-3 py-1.5 rounded-xl font-semibold border transition-colors">Miejsce z rowerem</button>
+        <button type="button" data-seat-filter="allow_pregnant" onclick="toggleSeatFilter('allow_pregnant')" class="px-3 py-1.5 rounded-xl font-medium border transition-colors">Kobieta w ciąży</button>
+        <button type="button" data-seat-filter="allow_child" onclick="toggleSeatFilter('allow_child')" class="px-3 py-1.5 rounded-xl font-medium border transition-colors">Osoba z dzieckiem</button>
+        <button type="button" data-seat-filter="allow_elderly" onclick="toggleSeatFilter('allow_elderly')" class="px-3 py-1.5 rounded-xl font-medium border transition-colors">Senior</button>
+        <button type="button" data-seat-filter="allow_prm_assist" onclick="toggleSeatFilter('allow_prm_assist')" class="px-3 py-1.5 rounded-xl font-medium border transition-colors">Niepełnosprawność (bez wózka)</button>
+        <button type="button" data-seat-filter="allow_wheelchair" onclick="toggleSeatFilter('allow_wheelchair')" class="px-3 py-1.5 rounded-xl font-medium border transition-colors">Osoba na wózku</button>
+      </div>
+    </section>
+
     <!-- Plan Zakupu Biletów (Hero Timeline + Buy me a coffee) -->
     <section id="purchasePlanSection" class="hidden scroll-mt-20 rail-card rounded-3xl p-5 space-y-4">
       <div class="flex flex-wrap items-center justify-between gap-3 pb-3 border-b rail-hairline">
@@ -783,24 +805,26 @@
       Object.keys(seatFiltersState).forEach(key => {
         const on = Boolean(seatFiltersState[key]);
         if (on) activeCount += 1;
-        const btn = document.querySelector(`[data-seat-filter="${key}"]`);
-        if (!btn) return;
-        if (on) {
-          btn.style.backgroundColor = 'var(--accent-bg)';
-          btn.style.color = 'var(--accent)';
-          btn.style.borderColor = 'color-mix(in srgb, var(--accent) 45%, transparent)';
-          btn.classList.add('font-semibold');
-        } else {
-          btn.style.backgroundColor = 'var(--tonal)';
-          btn.style.color = 'var(--muted)';
-          btn.style.borderColor = 'var(--hairline)';
-          btn.classList.remove('font-semibold');
-        }
+        document.querySelectorAll(`[data-seat-filter="${key}"]`).forEach(btn => {
+          if (on) {
+            btn.style.backgroundColor = 'var(--accent-bg)';
+            btn.style.color = 'var(--accent)';
+            btn.style.borderColor = 'color-mix(in srgb, var(--accent) 45%, transparent)';
+            btn.classList.add('font-semibold');
+          } else {
+            btn.style.backgroundColor = 'var(--tonal)';
+            btn.style.color = 'var(--muted)';
+            btn.style.borderColor = 'var(--hairline)';
+            btn.classList.remove('font-semibold');
+          }
+        });
       });
       const directChecked = document.getElementById('directOnly')?.checked ?? true;
       const directText = directChecked ? 'Bezpośrednie' : 'Z przesiadkami';
       const summary = document.getElementById('seatFiltersSummary');
       if (summary) summary.innerText = `${directText} • ${activeCount}/6 aktywne`;
+      const resultCount = document.getElementById('resultSeatFiltersCount');
+      if (resultCount) resultCount.innerText = `${activeCount}/6 aktywne`;
     }
 
     function toggleSeatFilter(key) {
@@ -824,10 +848,18 @@
       }
     }
 
+    let recomputeRequestSeq = 0;
+
     async function recomputeCurrentWithFilters() {
       if (!currentAnalysisData) return;
+      const seq = ++recomputeRequestSeq;
       const profile = document.getElementById('optProfile')?.value || 'BALANCED';
+      const statusEl = document.getElementById('resultFiltersStatus');
       updateProfileButtonsUi(profile);
+      if (statusEl) {
+        statusEl.style.color = 'var(--muted)';
+        statusEl.innerText = 'Przeliczanie wariantów...';
+      }
       try {
         const res = await fetch('/api/v1/recompute', {
           method: 'POST',
@@ -837,15 +869,41 @@
             seat_filters: { ...seatFiltersState },
           }),
         });
-        if (!res.ok) return;
+        if (seq !== recomputeRequestSeq) return;
+        if (!res.ok) {
+          if (statusEl) {
+            statusEl.style.color = 'var(--amber)';
+            statusEl.innerText = res.status === 404
+              ? 'Brak zapisanej analizy w pamięci serwera — uruchom skan ponownie.'
+              : 'Nie udało się przeliczyć wariantów.';
+          }
+          return;
+        }
         const data = await res.json();
+        if (seq !== recomputeRequestSeq) return;
         currentAnalysisData = data;
         selectedStrategyIndex = 0;
+        const prevCarriage = document.getElementById('carriageFilter')?.value || 'ALL';
+        renderFastPathBanner(data);
         renderPurchaseInstructions(data);
-        renderCarriageFilter(data.seat_matrix);
+        renderCarriageFilter(data.seat_matrix, prevCarriage);
         renderStrategies(data.strategies);
         renderMatrix();
-      } catch (e) {}
+        if (statusEl) {
+          if (data.strategies && data.strategies.length > 0) {
+            statusEl.style.color = 'var(--emerald)';
+            statusEl.innerText = `Zaktualizowano (${data.strategies.length} ${data.strategies.length === 1 ? 'wariant' : 'warianty'})`;
+          } else {
+            statusEl.style.color = 'var(--amber)';
+            statusEl.innerText = 'Brak wariantów dla aktywnych filtrów';
+          }
+        }
+      } catch (e) {
+        if (seq === recomputeRequestSeq && statusEl) {
+          statusEl.style.color = 'var(--amber)';
+          statusEl.innerText = 'Błąd połączenia przy przeliczaniu filtrów.';
+        }
+      }
     }
 
     function escapeHtml(str) {
@@ -1226,6 +1284,8 @@
       if (scrapeWarnBanner) scrapeWarnBanner.classList.add('hidden');
       const fastPathBanner = document.getElementById('fastPathBanner');
       if (fastPathBanner) fastPathBanner.classList.add('hidden');
+      const resultFiltersSec = document.getElementById('resultSeatFiltersSection');
+      if (resultFiltersSec) resultFiltersSec.classList.add('hidden');
       progressSection.classList.remove('hidden');
       scrollToElementSmooth(progressSection, 'center');
       progressBar.style.width = '5%';
@@ -1359,6 +1419,8 @@
       if (scrapeWarnBanner) scrapeWarnBanner.classList.add('hidden');
       const fastPathBanner = document.getElementById('fastPathBanner');
       if (fastPathBanner) fastPathBanner.classList.add('hidden');
+      const resultFiltersSec = document.getElementById('resultSeatFiltersSection');
+      if (resultFiltersSec) resultFiltersSec.classList.add('hidden');
 
       progressSection.classList.remove('hidden');
       scrollToElementSmooth(progressSection, 'center');
@@ -1411,6 +1473,14 @@
 
       renderScrapeErrorWarning(data.segments);
       renderFastPathBanner(data);
+      const resultFiltersSec = document.getElementById('resultSeatFiltersSection');
+      if (resultFiltersSec) resultFiltersSec.classList.remove('hidden');
+      const statusEl = document.getElementById('resultFiltersStatus');
+      if (statusEl) {
+        statusEl.style.color = 'var(--muted)';
+        statusEl.innerText = 'Przełączaj kategorie, aby od razu przeliczyć warianty';
+      }
+      updateSeatFiltersUi();
       renderPurchaseInstructions(data);
       renderCarriageFilter(data.seat_matrix);
       renderStrategies(data.strategies);
@@ -1418,9 +1488,11 @@
 
       const scrollTarget = (!document.getElementById('fastPathBanner')?.classList.contains('hidden'))
         ? document.getElementById('fastPathBanner')
-        : (!document.getElementById('purchasePlanSection')?.classList.contains('hidden')
-          ? document.getElementById('purchasePlanSection')
-          : document.getElementById('strategiesSection'));
+        : (resultFiltersSec && !resultFiltersSec.classList.contains('hidden')
+          ? resultFiltersSec
+          : (!document.getElementById('purchasePlanSection')?.classList.contains('hidden')
+            ? document.getElementById('purchasePlanSection')
+            : document.getElementById('strategiesSection')));
       scrollToElementSmooth(scrollTarget, 'start');
     }
 
@@ -1545,13 +1617,18 @@
       section.classList.remove('hidden');
     }
 
-    function renderCarriageFilter(seatMatrix) {
+    function renderCarriageFilter(seatMatrix, preserveValue = 'ALL') {
       const select = document.getElementById('carriageFilter');
       const carriages = [...new Set(seatMatrix.map(s => s.carriage_no))].sort((a, b) => a - b);
       select.innerHTML = '<option value="ALL">Wszystkie wagony</option>';
       carriages.forEach(c => {
         select.innerHTML += `<option value="${escapeHtml(c)}">Wagon ${escapeHtml(c)}</option>`;
       });
+      if (preserveValue !== 'ALL' && carriages.some(c => String(c) === String(preserveValue))) {
+        select.value = String(preserveValue);
+      } else {
+        select.value = 'ALL';
+      }
     }
 
     function toggleFilterSelected() {

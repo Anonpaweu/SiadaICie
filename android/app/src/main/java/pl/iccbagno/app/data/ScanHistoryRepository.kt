@@ -26,7 +26,8 @@ data class ScanHistoryItem(
 )
 
 object ScanHistorySerializer {
-    const val MAX_ITEMS = 5
+    const val MAX_ITEMS = 3
+    const val MAX_AGE_MS = 60L * 60L * 1000L
 
     fun buildId(
         fromStation: String,
@@ -179,14 +180,29 @@ object ScanHistorySerializer {
     }
 }
 
-class ScanHistoryRepository(private val file: File) {
+class ScanHistoryRepository(
+    private val file: File,
+    private val nowProvider: () -> Long = { System.currentTimeMillis() }
+) {
     constructor(context: Context) : this(File(context.filesDir, "scan_history.json"))
 
     @Synchronized
     fun loadHistory(): List<ScanHistoryItem> {
         if (!file.exists()) return emptyList()
         return try {
-            ScanHistorySerializer.decode(file.readText(Charsets.UTF_8))
+            val decoded = ScanHistorySerializer.decode(file.readText(Charsets.UTF_8))
+            val now = nowProvider()
+            val fresh = decoded
+                .filter { (now - it.savedAtEpochMs) <= ScanHistorySerializer.MAX_AGE_MS }
+                .take(ScanHistorySerializer.MAX_ITEMS)
+            if (fresh.size != decoded.size) {
+                if (fresh.isEmpty()) {
+                    clearHistory()
+                } else {
+                    writeItems(fresh)
+                }
+            }
+            fresh
         } catch (_: Exception) {
             emptyList()
         }

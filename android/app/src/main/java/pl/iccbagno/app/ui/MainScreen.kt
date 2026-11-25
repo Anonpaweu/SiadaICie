@@ -69,6 +69,8 @@ import java.time.LocalDate
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 
+private const val SUPPORT_COFFEE_URL = "https://buycoffee.to/anonpaweu"
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(viewModel: MainViewModel) {
@@ -120,6 +122,7 @@ fun MainScreen(viewModel: MainViewModel) {
                 onSearchTrains = viewModel::searchTrains,
                 onSelectTrain = viewModel::startTrainScan,
                 onOpenSettings = { showSettings = true },
+                onOpenSupport = { openUrlSafe(context, SUPPORT_COFFEE_URL) },
                 onOpenCurrentScan = viewModel::openScanScreen,
                 onOpenHistoryItem = viewModel::openHistoryItem,
                 onClearHistory = { showClearHistoryConfirm = true }
@@ -134,7 +137,8 @@ fun MainScreen(viewModel: MainViewModel) {
                 onProfileChange = viewModel::setProfile,
                 onSeatFiltersChange = handleSeatFilterChange,
                 onSelectStrategy = viewModel::selectStrategy,
-                onOpenBooking = { url -> openUrlSafe(context, url) }
+                onOpenBooking = { url -> openUrlSafe(context, url) },
+                onOpenSupport = { openUrlSafe(context, SUPPORT_COFFEE_URL) }
             )
         }
     }

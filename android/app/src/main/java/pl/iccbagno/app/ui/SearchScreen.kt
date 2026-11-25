@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.LocalCafe
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
@@ -110,6 +111,7 @@ fun SearchScreen(
     onSearchTrains: () -> Unit,
     onSelectTrain: (TrainConnection) -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenSupport: () -> Unit,
     onOpenCurrentScan: () -> Unit,
     onOpenHistoryItem: (ScanHistoryItem) -> Unit,
     onClearHistory: () -> Unit
@@ -133,7 +135,7 @@ fun SearchScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Image(
                             painter = painterResource(id = R.drawable.ic_brand_logo),
-                            contentDescription = "IC Seat Optimizer",
+                            contentDescription = "SiadaICie",
                             contentScale = ContentScale.Crop,
                             modifier = Modifier
                                 .size(46.dp)
@@ -142,7 +144,7 @@ fun SearchScreen(
                         Spacer(modifier = Modifier.width(10.dp))
                         Column {
                             Text(
-                                text = "IC Seat Optimizer",
+                                text = "SiadaICie",
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 19.sp,
                                 color = colors.textPrimary
@@ -156,6 +158,23 @@ fun SearchScreen(
                     }
                 },
                 actions = {
+                    Surface(
+                        onClick = onOpenSupport,
+                        shape = RoundedCornerShape(11.dp),
+                        color = colors.accentContainer,
+                        border = BorderStroke(1.dp, colors.accent.copy(alpha = 0.35f)),
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.LocalCafe,
+                                contentDescription = "Buy me a coffee",
+                                tint = colors.accent,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.width(4.dp))
                     IconButton(onClick = onOpenSettings) {
                         Icon(
                             imageVector = Icons.Default.Tune,
@@ -647,7 +666,7 @@ fun SearchScreen(
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "Ostatnie analizy (${history.size}/5)",
+                                text = "Ostatnie analizy (${history.size}/3)",
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 14.sp,
                                 color = colors.textPrimary

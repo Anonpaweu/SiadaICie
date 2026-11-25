@@ -42,6 +42,7 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.LocalCafe
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -92,7 +93,8 @@ fun ResultScreen(
     onProfileChange: (OptimizationProfile) -> Unit,
     onSeatFiltersChange: (SeatFilterPrefs) -> Unit,
     onSelectStrategy: (Int) -> Unit,
-    onOpenBooking: (String) -> Unit
+    onOpenBooking: (String) -> Unit,
+    onOpenSupport: () -> Unit
 ) {
     val colors = LocalRailColors.current
     var showLogs by remember { mutableStateOf(false) }
@@ -625,6 +627,56 @@ fun ResultScreen(
                                     bg = colors.cardTonal
                                 )
                             }
+                        }
+                    }
+                }
+
+                item(key = "support_coffee_bar") {
+                    Surface(
+                        onClick = onOpenSupport,
+                        color = colors.card,
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.dp, colors.accent.copy(alpha = 0.35f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(28.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(colors.accentContainer),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.LocalCafe,
+                                        contentDescription = null,
+                                        tint = colors.accent,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                                Text(
+                                    text = "Pomogłem? Buy me a coffee",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = colors.textPrimary
+                                )
+                            }
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                                contentDescription = "Otwórz stronę wsparcia",
+                                tint = colors.accent,
+                                modifier = Modifier.size(16.dp)
+                            )
                         }
                     }
                 }

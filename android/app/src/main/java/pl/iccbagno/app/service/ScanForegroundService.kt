@@ -451,7 +451,7 @@ class ScanForegroundService : Service() {
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setContentTitle("IC Seat Optimizer: skanowanie $trainNumber ($progress%)")
+            .setContentTitle("SiadaICie: skanowanie $trainNumber ($progress%)")
             .setContentText(text)
             .setProgress(100, progress, false)
             .setOngoing(true)

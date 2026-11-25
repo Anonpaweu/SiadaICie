@@ -289,3 +289,23 @@ class TestStandingMergingAndPluralization:
         assert format_transfers_pl(21) == "21 przesiadek"
         assert format_transfers_pl(22) == "22 przesiadki"
         assert format_transfers_pl(25) == "25 przesiadek"
+
+    def test_short_route_partial_availability_never_returns_empty_strategies(self):
+        # Reproduces IC 7200 Poznań Główny -> Konin (56 min total, seg 3 Słupca->Konin sold out)
+        station_names = ["Poznań Główny", "Swarzędz", "Września", "Słupca", "Konin"]
+        segment_durations = [9, 21, 12, 14]
+        avail = {
+            "12_13": [1, 0, 0, 0],
+            "14_32": [0, 1, 1, 0],
+        }
+        meta = {
+            "12_13": SeatMeta(seat_uid="12_13", carriage_no=12, seat_no="13", compartment_no=1),
+            "14_32": SeatMeta(seat_uid="14_32", carriage_no=14, seat_no="32", compartment_no=3),
+        }
+
+        strategies = solve_top_strategies(avail, meta, station_names, segment_durations)
+        assert len(strategies) >= 1
+        assert all(any(not step.is_standing for step in st.steps) for st in strategies)
+        # Rank 1 or 2 offers the longest seated block (14_32 on Swarzędz -> Słupca)
+        all_step_uids = {step.seat_uid for st in strategies for step in st.steps}
+        assert "14_32" in all_step_uids

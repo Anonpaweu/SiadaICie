@@ -288,6 +288,7 @@ def find_optimal_path(
     config: OptimizerConfig,
     excluded_primary_seats: Optional[Set[str]] = None,
     excluded_carriages: Optional[Set[int]] = None,
+    require_at_least_one_seat: bool = False,
 ) -> Optional[Tuple[float, List[AvailabilityBlock]]]:
     """
     Rozwiązuje problem najdłuższej (najbardziej opłacalnej) ścieżki w grafie DAG od stacji 0 do N
@@ -310,6 +311,7 @@ def find_optimal_path(
         blocks_by_start[b.start_seg].append(b)
 
     dp: Dict[str, Tuple[float, Optional[str]]] = {}
+    dp_seated: Dict[str, Tuple[float, Optional[str]]] = {}
     block_map: Dict[str, AvailabilityBlock] = {b.block_id: b for b in active_blocks}
 
     for s_idx in range(num_segments - 1, -1, -1):
@@ -318,34 +320,47 @@ def find_optimal_path(
 
             if b.end_seg == num_segments:
                 dp[b.block_id] = (b_score, None)
+                if not b.is_standing:
+                    dp_seated[b.block_id] = (b_score, None)
                 continue
 
             best_next_val = -1e12
             best_next_id = None
+            best_seated_next_val = -1e12
+            best_seated_next_id = None
 
             for next_b in blocks_by_start[b.end_seg]:
                 if not b.is_standing and b.seat.seat_uid == next_b.seat.seat_uid:
                     continue
 
-                if next_b.block_id not in dp:
-                    continue
-
                 penalty = calculate_transfer_penalty(b.seat, next_b.seat, next_b.is_standing, config)
-                candidate_val = b_score - penalty + dp[next_b.block_id][0]
 
-                if candidate_val > best_next_val:
-                    best_next_val = candidate_val
-                    best_next_id = next_b.block_id
+                if next_b.block_id in dp:
+                    candidate_val = b_score - penalty + dp[next_b.block_id][0]
+                    if candidate_val > best_next_val:
+                        best_next_val = candidate_val
+                        best_next_id = next_b.block_id
+
+                if require_at_least_one_seat:
+                    target_table = dp if not b.is_standing else dp_seated
+                    if next_b.block_id in target_table:
+                        seated_val = b_score - penalty + target_table[next_b.block_id][0]
+                        if seated_val > best_seated_next_val:
+                            best_seated_next_val = seated_val
+                            best_seated_next_id = next_b.block_id
 
             if best_next_id is not None:
                 dp[b.block_id] = (best_next_val, best_next_id)
+            if require_at_least_one_seat and best_seated_next_id is not None:
+                dp_seated[b.block_id] = (best_seated_next_val, best_seated_next_id)
 
     best_total_score = -1e12
     best_start_id = None
+    start_table = dp_seated if require_at_least_one_seat else dp
 
     for b in blocks_by_start[0]:
-        if b.block_id in dp and dp[b.block_id][0] > best_total_score:
-            best_total_score = dp[b.block_id][0]
+        if b.block_id in start_table and start_table[b.block_id][0] > best_total_score:
+            best_total_score = start_table[b.block_id][0]
             best_start_id = b.block_id
 
     if best_start_id is None:
@@ -353,10 +368,13 @@ def find_optimal_path(
 
     path: List[AvailabilityBlock] = []
     curr_id: Optional[str] = best_start_id
+    seated_satisfied = not require_at_least_one_seat
     while curr_id is not None:
         curr_block = block_map[curr_id]
         path.append(curr_block)
-        curr_id = dp[curr_id][1]
+        if not curr_block.is_standing:
+            seated_satisfied = True
+        curr_id = (dp if seated_satisfied else dp_seated)[curr_id][1]
 
     return best_total_score, path
 
@@ -418,6 +436,18 @@ def solve_top_strategies(
             )
             blocks = generate_candidate_blocks(pruned, seats_meta, segment_durations)
             res = find_optimal_path(blocks, station_names, segment_durations, config)
+            if (
+                res is not None
+                and all(b.is_standing for b in res[1])
+                and any(not b.is_standing for b in blocks)
+            ):
+                res = find_optimal_path(
+                    blocks,
+                    station_names,
+                    segment_durations,
+                    config,
+                    require_at_least_one_seat=True,
+                )
 
         if res is None:
             break

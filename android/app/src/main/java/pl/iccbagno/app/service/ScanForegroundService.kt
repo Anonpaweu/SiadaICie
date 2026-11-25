@@ -59,6 +59,7 @@ class ScanForegroundService : Service() {
 
     companion object {
         const val CHANNEL_ID = "iccbagno_scan_channel"
+        const val CHANNEL_ID_DONE = "iccbagno_scan_done_channel"
         const val NOTIFICATION_ID = 1001
         private const val NOTIFICATION_ID_DONE = 2002
         const val ACTION_START = "pl.iccbagno.app.action.START_SCAN"
@@ -439,15 +440,24 @@ class ScanForegroundService : Service() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val progressChannel = NotificationChannel(
                 CHANNEL_ID,
                 "Skanowanie pociągów",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
                 description = "Postęp wyszukiwania wolnych miejsc PKP"
             }
-            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            nm.createNotificationChannel(channel)
+            val doneChannel = NotificationChannel(
+                CHANNEL_ID_DONE,
+                "Wyniki skanowania",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Powiadomienia o zakończeniu wyszukiwania miejsc"
+                enableVibration(true)
+            }
+            nm.createNotificationChannel(progressChannel)
+            nm.createNotificationChannel(doneChannel)
         }
     }
 
@@ -483,12 +493,15 @@ class ScanForegroundService : Service() {
             val openPending = PendingIntent.getActivity(
                 this, 2, openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
-            val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            val notification = NotificationCompat.Builder(this, CHANNEL_ID_DONE)
                 .setSmallIcon(android.R.drawable.stat_sys_download_done)
                 .setContentTitle("Zakończono skanowanie ($trainNumber)")
                 .setContentText(summary)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(summary))
-                .setSilent(true)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setDefaults(NotificationCompat.DEFAULT_ALL)
+                .setCategory(NotificationCompat.CATEGORY_STATUS)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
                 .setAutoCancel(true)
                 .setContentIntent(openPending)
                 .build()

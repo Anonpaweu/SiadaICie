@@ -1716,10 +1716,18 @@ class EbiletWebViewScanner(
 
             // 3. Full segment-by-segment scan: Direct GRM API fast-scan + automatic WebView UI fallback
             val progressBase = if (fastPath && numSegments > 1) 24 else 15
+            val directMaxPct = 72
             val completed = AtomicInteger(0)
             val resultsByIdx = arrayOfNulls<SegmentAvailabilityMap>(numSegments)
 
-            suspend fun scanSegmentViaWebView(worker: WorkerWebView, idx: Int): SegmentAvailabilityMap {
+            suspend fun scanSegmentViaWebView(
+                worker: WorkerWebView,
+                idx: Int,
+                progressRangeStart: Int = progressBase,
+                progressRangeEnd: Int = 95,
+                rangeDoneCounter: AtomicInteger? = null,
+                rangeTotalCount: Int = numSegments
+            ): SegmentAvailabilityMap {
                 val sFrom = stops[idx]
                 val sTo = stops[idx + 1]
                 val segDep = sFrom.departureTime.ifBlank { sFrom.arrivalTime }.ifBlank { departureTime ?: "12:00" }
@@ -1730,6 +1738,8 @@ class EbiletWebViewScanner(
                 var seatTags: Map<String, List<String>> = emptyMap()
                 var status = "OK"
                 var errReason: String? = null
+                val stepTicks = AtomicInteger(0)
+                val safeTotal = rangeTotalCount.coerceAtLeast(1)
 
                 try {
                     val segScan = withTimeout(75_000L) {
@@ -1744,10 +1754,12 @@ class EbiletWebViewScanner(
                             fromEva = sFrom.evaCode,
                             toEva = sTo.evaCode,
                             stepProgress = { msg ->
-                                onProgress(
-                                    progressBase + (completed.get() * (96 - progressBase) / numSegments),
-                                    "[${idx + 1}/$numSegments] $msg"
-                                )
+                                val tick = stepTicks.incrementAndGet().coerceAtMost(6)
+                                val doneBase = rangeDoneCounter?.get() ?: completed.get()
+                                val span = (progressRangeEnd - progressRangeStart).coerceAtLeast(1)
+                                val frac = (doneBase.toDouble() + (tick / 7.0)) / safeTotal.toDouble()
+                                val pct = (progressRangeStart + (frac * span).toInt()).coerceIn(progressRangeStart, (progressRangeEnd - 1).coerceAtLeast(progressRangeStart))
+                                onProgress(pct, "[${idx + 1}/$numSegments] $msg")
                             }
                         )
                     }
@@ -1774,7 +1786,9 @@ class EbiletWebViewScanner(
                 }
 
                 val doneNow = completed.incrementAndGet()
-                val pct = (progressBase + (doneNow * (96 - progressBase) / numSegments)).coerceIn(progressBase, 96)
+                val rangeDoneNow = rangeDoneCounter?.incrementAndGet() ?: doneNow
+                val span = (progressRangeEnd - progressRangeStart).coerceAtLeast(1)
+                val pct = (progressRangeStart + (rangeDoneNow * span / safeTotal)).coerceIn(progressRangeStart, progressRangeEnd)
                 onProgress(pct, "Ukończono odcinek $doneNow/$numSegments: ${sFrom.name} -> ${sTo.name}")
 
                 return SegmentAvailabilityMap(
@@ -1797,7 +1811,7 @@ class EbiletWebViewScanner(
             // so its intercepted /grm/sklad/wbnet/ template + headers unlock Direct GRM for all remaining segments.
             if (capturedGrmTemplate.get() == null && numSegments > 1) {
                 ensureActive()
-                resultsByIdx[0] = scanSegmentViaWebView(pool[0], 0)
+                resultsByIdx[0] = scanSegmentViaWebView(pool[0], 0, progressBase, progressBase + 10, null, 1)
             }
 
             // Phase 3A: Direct GRM API fast-scan on pool[0] (stays parked on ebilet.intercity.pl)
@@ -1837,7 +1851,7 @@ class EbiletWebViewScanner(
                                     is DirectGrmResult.Ok -> {
                                         consecutiveAuthFailures.set(0)
                                         val doneNow = completed.incrementAndGet()
-                                        val pct = (progressBase + (doneNow * (96 - progressBase) / numSegments)).coerceIn(progressBase, 96)
+                                        val pct = (progressBase + (doneNow * (directMaxPct - progressBase) / numSegments)).coerceIn(progressBase, directMaxPct)
                                         onProgress(pct, "Szybki odczyt GRM $doneNow/$numSegments: ${sFrom.name} -> ${sTo.name}")
                                         Log.i(TAG, "[DIRECT GRM] Segment $idx OK (${sFrom.name} -> ${sTo.name}): ${directRes.scan.carriages.mapValues { it.value.size }}")
                                         resultsByIdx[idx] = SegmentAvailabilityMap(
@@ -1857,7 +1871,7 @@ class EbiletWebViewScanner(
                                     is DirectGrmResult.SoldOut -> {
                                         consecutiveAuthFailures.set(0)
                                         val doneNow = completed.incrementAndGet()
-                                        val pct = (progressBase + (doneNow * (96 - progressBase) / numSegments)).coerceIn(progressBase, 96)
+                                        val pct = (progressBase + (doneNow * (directMaxPct - progressBase) / numSegments)).coerceIn(progressBase, directMaxPct)
                                         onProgress(pct, "Szybki odczyt GRM $doneNow/$numSegments: ${sFrom.name} -> ${sTo.name} (brak miejsc)")
                                         Log.i(TAG, "[DIRECT GRM] Segment $idx SOLD_OUT (${sFrom.name} -> ${sTo.name}): ${directRes.reason}")
                                         resultsByIdx[idx] = SegmentAvailabilityMap(
@@ -1890,7 +1904,11 @@ class EbiletWebViewScanner(
 
             // Phase 3B: WebView UI pool fallback for any remaining segments
             val remainingIndices = (0 until numSegments).filter { resultsByIdx[it] == null }
-            if (remainingIndices.isNotEmpty()) {
+            if (remainingIndices.isEmpty()) {
+                onProgress(95, "Odczytano wszystkie $numSegments odcinków przez GRM API...")
+            } else {
+                val phase3bStart = (progressBase + (completed.get() * (directMaxPct - progressBase) / numSegments)).coerceIn(progressBase, directMaxPct)
+                val fallbackDone = AtomicInteger(0)
                 val targetWorkers = minOf(webViewConcurrency, remainingIndices.size).coerceAtLeast(1)
                 while (pool.size < targetWorkers) {
                     ensureActive()
@@ -1906,7 +1924,14 @@ class EbiletWebViewScanner(
                             ensureActive()
                             val worker = synchronized(poolLock) { availablePool.removeFirst() }
                             try {
-                                resultsByIdx[idx] = scanSegmentViaWebView(worker, idx)
+                                resultsByIdx[idx] = scanSegmentViaWebView(
+                                    worker = worker,
+                                    idx = idx,
+                                    progressRangeStart = phase3bStart,
+                                    progressRangeEnd = 95,
+                                    rangeDoneCounter = fallbackDone,
+                                    rangeTotalCount = remainingIndices.size
+                                )
                             } finally {
                                 synchronized(poolLock) { availablePool.addLast(worker) }
                             }

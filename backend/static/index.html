@@ -4,388 +4,521 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SiadaICie</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
       darkMode: 'class',
       theme: {
         extend: {
-          colors: {
-            pkp: {
-              navy: '#002a5c',
-              dark: '#060e1a',
-              surface: '#0c1c30',
-              surfaceHover: '#102747',
-              border: '#1a385f',
-              borderLight: '#234b7f',
-              orange: '#f36f21',
-              orangeHover: '#d8580f',
-              orangeActive: '#bf4b08',
-              blue: '#0070ba',
-            }
+          fontFamily: {
+            sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', 'sans-serif'],
           }
         }
       }
-    }
+    };
+
+    (function () {
+      try {
+        const saved = localStorage.getItem('siadaicie_theme');
+        if (saved === 'light') {
+          document.documentElement.classList.remove('dark');
+        } else {
+          document.documentElement.classList.add('dark');
+        }
+      } catch (e) {}
+    })();
   </script>
   <style>
+    :root {
+      --canvas: #f6f7f9;
+      --card: #ffffff;
+      --tonal: #eceff4;
+      --hairline: #dde2eb;
+      --text: #141821;
+      --muted: #5d6679;
+      --navy: #1b3a6b;
+      --accent: #d95d24;
+      --accent-hover: #c24e1a;
+      --accent-bg: #fce8df;
+      --emerald: #0f8a5f;
+      --emerald-bg: #dff4eb;
+      --amber: #b45309;
+      --amber-bg: #fef3c7;
+      --error: #ba1a1a;
+      --error-bg: #ffdad6;
+      --card-shadow: 0 1px 3px rgba(20, 24, 33, 0.06), 0 8px 24px rgba(20, 24, 33, 0.04);
+      --popup-shadow: 0 16px 40px rgba(20, 24, 33, 0.14);
+    }
+
+    html.dark {
+      --canvas: #111318;
+      --card: #1a1d24;
+      --tonal: #232730;
+      --hairline: #2e3340;
+      --text: #e7eaf0;
+      --muted: #9ba3b4;
+      --navy: #7bb0ff;
+      --accent: #f28b50;
+      --accent-hover: #e57a3d;
+      --accent-bg: #3a2419;
+      --emerald: #4ade80;
+      --emerald-bg: #143123;
+      --amber: #fbbf24;
+      --amber-bg: #332611;
+      --error: #ffb4ab;
+      --error-bg: #4a1d1b;
+      --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+      --popup-shadow: 0 20px 44px rgba(0, 0, 0, 0.55);
+    }
+
+    body {
+      background-color: var(--canvas);
+      color: var(--text);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      transition: background-color 0.2s ease, color 0.2s ease;
+    }
+
+    .tabular-nums {
+      font-variant-numeric: tabular-nums;
+    }
+
+    .rail-card {
+      background-color: var(--card);
+      border: 1px solid var(--hairline);
+      box-shadow: var(--card-shadow);
+    }
+
+    .rail-tonal {
+      background-color: var(--tonal);
+      border: 1px solid var(--hairline);
+    }
+
+    .rail-hairline {
+      border-color: var(--hairline);
+    }
+
+    .rail-popup {
+      background-color: var(--card);
+      border: 1px solid var(--hairline);
+      box-shadow: var(--popup-shadow);
+    }
+
     .cell-selected {
-      box-shadow: inset 0 0 0 2px #f36f21, 0 0 12px rgba(243, 111, 33, 0.4);
-      background-color: #0c2d54 !important;
-      color: #f36f21 !important;
+      background-color: var(--accent-bg) !important;
+      color: var(--accent) !important;
+      box-shadow: inset 0 0 0 1.5px var(--accent);
       font-weight: 700;
     }
+
+    .cell-free {
+      background-color: var(--emerald-bg);
+      color: var(--emerald);
+      font-weight: 600;
+    }
+
+    .cell-occupied {
+      background-color: transparent;
+      color: var(--muted);
+      opacity: 0.65;
+    }
+
+    .cell-error {
+      background-color: var(--amber-bg);
+      color: var(--amber);
+      font-weight: 600;
+    }
+
     .scrollbar-thin::-webkit-scrollbar {
       height: 6px;
       width: 6px;
     }
+    .scrollbar-thin::-webkit-scrollbar-track {
+      background: transparent;
+    }
     .scrollbar-thin::-webkit-scrollbar-thumb {
-      background: #1b3a63;
-      border-radius: 4px;
+      background: var(--hairline);
+      border-radius: 999px;
     }
   </style>
 </head>
-<body class="bg-pkp-dark text-slate-100 min-h-screen font-sans flex flex-col antialiased selection:bg-pkp-orange selection:text-white">
+<body class="min-h-screen flex flex-col antialiased">
 
-  <!-- Header -->
-  <header class="border-b border-pkp-border bg-pkp-navy/95 backdrop-blur sticky top-0 z-50 px-6 py-4 shadow-lg">
-    <div class="max-w-7xl mx-auto flex items-center justify-between">
-      <div>
-        <h1 class="text-xl font-black tracking-tight text-white">
-          SiadaICie
-        </h1>
-        <p class="text-xs text-slate-300 mt-0.5">Inteligentny system doboru miejsc siedzących i przesiadek w pociągach dalekobieżnych</p>
+  <!-- Top App Bar -->
+  <header class="sticky top-0 z-50 backdrop-blur-md border-b rail-hairline" style="background-color: color-mix(in srgb, var(--canvas) 88%, transparent);">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-3">
+      <div class="flex items-center gap-3 min-w-0">
+        <img src="/static/brand-logo.png" alt="SiadaICie" class="w-11 h-11 rounded-xl object-cover shrink-0 border rail-hairline" />
+        <div class="min-w-0">
+          <h1 class="text-lg sm:text-xl font-extrabold tracking-wide leading-tight flex items-center">
+            <span>SIADA</span><span style="color: var(--accent);">IC</span><span>IE</span>
+          </h1>
+          <p class="text-[11px] truncate" style="color: var(--muted);">Wolne miejsca PKP Intercity</p>
+        </div>
       </div>
-      <div class="flex items-center gap-3 text-xs">
-        <a href="https://buycoffee.to/anonpaweu" target="_blank" rel="noopener noreferrer" class="flex items-center gap-1.5 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-300 px-3 py-1.5 rounded-full font-semibold transition-colors">
-          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+
+      <div class="flex items-center gap-2 sm:gap-2.5 shrink-0">
+        <!-- Segmented Mode Switcher -->
+        <div class="rail-tonal p-1 rounded-xl flex items-center text-xs">
+          <button id="tabLiveBtn" type="button" onclick="switchTab('live')" class="px-3 py-1.5 rounded-lg font-semibold transition-all">
+            Skaner
+          </button>
+          <button id="tabTextBtn" type="button" onclick="switchTab('text')" class="px-3 py-1.5 rounded-lg font-medium transition-all">
+            Edytor offline
+          </button>
+        </div>
+
+        <!-- Theme Switch -->
+        <button id="themeToggleBtn" type="button" onclick="toggleThemeMode()" title="Przełącz motyw jasny / ciemny" class="rail-tonal w-9 h-9 rounded-xl flex items-center justify-center transition-colors hover:opacity-85">
+          <svg id="themeIconSun" class="w-4 h-4 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+          </svg>
+          <svg id="themeIconMoon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+          </svg>
+        </button>
+
+        <!-- Buy me a coffee -->
+        <a href="https://buycoffee.to/anonpaweu" target="_blank" rel="noopener noreferrer" title="Buy me a coffee" class="h-9 px-3 rounded-xl flex items-center gap-1.5 text-xs font-semibold transition-opacity hover:opacity-85" style="background-color: var(--accent-bg); color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);">
+          <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 8h1a4 4 0 010 8h-1M2 8h16v9a4 4 0 01-4 4H6a4 4 0 01-4-4V8zm4-4h2m4 0h2m4 0h2" />
           </svg>
-          <span>Buy me a coffee</span>
+          <span class="hidden sm:inline">Buy me a coffee</span>
         </a>
-        <div class="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-3 py-1.5 rounded-full font-medium">
-          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-          <span>Silnik skanera aktywny</span>
-        </div>
       </div>
     </div>
   </header>
 
-  <!-- Główny kontener -->
-  <main class="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
+  <!-- Main Workspace -->
+  <main class="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 py-6 space-y-4">
 
-    <!-- Baner ostrzegawczy o nocnej przerwie technicznej (widoczny tylko w oknie przerwy 23:45 - 00:30 oraz do 01:00 na przełomie miesięcy) -->
-    <div id="maintenanceAlert" class="hidden bg-amber-950/70 border border-amber-600/60 text-amber-200 px-4 py-3 rounded-xl text-xs flex items-center gap-3 shadow-lg">
-      <svg class="w-5 h-5 text-amber-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <!-- Nocna przerwa serwisowa -->
+    <div id="maintenanceAlert" class="hidden rounded-2xl p-4 text-xs flex items-start gap-3" style="background-color: var(--amber-bg); border: 1px solid color-mix(in srgb, var(--amber) 40%, transparent); color: var(--amber);">
+      <svg class="w-5 h-5 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
       </svg>
       <div class="flex-1 leading-relaxed">
-        <strong id="maintenanceTitle" class="font-bold text-amber-300">Nocna przerwa serwisowa (23:45 – 00:30):</strong>
-        <span id="maintenanceText">W tych godzinach systemy kolejowe mogą przeprowadzać codzienną przerwę techniczną (do 01:00 na przełomie miesięcy). Skanowanie połączeń i pobieranie wolnych miejsc może działać niestabilnie lub być chwilowo niedostępne.</span>
+        <strong id="maintenanceTitle" class="font-bold block mb-0.5">Nocna przerwa serwisowa (23:45 – 00:30):</strong>
+        <span id="maintenanceText" style="color: var(--text);">W tych godzinach systemy kolejowe przeprowadzają przerwę techniczną (do 01:00 na przełomie miesięcy). Skanowanie może być chwilowo niedostępne.</span>
       </div>
     </div>
 
-    <!-- Przełącznik trybów (Nawigacja zakładkowa) -->
-    <div class="flex border-b border-pkp-border space-x-2">
-      <button id="tabLiveBtn" onclick="switchTab('live')" class="px-5 py-3 text-xs font-bold rounded-t-lg border-b-2 border-pkp-orange bg-pkp-surface text-white flex items-center gap-2 transition-all shadow">
-        <svg class="w-4 h-4 text-pkp-orange" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
-        </svg>
-        <span>Automatyczne Skanowanie Składu (Live)</span>
-      </button>
-      <button id="tabTextBtn" onclick="switchTab('text')" class="px-5 py-3 text-xs font-semibold rounded-t-lg border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:bg-pkp-surface/60 flex items-center gap-2 transition-all">
-        <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-        </svg>
-        <span>Analiza Własnego Zestawienia Miejsc (Edytor)</span>
-      </button>
-    </div>
+    <!-- PANEL TRYBU 1: Skanowanie na żywo -->
+    <section id="panelModeLive" class="space-y-3">
 
-    <!-- PANEL TRYBU 1: Skanowanie Składu na Żywo -->
-    <section id="panelModeLive" class="bg-pkp-surface border border-pkp-border rounded-xl p-5 shadow-2xl space-y-4">
-      <div class="flex items-center justify-between border-b border-pkp-border pb-3">
-        <div class="flex items-center gap-2.5">
-          <div class="w-2.5 h-2.5 rounded-sm bg-pkp-orange"></div>
-          <h2 class="text-xs font-extrabold uppercase tracking-wider text-slate-200">
-            Wyszukiwanie Połączenia i Parametry Składu
-          </h2>
-        </div>
-        <span class="text-[11px] text-slate-400">Pobierz rozkład stacji, a następnie przeskanuj wolne wagony Klasy 2</span>
-      </div>
+      <!-- Unified Route Card -->
+      <div class="rail-card rounded-3xl p-4 sm:p-6 space-y-4">
 
-      <!-- 4 Kolumny: Stacja A -> Stacja B -> Data i Godzina -> Numer pociągu -->
-      <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
-
-        <!-- Kolumna 1: Stacja początkowa (A) -->
-        <div class="relative">
-          <label class="block text-xs font-semibold text-slate-300 mb-1.5 flex items-center gap-1.5">
-            <span class="w-2 h-2 rounded-full bg-blue-400"></span>
-            <span>Stacja wyjazdu (A)</span>
-          </label>
-          <input type="text" id="fromStation" value="" autocomplete="off" placeholder="Wpisz stację odjazdu (np. Warszawa Centralna)..." oninput="handleStationSearch('fromStation', 'fromSuggestions')" class="w-full bg-pkp-dark border border-pkp-borderLight rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-pkp-orange text-slate-100 placeholder:text-slate-500 transition-colors" />
-          <div id="fromSuggestions" class="hidden absolute left-0 right-0 top-full mt-1 bg-pkp-surface border border-pkp-borderLight rounded-lg shadow-2xl z-50 max-h-56 overflow-y-auto divide-y divide-pkp-border text-xs"></div>
-        </div>
-
-        <!-- Kolumna 2: Stacja docelowa (B) -->
-        <div class="relative">
-          <label class="block text-xs font-semibold text-slate-300 mb-1.5 flex items-center gap-1.5">
-            <span class="w-2 h-2 rounded-full bg-pkp-orange"></span>
-            <span>Stacja przyjazdu (B)</span>
-          </label>
-          <input type="text" id="toStation" value="" autocomplete="off" placeholder="Wpisz stację przyjazdu (np. Kraków Główny)..." oninput="handleStationSearch('toStation', 'toSuggestions')" class="w-full bg-pkp-dark border border-pkp-borderLight rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-pkp-orange text-slate-100 placeholder:text-slate-500 transition-colors" />
-          <div id="toSuggestions" class="hidden absolute left-0 right-0 top-full mt-1 bg-pkp-surface border border-pkp-borderLight rounded-lg shadow-2xl z-50 max-h-56 overflow-y-auto divide-y divide-pkp-border text-xs"></div>
-        </div>
-
-        <!-- Kolumna 3: Data i Godzina odjazdu -->
-        <div class="relative">
-          <label class="block text-xs font-semibold text-slate-300 mb-1.5">Data i Godzina odjazdu</label>
-          <div class="grid grid-cols-2 gap-2">
-            <!-- Data z kalendarzem -->
-            <div class="relative">
-              <input type="text" id="travelDateDisplay" autocomplete="off" placeholder="DD.MM.YYYY" 
-                class="w-full bg-pkp-dark border border-pkp-borderLight rounded-lg pl-2.5 pr-8 py-2 text-xs focus:outline-none focus:border-pkp-orange text-slate-100 cursor-pointer font-mono transition-colors" />
-              <button type="button" id="btnToggleCalendar" class="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-pkp-orange text-xs transition-colors" title="Otwórz kalendarz">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                </svg>
+        <!-- Station Pair + Swap Button -->
+        <div class="grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] gap-2.5 items-center">
+          <!-- Origin -->
+          <div class="relative">
+            <div class="rail-tonal rounded-2xl px-3.5 py-2.5 flex items-center gap-3 focus-within:ring-1" style="--tw-ring-color: var(--accent);">
+              <span class="w-2.5 h-2.5 rounded-full shrink-0" style="border: 2px solid var(--navy);"></span>
+              <div class="flex-1 min-w-0">
+                <label for="fromStation" class="block text-[10px] font-semibold tracking-wider uppercase" style="color: var(--muted);">Stacja początkowa</label>
+                <input type="text" id="fromStation" value="" autocomplete="off" placeholder="Skąd jedziesz? (np. Warszawa Centralna)" oninput="handleStationSearch('fromStation', 'fromSuggestions'); toggleClearBtn('fromStation', 'clearFromBtn')" class="w-full bg-transparent text-sm font-medium focus:outline-none placeholder:opacity-50" style="color: var(--text);" />
+              </div>
+              <button id="clearFromBtn" type="button" onclick="clearStationField('fromStation', 'fromSuggestions', 'clearFromBtn')" class="hidden w-6 h-6 rounded-full items-center justify-center hover:opacity-75" style="color: var(--muted);" title="Wyczyść">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
-              <input type="hidden" id="travelDate" value="" />
             </div>
-            <!-- Godzina -->
-            <input type="time" id="travelTime" value="" class="w-full bg-pkp-dark border border-pkp-borderLight rounded-lg px-2.5 py-2 text-xs focus:outline-none focus:border-pkp-orange text-slate-100 transition-colors" />
+            <div id="fromSuggestions" class="hidden absolute left-0 right-0 top-full mt-1.5 rail-popup rounded-2xl z-50 max-h-60 overflow-y-auto divide-y rail-hairline text-xs"></div>
           </div>
 
-          <div class="flex items-center gap-2 mt-2">
-            <input type="checkbox" id="directOnly" checked onchange="toggleDirectFilter()" class="rounded border-pkp-borderLight bg-pkp-dark text-pkp-orange focus:ring-pkp-orange w-3.5 h-3.5 cursor-pointer">
-            <label for="directOnly" class="text-[11px] text-slate-300 select-none cursor-pointer">Tylko połączenia bezpośrednie</label>
-          </div>
-
-          <!-- Okienko kalendarza miesięcznego -->
-          <div id="calendarPopup" class="hidden absolute left-0 top-full mt-1.5 bg-pkp-surface border border-pkp-borderLight rounded-xl shadow-2xl z-50 p-3.5 w-72 text-xs select-none">
-            <div class="flex items-center justify-between mb-2.5 pb-2 border-b border-pkp-border text-slate-200">
-              <button type="button" id="calPrevMonth" class="px-2 py-1 rounded hover:bg-pkp-surfaceHover text-slate-300 hover:text-white transition-colors font-bold">&lt;</button>
-              <span id="calMonthYearTitle" class="font-bold text-xs tracking-wide text-white">Listopad 2026</span>
-              <button type="button" id="calNextMonth" class="px-2 py-1 rounded hover:bg-pkp-surfaceHover text-slate-300 hover:text-white transition-colors font-bold">&gt;</button>
-            </div>
-            <div class="grid grid-cols-7 gap-1 text-center font-bold text-[10px] text-slate-400 mb-2">
-              <span>Pn</span><span>Wt</span><span>Śr</span><span>Czw</span><span>Pt</span><span>Sob</span><span class="text-pkp-orange">Ndz</span>
-            </div>
-            <div id="calDaysGrid" class="grid grid-cols-7 gap-1 text-center text-xs"></div>
-            <div class="mt-3 pt-2 border-t border-pkp-border flex justify-between items-center text-[10px]">
-              <button type="button" id="calTodayBtn" class="text-pkp-orange hover:text-pkp-orangeHover font-bold underline">Dzisiaj</button>
-              <span class="text-slate-500">Format: DD.MM.YYYY</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Kolumna 4: Numer pociągu -->
-        <div>
-          <div class="flex justify-between items-center mb-1.5">
-            <label class="block text-xs font-semibold text-slate-300">Numer pociągu (opcjonalnie)</label>
-            <button type="button" onclick="loadAvailableTrains()" class="text-[11px] text-pkp-orange hover:text-pkp-orangeHover underline font-semibold transition-colors flex items-center gap-1">
-              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          <!-- Swap Button -->
+          <div class="flex justify-center">
+            <button type="button" onclick="swapStations()" title="Zamień stacje" class="rail-tonal w-10 h-10 rounded-full flex items-center justify-center transition-transform active:scale-95 hover:opacity-85" style="color: var(--navy);">
+              <svg class="w-4 h-4 md:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
               </svg>
-              <span>Szukaj połączeń</span>
             </button>
           </div>
-          <select id="trainSelect" onchange="onTrainSelected()" class="w-full bg-pkp-dark border border-pkp-borderLight rounded-lg px-2.5 py-1.5 text-xs text-slate-200 mb-1.5 focus:outline-none focus:border-pkp-orange transition-colors">
-            <option value="">-- Wybierz pociąg z rozkładu PKP --</option>
-          </select>
-          <input type="text" id="trainNo" value="" class="w-full bg-pkp-dark border border-pkp-borderLight rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-pkp-orange text-slate-100 placeholder:text-slate-500 transition-colors" placeholder="np. 1646 lub wybierz z listy" />
-        </div>
-      </div>
 
-      <!-- Pasek dolny: Klasa, Profil i Przycisk Akcji -->
-      <div class="flex flex-wrap items-center justify-between pt-3.5 border-t border-pkp-border gap-4">
-        <div class="flex flex-wrap items-center gap-4 text-xs">
-          <div class="flex items-center gap-2">
-            <label for="ticketClass" class="text-slate-400 font-medium">Klasa:</label>
-            <select id="ticketClass" class="bg-pkp-dark border border-pkp-borderLight rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-pkp-orange transition-colors">
+          <!-- Destination -->
+          <div class="relative">
+            <div class="rail-tonal rounded-2xl px-3.5 py-2.5 flex items-center gap-3 focus-within:ring-1" style="--tw-ring-color: var(--accent);">
+              <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background-color: var(--accent);"></span>
+              <div class="flex-1 min-w-0">
+                <label for="toStation" class="block text-[10px] font-semibold tracking-wider uppercase" style="color: var(--muted);">Stacja docelowa</label>
+                <input type="text" id="toStation" value="" autocomplete="off" placeholder="Dokąd jedziesz? (np. Kraków Główny)" oninput="handleStationSearch('toStation', 'toSuggestions'); toggleClearBtn('toStation', 'clearToBtn')" class="w-full bg-transparent text-sm font-medium focus:outline-none placeholder:opacity-50" style="color: var(--text);" />
+              </div>
+              <button id="clearToBtn" type="button" onclick="clearStationField('toStation', 'toSuggestions', 'clearToBtn')" class="hidden w-6 h-6 rounded-full items-center justify-center hover:opacity-75" style="color: var(--muted);" title="Wyczyść">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <div id="toSuggestions" class="hidden absolute left-0 right-0 top-full mt-1.5 rail-popup rounded-2xl z-50 max-h-60 overflow-y-auto divide-y rail-hairline text-xs"></div>
+          </div>
+        </div>
+
+        <!-- Date / Time / Class / Actions -->
+        <div class="flex flex-wrap items-center justify-between gap-3 pt-1">
+          <div class="flex flex-wrap items-center gap-2.5">
+            <!-- Date Picker Chip -->
+            <div class="relative">
+              <div class="rail-tonal rounded-xl px-3 py-2 flex items-center gap-2">
+                <svg class="w-4 h-4 shrink-0" style="color: var(--navy);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+                <input type="text" id="travelDateDisplay" autocomplete="off" placeholder="DD.MM.YYYY" class="w-24 bg-transparent text-xs font-semibold tabular-nums focus:outline-none cursor-pointer" style="color: var(--text);" />
+                <button type="button" id="btnToggleCalendar" title="Otwórz kalendarz" class="text-xs opacity-70 hover:opacity-100" style="color: var(--muted);">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
+                </button>
+                <input type="hidden" id="travelDate" value="" />
+              </div>
+
+              <!-- Calendar Popup -->
+              <div id="calendarPopup" class="hidden absolute left-0 top-full mt-2 rail-popup rounded-2xl z-50 p-4 w-72 text-xs select-none">
+                <div class="flex items-center justify-between mb-3 pb-2 border-b rail-hairline">
+                  <button type="button" id="calPrevMonth" class="w-7 h-7 rounded-lg rail-tonal font-bold hover:opacity-80">&lt;</button>
+                  <span id="calMonthYearTitle" class="font-bold text-xs tracking-wide"></span>
+                  <button type="button" id="calNextMonth" class="w-7 h-7 rounded-lg rail-tonal font-bold hover:opacity-80">&gt;</button>
+                </div>
+                <div class="grid grid-cols-7 gap-1 text-center font-semibold text-[10px] mb-2" style="color: var(--muted);">
+                  <span>Pn</span><span>Wt</span><span>Śr</span><span>Czw</span><span>Pt</span><span>Sob</span><span style="color: var(--accent);">Ndz</span>
+                </div>
+                <div id="calDaysGrid" class="grid grid-cols-7 gap-1 text-center text-xs tabular-nums"></div>
+                <div class="mt-3 pt-2 border-t rail-hairline flex justify-between items-center text-[11px]">
+                  <button type="button" id="calTodayBtn" class="font-bold hover:underline" style="color: var(--accent);">Dzisiaj</button>
+                  <span style="color: var(--muted);">Format: DD.MM.YYYY</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Time Chip -->
+            <div class="rail-tonal rounded-xl px-3 py-1.5 flex items-center gap-2">
+              <svg class="w-4 h-4 shrink-0" style="color: var(--navy);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span class="text-[11px] font-medium" style="color: var(--muted);">Od</span>
+              <input type="time" id="travelTime" value="" class="bg-transparent text-xs font-semibold tabular-nums focus:outline-none" style="color: var(--text);" />
+            </div>
+
+            <!-- Segmented Class Switch -->
+            <div class="rail-tonal p-1 rounded-xl flex items-center text-xs">
+              <button type="button" data-class-btn="2" onclick="selectTicketClass(2)" class="px-3 py-1.5 rounded-lg font-semibold transition-all">Kl. 2</button>
+              <button type="button" data-class-btn="1" onclick="selectTicketClass(1)" class="px-3 py-1.5 rounded-lg font-medium transition-all">Kl. 1</button>
+            </div>
+            <select id="ticketClass" class="hidden">
               <option value="2" selected>Klasa 2</option>
               <option value="1">Klasa 1</option>
             </select>
           </div>
-          <div class="flex items-center gap-2">
-            <label for="optProfile" class="text-slate-400 font-medium">Strategia:</label>
-            <select id="optProfile" onchange="recomputeCurrentWithFilters()" class="bg-pkp-dark border border-pkp-borderLight rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-pkp-orange transition-colors">
-              <option value="BALANCED" selected>Zrównoważona</option>
-              <option value="MINIMAL_TRANSFERS">Najmniej przesiadek</option>
-              <option value="MINIMAL_WALKING">Najkrótsze spacery</option>
-            </select>
+
+          <!-- Action Buttons -->
+          <div class="flex flex-wrap items-center gap-2.5 w-full sm:w-auto">
+            <button type="button" onclick="loadAvailableTrains()" class="rail-tonal flex-1 sm:flex-initial px-4 py-2.5 rounded-2xl text-xs font-semibold transition-opacity hover:opacity-85 flex items-center justify-center gap-2" style="color: var(--navy);">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h7" />
+              </svg>
+              <span>Szukaj pociągów</span>
+            </button>
+            <button id="btnScanSeats" type="button" onclick="runLiveScan()" class="flex-1 sm:flex-initial disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-xs px-5 py-2.5 rounded-2xl transition-all flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.99]" style="background-color: var(--accent);">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <span id="btnScanSeatsLabel">Wyszukaj i optymalizuj miejsca</span>
+            </button>
           </div>
         </div>
 
-        <div>
-          <button id="btnScanSeats" onclick="runLiveScan()" class="bg-pkp-orange hover:bg-pkp-orangeHover active:bg-pkp-orangeActive disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-xs px-6 py-2.5 rounded-lg shadow-lg shadow-orange-500/25 transition-all flex items-center gap-2">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+        <!-- Train Select + Manual Number + Boarding-Pass Cards -->
+        <div class="pt-3 border-t rail-hairline space-y-3">
+          <div class="grid grid-cols-1 md:grid-cols-[1fr_220px] gap-2.5 items-center">
+            <select id="trainSelect" onchange="onTrainSelected()" class="rail-tonal rounded-xl px-3 py-2 text-xs font-medium focus:outline-none">
+              <option value="">-- Kliknij „Szukaj pociągów” lub wpisz numer po prawej --</option>
+            </select>
+            <input type="text" id="trainNo" value="" placeholder="Nr pociągu ręcznie (np. 1646)" class="rail-tonal rounded-xl px-3 py-2 text-xs font-semibold tabular-nums focus:outline-none placeholder:font-normal placeholder:opacity-60" style="color: var(--text);" />
+          </div>
+
+          <!-- Visual Train Cards Grid (populated by loadAvailableTrains) -->
+          <div id="trainCardsContainer" class="hidden space-y-2">
+            <div class="flex items-center justify-between text-xs px-0.5">
+              <span id="trainCardsHeader" class="font-bold">Połączenia</span>
+              <span class="text-[11px]" style="color: var(--muted);">Kliknij pociąg, aby wybrać lub skanować</span>
+            </div>
+            <div id="trainCardsGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 max-h-72 overflow-y-auto pr-1 scrollbar-thin"></div>
+          </div>
+        </div>
+
+        <!-- Detected Route Preview Card -->
+        <div id="routePreviewCard" class="hidden rail-tonal rounded-2xl p-3.5 text-xs space-y-2">
+          <div class="flex flex-wrap justify-between items-center gap-2 font-bold">
+            <span id="routePreviewTitle">Wykryta trasa pociągu</span>
+            <span id="routePreviewCount" class="font-normal text-[11px]" style="color: var(--muted);"></span>
+          </div>
+          <div id="routeStopsList" class="flex flex-wrap gap-1.5 text-[11px] tabular-nums"></div>
+        </div>
+      </div>
+
+      <!-- Collapsible Filters Card (matching Android SearchScreen) -->
+      <div class="rail-card rounded-2xl overflow-hidden">
+        <button type="button" onclick="toggleFiltersPanel()" class="w-full px-4 py-3 flex items-center justify-between text-left transition-opacity hover:opacity-85">
+          <div class="flex items-center gap-2.5 text-xs sm:text-sm">
+            <svg class="w-4 h-4 shrink-0" style="color: var(--navy);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
             </svg>
-            <span id="btnScanSeatsLabel">Wyszukaj i optymalizuj miejsca</span>
-          </button>
-        </div>
-      </div>
+            <span class="font-bold">Filtry</span>
+            <span id="seatFiltersSummary" class="text-xs tabular-nums" style="color: var(--muted);">Bezpośrednie • 1/6 aktywne</span>
+          </div>
+          <svg id="filtersChevron" class="w-4 h-4 transition-transform duration-200" style="color: var(--muted);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
 
-      <!-- Filtry typów miejsc -->
-      <div id="seatFiltersBar" class="pt-3 border-t border-pkp-border space-y-2">
-        <div class="flex flex-wrap items-center justify-between gap-2 text-[11px]">
-          <span class="font-semibold text-slate-300">Filtry miejsc (zwykłe i strefa ciszy mają zawsze najwyższy priorytet):</span>
-          <span id="seatFiltersSummary" class="text-slate-400 font-mono">1/6 aktywne</span>
-        </div>
-        <div id="seatFilterButtons" class="flex flex-wrap gap-2 text-xs">
-          <button type="button" data-seat-filter="allow_bike" onclick="toggleSeatFilter('allow_bike')" class="px-3 py-1.5 rounded-lg font-semibold border transition-colors bg-pkp-orange text-white border-pkp-orange">Miejsce z rowerem</button>
-          <button type="button" data-seat-filter="allow_pregnant" onclick="toggleSeatFilter('allow_pregnant')" class="px-3 py-1.5 rounded-lg font-medium border transition-colors bg-pkp-dark text-slate-300 border-pkp-borderLight hover:border-slate-400">Kobieta w ciąży</button>
-          <button type="button" data-seat-filter="allow_child" onclick="toggleSeatFilter('allow_child')" class="px-3 py-1.5 rounded-lg font-medium border transition-colors bg-pkp-dark text-slate-300 border-pkp-borderLight hover:border-slate-400">Osoba z dzieckiem</button>
-          <button type="button" data-seat-filter="allow_elderly" onclick="toggleSeatFilter('allow_elderly')" class="px-3 py-1.5 rounded-lg font-medium border transition-colors bg-pkp-dark text-slate-300 border-pkp-borderLight hover:border-slate-400">Senior</button>
-          <button type="button" data-seat-filter="allow_prm_assist" onclick="toggleSeatFilter('allow_prm_assist')" class="px-3 py-1.5 rounded-lg font-medium border transition-colors bg-pkp-dark text-slate-300 border-pkp-borderLight hover:border-slate-400">Niepełnosprawność (bez wózka)</button>
-          <button type="button" data-seat-filter="allow_wheelchair" onclick="toggleSeatFilter('allow_wheelchair')" class="px-3 py-1.5 rounded-lg font-medium border transition-colors bg-pkp-dark text-slate-300 border-pkp-borderLight hover:border-slate-400">Osoba na wózku</button>
-        </div>
-      </div>
+        <div id="seatFiltersBar" class="hidden px-4 pb-4 pt-1 space-y-3 border-t rail-hairline">
+          <div class="flex items-center justify-between gap-4 pt-2">
+            <div>
+              <div class="text-xs font-semibold">Tylko pociągi bezpośrednie</div>
+              <div class="text-[11px]" style="color: var(--muted);">Ukrywa z listy rozkładu połączenia z przesiadkami między pociągami</div>
+            </div>
+            <label class="inline-flex items-center cursor-pointer">
+              <input type="checkbox" id="directOnly" checked onchange="toggleDirectFilter()" class="w-4 h-4 rounded cursor-pointer accent-orange-500" />
+            </label>
+          </div>
 
-      <!-- Karta podglądu stacji pośrednich -->
-      <div id="routePreviewCard" class="hidden bg-pkp-dark border border-pkp-borderLight rounded-lg p-3.5 text-xs space-y-2">
-        <div class="flex justify-between items-center text-white font-bold">
-          <span id="routePreviewTitle">Wykryta trasa pociągu</span>
-          <span id="routePreviewCount" class="text-slate-400 font-normal"></span>
+          <div class="border-t rail-hairline pt-3 space-y-2">
+            <div class="text-[11px]" style="color: var(--muted);">
+              Zwykłe miejsca i Strefa ciszy są zawsze włączone jako najwyższy priorytet.
+            </div>
+            <div id="seatFilterButtons" class="flex flex-wrap gap-2 text-xs">
+              <button type="button" data-seat-filter="allow_bike" onclick="toggleSeatFilter('allow_bike')" class="px-3 py-1.5 rounded-xl font-semibold border transition-colors">Miejsce z rowerem</button>
+              <button type="button" data-seat-filter="allow_pregnant" onclick="toggleSeatFilter('allow_pregnant')" class="px-3 py-1.5 rounded-xl font-medium border transition-colors">Kobieta w ciąży</button>
+              <button type="button" data-seat-filter="allow_child" onclick="toggleSeatFilter('allow_child')" class="px-3 py-1.5 rounded-xl font-medium border transition-colors">Osoba z dzieckiem</button>
+              <button type="button" data-seat-filter="allow_elderly" onclick="toggleSeatFilter('allow_elderly')" class="px-3 py-1.5 rounded-xl font-medium border transition-colors">Senior</button>
+              <button type="button" data-seat-filter="allow_prm_assist" onclick="toggleSeatFilter('allow_prm_assist')" class="px-3 py-1.5 rounded-xl font-medium border transition-colors">Niepełnosprawność (bez wózka)</button>
+              <button type="button" data-seat-filter="allow_wheelchair" onclick="toggleSeatFilter('allow_wheelchair')" class="px-3 py-1.5 rounded-xl font-medium border transition-colors">Osoba na wózku</button>
+            </div>
+          </div>
         </div>
-        <div id="routeStopsList" class="flex flex-wrap gap-2 text-slate-300 font-mono text-[11px]"></div>
       </div>
     </section>
 
-    <!-- PANEL TRYBU 2: Wklejanie / Edycja rozpiski -->
-    <section id="panelModeText" class="hidden bg-pkp-surface border border-pkp-border rounded-xl p-5 shadow-2xl space-y-4">
-      <div class="flex items-center justify-between border-b border-pkp-border pb-3">
+    <!-- PANEL TRYBU 2: Edytor offline -->
+    <section id="panelModeText" class="hidden rail-card rounded-3xl p-4 sm:p-6 space-y-4">
+      <div class="flex flex-wrap items-center justify-between gap-3 pb-3 border-b rail-hairline">
         <div>
-          <h2 class="text-xs font-extrabold uppercase tracking-wider text-slate-200">
-            Zestawienie Wolnych Miejsc (Format tekstowy: wX mY/mZ)
-          </h2>
-          <p class="text-[11px] text-slate-400">Wklej raport wolnych foteli dla kolejnych stacji pośrednich lub skorzystaj z gotowego wzorca</p>
+          <h2 class="text-sm font-bold">Własne zestawienie wolnych miejsc</h2>
+          <p class="text-xs" style="color: var(--muted);">Wklej raport wolnych foteli dla kolejnych odcinków w formacie Wx mY/mZ</p>
         </div>
-        <div class="flex items-center gap-3">
-          <button onclick="loadFixtureKoluszkiOpole()" class="bg-pkp-surfaceHover hover:bg-pkp-border text-pkp-orange border border-pkp-orange/40 text-xs px-3.5 py-1.5 rounded-lg transition-colors font-semibold flex items-center gap-1.5">
-            <span>Załaduj przykład: Koluszki → Opole</span>
-          </button>
-        </div>
+        <button type="button" onclick="loadFixtureKoluszkiOpole()" class="px-3.5 py-2 rounded-xl text-xs font-semibold transition-opacity hover:opacity-85" style="background-color: var(--accent-bg); color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);">
+          Załaduj przykład: Koluszki &rarr; Opole
+        </button>
       </div>
 
-      <div>
-        <textarea id="rawMapInput" rows="10" class="w-full bg-pkp-dark border border-pkp-borderLight rounded-lg p-3.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-pkp-orange leading-relaxed scrollbar-thin placeholder:text-slate-600" placeholder="Wklej zestawienie w formacie:&#10;Koluszki - Piotrków 14:45&#10;W5 m82&#10;W3 m84/m87/m91&#10;&#10;Piotrków - Radomsko 15:12&#10;W3 m91&#10;W5 m82/m88"></textarea>
-      </div>
+      <textarea id="rawMapInput" rows="9" class="rail-tonal w-full rounded-2xl p-4 text-xs font-mono focus:outline-none leading-relaxed scrollbar-thin placeholder:opacity-50" style="color: var(--text);" placeholder="Wklej zestawienie w formacie:&#10;Koluszki - Piotrków 14:45&#10;W5 m82&#10;W3 m84/m87/m91&#10;&#10;Piotrków - Radomsko 15:12&#10;W3 m91&#10;W5 m82/m88"></textarea>
 
-      <div class="flex flex-wrap items-center justify-between pt-2 border-t border-pkp-border gap-4">
+      <div class="flex flex-wrap items-center justify-between gap-3 pt-1">
         <div class="flex items-center gap-2 text-xs">
-          <label for="optProfileText" class="text-slate-400 font-medium">Strategia:</label>
-          <select id="optProfileText" class="bg-pkp-dark border border-pkp-borderLight rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-pkp-orange transition-colors">
+          <label for="optProfileText" style="color: var(--muted);">Strategia:</label>
+          <select id="optProfileText" class="rail-tonal rounded-xl px-3 py-2 text-xs font-medium focus:outline-none">
             <option value="BALANCED" selected>Zrównoważona</option>
             <option value="MINIMAL_TRANSFERS">Najmniej przesiadek</option>
             <option value="MINIMAL_WALKING">Najkrótsze spacery</option>
           </select>
         </div>
-        <button onclick="runTextOptimization()" class="bg-pkp-orange hover:bg-pkp-orangeHover active:bg-pkp-orangeActive text-white font-bold text-xs px-6 py-2.5 rounded-lg shadow-lg shadow-orange-500/25 transition-all flex items-center gap-2">
-          <span>Oblicz najlepszą trasę</span>
+        <button type="button" onclick="runTextOptimization()" class="text-white font-bold text-xs px-5 py-2.5 rounded-2xl transition-opacity hover:opacity-90" style="background-color: var(--accent);">
+          Oblicz najlepszą trasę
         </button>
       </div>
     </section>
 
-    <!-- Pasek Postępu i Konsola Skanera -->
-    <div id="progressSection" class="hidden bg-pkp-surface border border-pkp-border rounded-xl p-4 shadow-xl space-y-3">
-      <div class="flex justify-between items-center text-xs font-medium">
-        <span id="progressMessage" class="text-white font-semibold">Pobieranie rozkładu jazdy...</span>
-        <span id="progressPercent" class="text-pkp-orange font-mono font-bold">0%</span>
-      </div>
-      <div class="w-full bg-pkp-dark h-2 rounded-full overflow-hidden border border-pkp-border">
-        <div id="progressBar" class="bg-gradient-to-r from-blue-600 via-pkp-blue to-pkp-orange h-full w-0 transition-all duration-300"></div>
+    <!-- Karta Postępu Skanowania -->
+    <div id="progressSection" class="hidden rail-card rounded-3xl p-5 space-y-3.5">
+      <div class="flex items-end justify-between gap-4">
+        <div>
+          <div class="text-[11px] font-medium" style="color: var(--muted);">Sprawdzanie wolnych miejsc</div>
+          <div id="progressMessage" class="text-sm font-bold mt-0.5">Pobieranie rozkładu jazdy...</div>
+        </div>
+        <div id="progressPercent" class="text-2xl font-extrabold tabular-nums" style="color: var(--accent);">0%</div>
       </div>
 
-      <!-- Zwijany przełącznik szczegółów technicznych oraz przycisk Anuluj -->
-      <div class="pt-0.5 flex items-center justify-between gap-3">
-        <button id="toggleConsoleBtn" type="button" onclick="toggleConsoleDetails()" class="text-[11px] text-slate-400 hover:text-slate-200 flex items-center gap-1.5 transition-colors focus:outline-none select-none">
-          <svg id="consoleChevron" class="w-3.5 h-3.5 transform transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <div class="w-full h-2 rounded-full overflow-hidden" style="background-color: var(--tonal);">
+        <div id="progressBar" class="h-full w-0 rounded-full transition-all duration-300" style="background-color: var(--accent);"></div>
+      </div>
+
+      <div class="flex flex-wrap items-center justify-between gap-3 pt-0.5">
+        <button id="toggleConsoleBtn" type="button" onclick="toggleConsoleDetails()" class="text-xs flex items-center gap-1.5 transition-opacity hover:opacity-80" style="color: var(--muted);">
+          <svg id="consoleChevron" class="w-3.5 h-3.5 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
           </svg>
           <span id="consoleToggleLabel">Pokaż szczegóły operacji (konsola)</span>
         </button>
-        <button id="btnCancelScan" type="button" onclick="cancelLiveScan()" class="hidden text-[11px] font-semibold px-3 py-1 rounded bg-rose-950/70 hover:bg-rose-900/80 text-rose-300 border border-rose-700/70 transition-colors">
+
+        <button id="btnCancelScan" type="button" onclick="cancelLiveScan()" class="hidden text-xs font-semibold px-3.5 py-1.5 rounded-xl transition-opacity hover:opacity-85" style="color: var(--error); background-color: var(--error-bg); border: 1px solid color-mix(in srgb, var(--error) 35%, transparent);">
           Anuluj skanowanie
         </button>
       </div>
 
-      <!-- Domyślnie schowana konsola ze szczegółami skanowania -->
-      <div id="liveScraperConsole" class="hidden mt-1 bg-pkp-dark rounded-lg p-3 border border-pkp-border text-[11px] font-mono text-slate-300 max-h-36 overflow-y-auto space-y-1 scrollbar-thin">
-        <div class="text-slate-500 italic">[Konsola oczekuje na uruchomienie zadania...]</div>
+      <div id="liveScraperConsole" class="hidden rail-tonal rounded-2xl p-3 text-[11px] font-mono max-h-40 overflow-y-auto space-y-1 scrollbar-thin" style="color: var(--muted);">
+        <div class="italic">[Konsola oczekuje na uruchomienie zadania...]</div>
       </div>
     </div>
 
     <!-- Alert błędu -->
-    <div id="errorAlert" class="hidden bg-rose-950/80 border border-rose-800 text-rose-200 p-4 rounded-xl text-xs flex items-start gap-3 shadow-xl">
-      <svg class="w-5 h-5 text-rose-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <div id="errorAlert" class="hidden rounded-2xl p-4 text-xs flex items-start gap-3" style="background-color: var(--error-bg); color: var(--error); border: 1px solid color-mix(in srgb, var(--error) 35%, transparent);">
+      <svg class="w-5 h-5 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
       </svg>
       <div id="errorMessage" class="flex-1 leading-relaxed">Wystąpił błąd podczas analizy.</div>
     </div>
 
     <!-- Ostrzeżenie o błędach odczytu odcinków -->
-    <div id="scrapeErrorWarningBanner" class="hidden bg-amber-950/80 border border-amber-600/70 text-amber-200 p-4 rounded-xl text-xs flex items-start gap-3 shadow-xl">
-      <svg class="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <div id="scrapeErrorWarningBanner" class="hidden rounded-2xl p-4 text-xs flex items-start gap-3" style="background-color: var(--amber-bg); color: var(--amber); border: 1px solid color-mix(in srgb, var(--amber) 40%, transparent);">
+      <svg class="w-5 h-5 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
       </svg>
       <div class="flex-1 space-y-1.5 leading-relaxed">
-        <div id="scrapeErrorWarningTitle" class="font-bold text-amber-300">
+        <div id="scrapeErrorWarningTitle" class="font-bold">
           Uwaga: nie udało się odczytać dostępności na części odcinków
         </div>
-        <div class="text-amber-100/90">
+        <div style="color: var(--text);">
           Odcinki oznaczone w tabeli jako <strong>BŁĄD ODCZYTU</strong> nie zostały pomyślnie pobrane z systemu rezerwacyjnego i <strong>nie muszą być wyprzedane</strong>. Sprawdź je bezpośrednio w systemie e-IC lub ponów skanowanie.
         </div>
-        <ul id="scrapeErrorSegmentsList" class="list-disc list-inside space-y-1 text-amber-200 font-mono text-[11px] pt-1"></ul>
+        <ul id="scrapeErrorSegmentsList" class="list-disc list-inside space-y-1 font-mono text-[11px] pt-1"></ul>
       </div>
     </div>
 
     <!-- Informacja o szybkim skanowaniu (Fast-Path) -->
-    <div id="fastPathBanner" class="hidden bg-emerald-950/60 border border-emerald-700/60 text-emerald-100 p-4 rounded-xl text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xl">
+    <div id="fastPathBanner" class="hidden rounded-2xl p-4 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3" style="background-color: var(--emerald-bg); color: var(--emerald); border: 1px solid color-mix(in srgb, var(--emerald) 35%, transparent);">
       <div class="flex items-start gap-3">
-        <svg class="w-5 h-5 text-emerald-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg class="w-5 h-5 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
         </svg>
-        <div class="space-y-1 leading-relaxed">
-          <div class="font-bold text-emerald-300">
+        <div class="space-y-0.5 leading-relaxed">
+          <div class="font-bold">
             Tryb Fast-Path: znaleziono bezpośrednie miejsca bez przesiadek na całą trasę
           </div>
-          <div id="fastPathDesc" class="text-emerald-100/90">
+          <div id="fastPathDesc" style="color: var(--text);">
             Ponieważ na całej trasie są wolne fotele bez konieczności przesiadek, pominięto szczegółowe skanowanie odcinków pośrednich, aby przyspieszyć wynik.
           </div>
         </div>
       </div>
-      <button type="button" onclick="runLiveScan({ forceFullScan: true })" class="flex-shrink-0 px-3.5 py-2 rounded-lg bg-emerald-900/70 hover:bg-emerald-800/80 border border-emerald-500/60 text-emerald-100 font-semibold text-xs transition-colors">
+      <button type="button" onclick="runLiveScan({ forceFullScan: true })" class="shrink-0 px-3.5 py-2 rounded-xl font-semibold text-xs transition-opacity hover:opacity-85 rail-card" style="color: var(--emerald);">
         Przeskanuj wszystkie odcinki szczegółowo
       </button>
     </div>
 
-    <!-- Plan Zakupu Biletów i Przesiadek -->
-    <section id="purchasePlanSection" class="hidden bg-pkp-surface border border-pkp-orange/40 rounded-xl p-5 shadow-2xl space-y-3.5">
-      <div class="flex items-center justify-between border-b border-pkp-border pb-3">
-        <div class="flex items-center gap-3">
-          <div class="w-9 h-9 rounded-lg bg-pkp-orange/15 border border-pkp-orange/30 flex items-center justify-center text-pkp-orange font-bold">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z" />
-            </svg>
-          </div>
-          <div>
-            <h2 class="text-sm font-extrabold uppercase tracking-wide text-white">
-              Plan Zakupu Biletów i Strategia Podróży
-            </h2>
-            <p class="text-xs text-slate-400">Instrukcja zakupu biletów gwarantująca ciągłość miejsca siedzącego na całej trasie</p>
-          </div>
+    <!-- Plan Zakupu Biletów (Hero Timeline + Buy me a coffee) -->
+    <section id="purchasePlanSection" class="hidden rail-card rounded-3xl p-5 space-y-4">
+      <div class="flex flex-wrap items-center justify-between gap-3 pb-3 border-b rail-hairline">
+        <div>
+          <h2 class="text-base font-bold">Plan podróży i zakupu biletów</h2>
+          <p class="text-xs" style="color: var(--muted);">Kolejne kroki gwarantujące miejsce siedzące na całej trasie</p>
         </div>
-        <span id="ticketsCountBadge" class="text-xs font-bold px-3 py-1 rounded-full bg-pkp-orange/20 text-pkp-orange border border-pkp-orange/30">
+        <span id="ticketsCountBadge" class="text-xs font-bold px-3 py-1 rounded-full tabular-nums" style="background-color: var(--accent-bg); color: var(--accent);">
           Liczba biletów: 0
         </span>
       </div>
 
-      <div id="purchaseInstructionsList" class="space-y-2 pt-1">
-        <!-- Renderowane dynamicznie -->
-      </div>
-      <div class="pt-2 border-t border-pkp-border/70 flex items-center justify-end">
-        <a href="https://buycoffee.to/anonpaweu" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/35 text-amber-300 text-xs font-semibold transition-colors">
+      <div id="purchaseInstructionsList" class="space-y-2.5"></div>
+
+      <!-- Buy me a coffee bar -->
+      <div class="pt-2 border-t rail-hairline flex items-center justify-between gap-3 flex-wrap">
+        <span class="text-xs" style="color: var(--muted);">Aplikacja nie kupuje biletów automatycznie — użyj przycisków „Otwórz odcinek w e-IC”.</span>
+        <a href="https://buycoffee.to/anonpaweu" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-opacity hover:opacity-85" style="background-color: var(--accent-bg); color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);">
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 8h1a4 4 0 010 8h-1M2 8h16v9a4 4 0 01-4 4H6a4 4 0 01-4-4V8zm4-4h2m4 0h2m4 0h2" />
           </svg>
@@ -394,81 +527,88 @@
       </div>
     </section>
 
-    <!-- Sekcja Rekomendowanych Strategii (Top 3 Karty) -->
-    <section>
-      <div class="flex items-center justify-between mb-3">
-        <h2 class="text-xs font-extrabold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-          <span>Rekomendowane Warianty Podróży (Top 3)</span>
-        </h2>
-        <span class="text-xs text-slate-400">Kliknij kartę, aby wyświetlić szczegóły i podświetlić miejsca na schemacie</span>
+    <!-- Sekcja Wariantów + Przełącznik Profilu Optymalizacji -->
+    <section id="strategiesSection" class="hidden space-y-3">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 class="text-sm font-bold">Rekomendowane warianty podróży</h2>
+          <p class="text-xs" style="color: var(--muted);">Kliknij kartę, aby zaktualizować plan zakupu i podświetlić fotele w tabeli</p>
+        </div>
+
+        <!-- Segmented Profile Switcher (matching Android ResultScreen) -->
+        <div class="flex items-center gap-2">
+          <div id="profileSegmentedRow" class="rail-tonal p-1 rounded-xl flex items-center text-xs">
+            <button type="button" data-profile-btn="BALANCED" onclick="selectOptProfile('BALANCED')" class="px-3 py-1.5 rounded-lg font-semibold transition-all">Zrównoważona</button>
+            <button type="button" data-profile-btn="MINIMAL_TRANSFERS" onclick="selectOptProfile('MINIMAL_TRANSFERS')" class="px-3 py-1.5 rounded-lg font-medium transition-all">Najmniej przesiadek</button>
+            <button type="button" data-profile-btn="MINIMAL_WALKING" onclick="selectOptProfile('MINIMAL_WALKING')" class="px-3 py-1.5 rounded-lg font-medium transition-all">Najkrótsze spacery</button>
+          </div>
+          <select id="optProfile" onchange="recomputeCurrentWithFilters()" class="hidden">
+            <option value="BALANCED" selected>Zrównoważona</option>
+            <option value="MINIMAL_TRANSFERS">Najmniej przesiadek</option>
+            <option value="MINIMAL_WALKING">Najkrótsze spacery</option>
+          </select>
+        </div>
       </div>
 
-      <div id="strategiesContainer" class="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <!-- Renderowane dynamicznie -->
-      </div>
+      <div id="strategiesContainer" class="grid grid-cols-1 md:grid-cols-3 gap-3.5"></div>
     </section>
 
     <!-- Tablica Dostępności Miejsc (Wykres Gantta) -->
-    <section class="bg-pkp-surface border border-pkp-border rounded-xl p-5 shadow-xl space-y-4">
-      <div class="flex flex-wrap items-center justify-between gap-4 border-b border-pkp-border pb-3">
+    <section id="matrixSection" class="hidden rail-card rounded-3xl p-5 space-y-4">
+      <div class="flex flex-wrap items-center justify-between gap-4 pb-3 border-b rail-hairline">
         <div>
-          <h2 class="text-xs font-extrabold uppercase tracking-wider text-slate-200">
-            Tablica Dostępności Miejsc w Wagonach
-          </h2>
-          <p class="text-xs text-slate-400">Siatka foteli pogrupowana wagonami wybranej klasy ze statusem zajętości na każdym odcinku trasy</p>
+          <h2 class="text-sm font-bold">Mapa dostępności miejsc w wagonach</h2>
+          <p class="text-xs" style="color: var(--muted);">Siatka foteli z podziałem na przedziały i kolejne odcinki trasy</p>
         </div>
 
-        <div class="flex items-center gap-3 text-xs">
-          <label class="text-slate-400">Filtr wagonu:</label>
-          <select id="carriageFilter" onchange="renderMatrix()" class="bg-pkp-dark border border-pkp-borderLight rounded px-2.5 py-1 text-slate-200 focus:outline-none focus:border-pkp-orange">
+        <div class="flex flex-wrap items-center gap-2.5 text-xs">
+          <select id="carriageFilter" onchange="renderMatrix()" class="rail-tonal rounded-xl px-3 py-1.5 font-medium focus:outline-none">
             <option value="ALL">Wszystkie wagony</option>
           </select>
-          <button id="toggleFilterSelectedBtn" onclick="toggleFilterSelected()" class="px-3 py-1 rounded bg-pkp-orange hover:bg-pkp-orangeHover text-white font-bold transition-colors">
+          <button id="toggleFilterSelectedBtn" type="button" onclick="toggleFilterSelected()" class="px-3.5 py-1.5 rounded-xl text-white font-semibold transition-opacity hover:opacity-90" style="background-color: var(--accent);">
             Pokaż wszystkie wolne miejsca w pociągu
           </button>
         </div>
       </div>
 
-      <!-- Legenda oznaczeń -->
-      <div class="flex flex-wrap items-center gap-5 text-xs text-slate-300">
+      <!-- Legenda -->
+      <div class="flex flex-wrap items-center gap-4 text-xs" style="color: var(--muted);">
         <div class="flex items-center gap-2">
-          <span class="w-3.5 h-3.5 rounded bg-emerald-600/80 border border-emerald-500 inline-block"></span>
+          <span class="w-3 h-3 rounded inline-block" style="background-color: var(--emerald-bg); border: 1px solid var(--emerald);"></span>
           <span>Wolne miejsce</span>
         </div>
         <div class="flex items-center gap-2">
-          <span class="w-3.5 h-3.5 rounded bg-rose-950/80 border border-rose-800 inline-block"></span>
+          <span class="w-3 h-3 rounded inline-block rail-tonal"></span>
           <span>Zajęte</span>
         </div>
         <div class="flex items-center gap-2">
-          <span class="w-3.5 h-3.5 rounded bg-amber-950/60 border border-amber-700/70 inline-block"></span>
+          <span class="w-3 h-3 rounded inline-block" style="background-color: var(--amber-bg); border: 1px solid var(--amber);"></span>
           <span>Błąd odczytu odcinka</span>
         </div>
         <div class="flex items-center gap-2">
-          <span class="w-3.5 h-3.5 rounded bg-pkp-navy border-2 border-pkp-orange shadow-sm inline-block"></span>
+          <span class="w-3 h-3 rounded inline-block" style="background-color: var(--accent-bg); border: 1.5px solid var(--accent);"></span>
           <span>Wybrany wariant</span>
         </div>
       </div>
 
       <!-- Tabela miejsc -->
-      <div class="overflow-x-auto scrollbar-thin rounded-lg border border-pkp-border bg-pkp-dark">
-        <table id="ganttTable" class="w-full text-center border-collapse text-xs">
-          <!-- Renderowane dynamicznie -->
-        </table>
+      <div class="overflow-x-auto scrollbar-thin rounded-2xl border rail-hairline" style="background-color: var(--canvas);">
+        <table id="ganttTable" class="w-full text-center border-collapse text-xs tabular-nums"></table>
       </div>
     </section>
 
   </main>
 
   <!-- Okno potwierdzenia filtra Osoba na wózku -->
-  <div id="wheelchairConfirmModal" class="hidden fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 sm:p-8">
-    <div class="w-full max-w-lg bg-pkp-surface border-2 border-pkp-borderLight rounded-2xl p-6 shadow-2xl text-center space-y-5">
-      <img src="/static/the-rock-rock.gif" alt="Potwierdzenie" class="w-full max-h-[52vh] object-contain rounded-xl border border-pkp-border mx-auto" />
-      <p class="text-xl font-extrabold text-white">Na pewno jesteś niepełnosprawny?</p>
+  <div id="wheelchairConfirmModal" class="hidden fixed inset-0 z-[100] bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 sm:p-8">
+    <div class="w-full max-w-lg rail-card rounded-3xl p-6 text-center space-y-5">
+      <img src="/static/the-rock-rock.gif" alt="Potwierdzenie" class="w-full max-h-[52vh] object-contain rounded-2xl border rail-hairline mx-auto" />
+      <p class="text-xl font-extrabold">Na pewno jesteś niepełnosprawny?</p>
       <div class="grid grid-cols-2 gap-3">
-        <button type="button" onclick="confirmWheelchairModal(false)" class="px-4 py-3 rounded-xl border border-pkp-borderLight bg-pkp-dark hover:bg-pkp-surfaceHover text-slate-200 font-bold text-sm transition-colors">
+        <button type="button" onclick="confirmWheelchairModal(false)" class="rail-tonal px-4 py-3 rounded-2xl font-semibold text-sm transition-opacity hover:opacity-85">
           Nie
         </button>
-        <button type="button" onclick="confirmWheelchairModal(true)" class="px-4 py-3 rounded-xl bg-pkp-orange hover:bg-pkp-orangeHover text-white font-bold text-sm transition-colors">
+        <button type="button" onclick="confirmWheelchairModal(true)" class="px-4 py-3 rounded-2xl text-white font-bold text-sm transition-opacity hover:opacity-90" style="background-color: var(--accent);">
           Tak
         </button>
       </div>
@@ -476,10 +616,10 @@
   </div>
 
   <!-- Stopka -->
-  <footer class="border-t border-pkp-border bg-pkp-dark/90 text-center py-4 text-xs text-slate-400">
-    <div class="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between px-6 gap-2">
+  <footer class="border-t rail-hairline text-center py-4 text-xs mt-8" style="color: var(--muted);">
+    <div class="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between px-6 gap-2">
       <span>SiadaICie</span>
-      <span>Algorytm grafu acyklicznego (DAG) &bull; Programowanie Dynamiczne</span>
+      <span>Optymalizator miejsc kolejowych (DAG)</span>
     </div>
   </footer>
 
@@ -507,15 +647,125 @@
       allow_wheelchair: false,
     };
 
+    function updateThemeUi() {
+      const isDark = document.documentElement.classList.contains('dark');
+      document.documentElement.style.colorScheme = isDark ? 'dark' : 'light';
+      const sun = document.getElementById('themeIconSun');
+      const moon = document.getElementById('themeIconMoon');
+      if (sun) sun.classList.toggle('hidden', !isDark);
+      if (moon) moon.classList.toggle('hidden', isDark);
+    }
+
+    function toggleThemeMode() {
+      const html = document.documentElement;
+      const isDark = html.classList.toggle('dark');
+      try {
+        localStorage.setItem('siadaicie_theme', isDark ? 'dark' : 'light');
+      } catch (e) {}
+      updateThemeUi();
+    }
+
+    function toggleFiltersPanel() {
+      const bar = document.getElementById('seatFiltersBar');
+      const chev = document.getElementById('filtersChevron');
+      if (!bar) return;
+      const hidden = bar.classList.toggle('hidden');
+      if (chev) chev.classList.toggle('rotate-180', !hidden);
+    }
+
+    function toggleClearBtn(inputId, btnId) {
+      const inp = document.getElementById(inputId);
+      const btn = document.getElementById(btnId);
+      if (!inp || !btn) return;
+      if (inp.value.trim().length > 0) {
+        btn.classList.remove('hidden');
+        btn.classList.add('flex');
+      } else {
+        btn.classList.add('hidden');
+        btn.classList.remove('flex');
+      }
+    }
+
+    function clearStationField(inputId, suggId, btnId) {
+      const inp = document.getElementById(inputId);
+      const sugg = document.getElementById(suggId);
+      if (inp) {
+        inp.value = '';
+        inp.focus();
+      }
+      if (sugg) sugg.classList.add('hidden');
+      toggleClearBtn(inputId, btnId);
+    }
+
+    function swapStations() {
+      const fromEl = document.getElementById('fromStation');
+      const toEl = document.getElementById('toStation');
+      if (!fromEl || !toEl) return;
+      const tmp = fromEl.value;
+      fromEl.value = toEl.value;
+      toEl.value = tmp;
+      toggleClearBtn('fromStation', 'clearFromBtn');
+      toggleClearBtn('toStation', 'clearToBtn');
+      const fSugg = document.getElementById('fromSuggestions');
+      const tSugg = document.getElementById('toSuggestions');
+      if (fSugg) fSugg.classList.add('hidden');
+      if (tSugg) tSugg.classList.add('hidden');
+      if (fromEl.value.trim() && toEl.value.trim()) {
+        loadAvailableTrains();
+      }
+    }
+
+    function selectTicketClass(cls) {
+      const sel = document.getElementById('ticketClass');
+      if (sel) sel.value = String(cls);
+      document.querySelectorAll('[data-class-btn]').forEach(btn => {
+        const active = Number(btn.dataset.classBtn) === Number(cls);
+        if (active) {
+          btn.style.backgroundColor = 'var(--navy)';
+          btn.style.color = 'var(--canvas)';
+          btn.classList.add('font-bold');
+        } else {
+          btn.style.backgroundColor = 'transparent';
+          btn.style.color = 'var(--muted)';
+          btn.classList.remove('font-bold');
+        }
+      });
+    }
+
+    function selectOptProfile(profile) {
+      const sel = document.getElementById('optProfile');
+      if (sel) sel.value = profile;
+      updateProfileButtonsUi(profile);
+      recomputeCurrentWithFilters();
+    }
+
+    function updateProfileButtonsUi(profile) {
+      const current = profile || document.getElementById('optProfile')?.value || 'BALANCED';
+      document.querySelectorAll('[data-profile-btn]').forEach(btn => {
+        const active = btn.dataset.profileBtn === current;
+        if (active) {
+          btn.style.backgroundColor = 'var(--card)';
+          btn.style.color = 'var(--text)';
+          btn.style.boxShadow = '0 1px 3px rgba(0,0,0,0.15)';
+          btn.classList.add('font-semibold');
+        } else {
+          btn.style.backgroundColor = 'transparent';
+          btn.style.color = 'var(--muted)';
+          btn.style.boxShadow = 'none';
+          btn.classList.remove('font-semibold');
+        }
+      });
+    }
+
     function renderSeatTagsBadges(tags) {
       if (!Array.isArray(tags) || !tags.length) return '';
       return tags.map(tag => {
         const label = SEAT_TAG_LABELS_PL[tag] || tag;
         const isRestricted = RESTRICTED_SEAT_TAGS.has(tag);
-        const cls = isRestricted
-          ? 'bg-amber-950/80 text-amber-300 border border-amber-600/70'
-          : 'bg-slate-800/80 text-slate-300 border border-slate-600/60';
-        return `<span class="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold ${cls}">${escapeHtml(label)}</span>`;
+        const styleAttr = isRestricted
+          ? 'background-color: var(--amber-bg); color: var(--amber); border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent);'
+          : 'background-color: var(--tonal); color: var(--muted); border: 1px solid var(--hairline);';
+        return `<span class="inline-block px-2 py-0.5 rounded-md text-[10px] font-semibold" style="${styleAttr}">${escapeHtml(label)}</span>`;
       }).join(' ');
     }
 
@@ -526,12 +776,22 @@
         if (on) activeCount += 1;
         const btn = document.querySelector(`[data-seat-filter="${key}"]`);
         if (!btn) return;
-        btn.className = on
-          ? 'px-3 py-1.5 rounded-lg font-semibold border transition-colors bg-pkp-orange text-white border-pkp-orange'
-          : 'px-3 py-1.5 rounded-lg font-medium border transition-colors bg-pkp-dark text-slate-300 border-pkp-borderLight hover:border-slate-400';
+        if (on) {
+          btn.style.backgroundColor = 'var(--accent-bg)';
+          btn.style.color = 'var(--accent)';
+          btn.style.borderColor = 'color-mix(in srgb, var(--accent) 45%, transparent)';
+          btn.classList.add('font-semibold');
+        } else {
+          btn.style.backgroundColor = 'var(--tonal)';
+          btn.style.color = 'var(--muted)';
+          btn.style.borderColor = 'var(--hairline)';
+          btn.classList.remove('font-semibold');
+        }
       });
+      const directChecked = document.getElementById('directOnly')?.checked ?? true;
+      const directText = directChecked ? 'Bezpośrednie' : 'Z przesiadkami';
       const summary = document.getElementById('seatFiltersSummary');
-      if (summary) summary.innerText = `${activeCount}/6 aktywne`;
+      if (summary) summary.innerText = `${directText} • ${activeCount}/6 aktywne`;
     }
 
     function toggleSeatFilter(key) {
@@ -558,6 +818,7 @@
     async function recomputeCurrentWithFilters() {
       if (!currentAnalysisData) return;
       const profile = document.getElementById('optProfile')?.value || 'BALANCED';
+      updateProfileButtonsUi(profile);
       try {
         const res = await fetch('/api/v1/recompute', {
           method: 'POST',
@@ -579,7 +840,7 @@
     }
 
     function escapeHtml(str) {
-      if (!str) return '';
+      if (str === null || str === undefined) return '';
       return String(str)
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
@@ -594,14 +855,29 @@
       const panelModeLive = document.getElementById('panelModeLive');
       const panelModeText = document.getElementById('panelModeText');
 
+      const setBtnStyle = (btn, active) => {
+        if (!btn) return;
+        if (active) {
+          btn.style.backgroundColor = 'var(--card)';
+          btn.style.color = 'var(--text)';
+          btn.style.boxShadow = '0 1px 3px rgba(0,0,0,0.15)';
+          btn.classList.add('font-semibold');
+        } else {
+          btn.style.backgroundColor = 'transparent';
+          btn.style.color = 'var(--muted)';
+          btn.style.boxShadow = 'none';
+          btn.classList.remove('font-semibold');
+        }
+      };
+
       if (mode === 'live') {
-        tabLiveBtn.className = 'px-5 py-3 text-xs font-bold rounded-t-lg border-b-2 border-pkp-orange bg-pkp-surface text-white flex items-center gap-2 transition-all shadow';
-        tabTextBtn.className = 'px-5 py-3 text-xs font-semibold rounded-t-lg border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:bg-pkp-surface/60 flex items-center gap-2 transition-all';
+        setBtnStyle(tabLiveBtn, true);
+        setBtnStyle(tabTextBtn, false);
         panelModeLive.classList.remove('hidden');
         panelModeText.classList.add('hidden');
       } else {
-        tabTextBtn.className = 'px-5 py-3 text-xs font-bold rounded-t-lg border-b-2 border-pkp-orange bg-pkp-surface text-white flex items-center gap-2 transition-all shadow';
-        tabLiveBtn.className = 'px-5 py-3 text-xs font-semibold rounded-t-lg border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:bg-pkp-surface/60 flex items-center gap-2 transition-all';
+        setBtnStyle(tabTextBtn, true);
+        setBtnStyle(tabLiveBtn, false);
         panelModeText.classList.remove('hidden');
         panelModeLive.classList.add('hidden');
       }
@@ -628,11 +904,13 @@
           box.innerHTML = '';
           stations.forEach(s => {
             const item = document.createElement('div');
-            item.className = 'px-3 py-2 hover:bg-pkp-surfaceHover cursor-pointer flex justify-between items-center transition-colors text-slate-200';
-            item.innerHTML = `<span class="font-medium">${escapeHtml(s.name)}</span><span class="text-[10px] text-slate-400 font-mono">EVA: ${escapeHtml(s.eva_code)}</span>`;
+            item.className = 'px-3.5 py-2.5 cursor-pointer flex justify-between items-center transition-opacity hover:opacity-80';
+            item.style.color = 'var(--text)';
+            item.innerHTML = `<span class="font-medium">${escapeHtml(s.name)}</span><span class="text-[10px] font-mono" style="color: var(--muted);">EVA: ${escapeHtml(s.eva_code)}</span>`;
             item.onclick = () => {
               document.getElementById(inputId).value = s.name;
               box.classList.add('hidden');
+              toggleClearBtn(inputId, inputId === 'fromStation' ? 'clearFromBtn' : 'clearToBtn');
               loadAvailableTrains();
             };
             box.appendChild(item);
@@ -646,6 +924,7 @@
     window.selectedTrainDepTime = null;
 
     function toggleDirectFilter() {
+      updateSeatFiltersUi();
       renderTrainSelect();
     }
 
@@ -655,8 +934,20 @@
       return (parseInt(parts[0], 10) || 0) * 60 + (parseInt(parts[1], 10) || 0);
     }
 
+    function getCategoryPillStyle(trainNum) {
+      const low = String(trainNum || '').toUpperCase();
+      if (low.includes('EIP')) return 'background-color: #FEF3C7; color: #92400E;';
+      if (low.includes('EIC')) return 'background-color: #E0E7FF; color: #3730A3;';
+      if (low.includes('TLK')) return 'background-color: #F1F5F9; color: #334155;';
+      return 'background-color: var(--tonal); color: var(--navy);';
+    }
+
     function renderTrainSelect() {
       const select = document.getElementById('trainSelect');
+      const cardsWrap = document.getElementById('trainCardsContainer');
+      const cardsGrid = document.getElementById('trainCardsGrid');
+      const cardsHeader = document.getElementById('trainCardsHeader');
+
       const directOnly = document.getElementById('directOnly') ? document.getElementById('directOnly').checked : true;
       const trains = directOnly
         ? (window.allFetchedTrains || []).filter(t => t.changes === 0)
@@ -679,16 +970,85 @@
         opt.textContent = `${t.departure} → ${t.arrival} | ${t.train_number} (${t.duration})${transferInfo}`;
         select.appendChild(opt);
 
-        // Pick first train departing at or after desired travelTime
         if (bestOptionIdx === -1 && timeToMinutesJS(t.departure) >= desiredMin) {
-          bestOptionIdx = i + 1; // +1 because index 0 is placeholder option
+          bestOptionIdx = i + 1;
         }
       });
+
+      if (cardsWrap && cardsGrid) {
+        cardsGrid.innerHTML = '';
+        if (trains.length > 0) {
+          cardsWrap.classList.remove('hidden');
+          if (cardsHeader) cardsHeader.innerText = `Połączenia (${trains.length})`;
+          trains.forEach((t, i) => {
+            const isSelected = (bestOptionIdx !== -1 ? i === bestOptionIdx - 1 : i === 0);
+            const card = document.createElement('div');
+            card.className = 'rounded-2xl p-3 cursor-pointer transition-all flex flex-col gap-2';
+            card.style.backgroundColor = isSelected ? 'var(--accent-bg)' : 'var(--tonal)';
+            card.style.border = isSelected
+              ? '1.5px solid var(--accent)'
+              : '1px solid var(--hairline)';
+
+            const catCode = (String(t.train_number || 'IC').trim().split(/\s+/)[0]) || 'IC';
+            const changesBadge = t.changes === 0
+              ? `<span class="text-[11px] font-semibold" style="color: var(--emerald);">Bezpośredni</span>`
+              : `<span class="text-[11px] font-semibold" style="color: var(--amber);">Przesiadki: ${escapeHtml(t.changes)}</span>`;
+
+            card.innerHTML = `
+              <div class="flex items-center justify-between gap-2">
+                <div class="flex items-center gap-2 min-w-0">
+                  <span class="px-2 py-0.5 rounded-md text-[10px] font-extrabold shrink-0" style="${getCategoryPillStyle(t.train_number)}">${escapeHtml(catCode)}</span>
+                  <span class="font-bold text-xs truncate">${escapeHtml(t.train_number)}</span>
+                </div>
+                ${changesBadge}
+              </div>
+              <div class="flex items-center justify-between gap-2 pt-0.5">
+                <div class="flex items-center gap-2 tabular-nums">
+                  <span class="text-base font-extrabold">${escapeHtml(t.departure)}</span>
+                  <span class="text-[11px]" style="color: var(--muted);">&rarr; ${escapeHtml(t.duration)} &rarr;</span>
+                  <span class="text-base font-extrabold">${escapeHtml(t.arrival)}</span>
+                </div>
+                <button type="button" class="scan-card-btn px-2.5 py-1 rounded-lg text-[11px] font-bold transition-opacity hover:opacity-85" style="background-color: var(--card); color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);">
+                  Skanuj
+                </button>
+              </div>
+            `;
+
+            card.addEventListener('click', () => {
+              select.selectedIndex = i + 1;
+              onTrainSelected();
+              renderTrainCardHighlight(i);
+            });
+            card.querySelector('.scan-card-btn').addEventListener('click', (e) => {
+              e.stopPropagation();
+              select.selectedIndex = i + 1;
+              onTrainSelected();
+              renderTrainCardHighlight(i);
+              runLiveScan();
+            });
+            cardsGrid.appendChild(card);
+          });
+        } else {
+          cardsWrap.classList.add('hidden');
+        }
+      }
 
       if (trains.length > 0) {
         select.selectedIndex = bestOptionIdx !== -1 ? bestOptionIdx : 1;
         onTrainSelected();
       }
+    }
+
+    function renderTrainCardHighlight(activeIndex) {
+      const cardsGrid = document.getElementById('trainCardsGrid');
+      if (!cardsGrid) return;
+      Array.from(cardsGrid.children).forEach((card, idx) => {
+        const active = idx === activeIndex;
+        card.style.backgroundColor = active ? 'var(--accent-bg)' : 'var(--tonal)';
+        card.style.border = active
+          ? '1.5px solid var(--accent)'
+          : '1px solid var(--hairline)';
+      });
     }
 
     async function loadAvailableTrains() {
@@ -709,6 +1069,8 @@
         renderTrainSelect();
       } catch (e) {
         window.allFetchedTrains = [];
+        const cardsWrap = document.getElementById('trainCardsContainer');
+        if (cardsWrap) cardsWrap.classList.add('hidden');
         select.innerHTML = '<option value="">Nie udało się pobrać połączeń (wpisz numer ręcznie)</option>';
       }
     }
@@ -721,6 +1083,7 @@
         if (opt.dataset && opt.dataset.dep) {
           document.getElementById('travelTime').value = opt.dataset.dep;
         }
+        renderTrainCardHighlight(select.selectedIndex - 1);
         fetchTrainRoute(true);
       }
     }
@@ -748,7 +1111,7 @@
 
       if (!silent) errorAlert.classList.add('hidden');
       card.classList.remove('hidden');
-      list.innerHTML = '<span class="text-slate-400">Pobieranie rozkładu przystanków...</span>';
+      list.innerHTML = '<span style="color: var(--muted);">Pobieranie rozkładu przystanków...</span>';
 
       try {
         const url = `/api/v1/train-route?from_station=${encodeURIComponent(fromSt)}&to_station=${encodeURIComponent(toSt)}&date=${encodeURIComponent(date)}&train_number=${encodeURIComponent(trainNo)}&dep_time=${encodeURIComponent(depTime)}`;
@@ -758,15 +1121,15 @@
           throw new Error(errData.detail || 'Błąd pobierania trasy');
         }
         const data = await res.json();
-        title.innerText = `Wykryta trasa pociągu ${data.train_number || trainNo} (${data.travel_date})`;
-        count.innerText = `Liczba przystanków: ${data.stops.length}`;
+        title.innerText = `Trasa ${data.train_number || trainNo} (${data.travel_date})`;
+        count.innerText = `Przystanków: ${data.stops.length}`;
         list.innerHTML = '';
 
         data.stops.forEach((st, idx) => {
           const badge = document.createElement('div');
-          badge.className = 'px-2 py-1 bg-pkp-surface border border-pkp-borderLight rounded text-slate-200 flex items-center gap-1.5';
+          badge.className = 'rail-card px-2.5 py-1 rounded-xl flex items-center gap-1.5';
           const time = st.departure_time || st.arrival_time || '--:--';
-          badge.innerHTML = `<span class="text-pkp-orange font-bold">${idx + 1}.</span> <strong>${escapeHtml(st.name)}</strong> <span class="text-slate-400">(${escapeHtml(time)})</span>`;
+          badge.innerHTML = `<span class="font-bold" style="color: var(--accent);">${idx + 1}.</span> <strong class="font-semibold">${escapeHtml(st.name)}</strong> <span style="color: var(--muted);">${escapeHtml(time)}</span>`;
           list.appendChild(badge);
         });
       } catch (err) {
@@ -855,8 +1218,8 @@
 
       if (liveConsole) {
         liveConsole.innerHTML = `
-          <div class="text-white font-bold">[START] Rozpoczynanie zadania optymalizacji dla pociągu ${escapeHtml(trainNo || 'wybranego')} (Klasa ${ticketClass})</div>
-          <div class="text-slate-400">Relacja: ${escapeHtml(fromSt)} &rarr; ${escapeHtml(toSt)} (Data: ${escapeHtml(date)} ${escapeHtml(depTime)})</div>
+          <div class="font-bold" style="color: var(--text);">[START] Optymalizacja dla ${escapeHtml(trainNo || 'wybranego pociągu')} (Klasa ${ticketClass})</div>
+          <div>Relacja: ${escapeHtml(fromSt)} &rarr; ${escapeHtml(toSt)} (${escapeHtml(date)} ${escapeHtml(depTime)})</div>
         `;
       }
 
@@ -879,19 +1242,17 @@
               }
               if (sData.logs && sData.logs.length > 0 && liveConsole) {
                 liveConsole.innerHTML = sData.logs.map(l => {
-                  let cls = 'text-slate-300';
-                  if (l.includes('[BŁĄD]') || l.includes('Error')) cls = 'text-rose-400 font-semibold';
-                  else if (l.includes('[DEBUG]')) cls = 'text-slate-400';
-                  else if (l.includes('[ROUTE]')) cls = 'text-blue-300 font-medium';
-                  else if (l.includes('[100%]')) cls = 'text-emerald-400 font-bold';
-                  return `<div class="${cls} leading-tight">${escapeHtml(l)}</div>`;
+                  let color = 'var(--muted)';
+                  let extra = '';
+                  if (l.includes('[BŁĄD]') || l.includes('Error')) { color = 'var(--error)'; extra = 'font-semibold'; }
+                  else if (l.includes('[ROUTE]')) { color = 'var(--navy)'; extra = 'font-medium'; }
+                  else if (l.includes('[100%]')) { color = 'var(--emerald)'; extra = 'font-bold'; }
+                  return `<div class="${extra} leading-tight" style="color: ${color};">${escapeHtml(l)}</div>`;
                 }).join('');
                 liveConsole.scrollTop = liveConsole.scrollHeight;
               }
             }
-          } catch (e) {
-            // Non-blocking polling error
-          }
+          } catch (e) {}
         }, 400);
 
         const res = await fetch('/api/v1/optimize', {
@@ -931,26 +1292,21 @@
         if (data.raw_availability_report) {
           document.getElementById('rawMapInput').value = data.raw_availability_report;
         }
-
       } catch (err) {
         if (statusInterval) clearInterval(statusInterval);
         progressSection.classList.add('hidden');
 
-        if (err && err.name === 'AbortError') {
-          return;
-        }
+        if (err && err.name === 'AbortError') return;
 
         errorAlert.classList.remove('hidden');
-
         const isSnapshotError = err.message && (err.message.includes('error_85_percent.png') || err.message.includes('debug_85.html') || err.message.includes('85%'));
         document.getElementById('errorMessage').innerHTML = `
-          <div class="font-semibold text-rose-200 mb-1">${escapeHtml(err.message)}</div>
+          <div class="font-semibold mb-1">${escapeHtml(err.message)}</div>
           ${isSnapshotError ? `
-            <div class="mt-2 text-xs bg-rose-950/80 p-2.5 rounded border border-rose-800 font-mono text-rose-200 flex flex-col gap-1">
-              <div class="font-bold text-white">Raport diagnostyczny:</div>
-              <div class="text-pkp-orange font-bold">&bull; logs/debug_snapshots/error_85_percent.png</div>
-              <div class="text-pkp-orange font-bold">&bull; logs/debug_snapshots/debug_85.html</div>
-              <div class="text-slate-400 text-[10px] mt-1">Zrzut ekranu wskazuje dokładny komunikat błędu zwrócony przez formularz rezerwacyjny.</div>
+            <div class="mt-2 text-xs p-2.5 rounded-xl font-mono flex flex-col gap-1 rail-tonal" style="color: var(--text);">
+              <div class="font-bold">Raport diagnostyczny:</div>
+              <div style="color: var(--accent);">&bull; logs/debug_snapshots/error_85_percent.png</div>
+              <div style="color: var(--accent);">&bull; logs/debug_snapshots/debug_85.html</div>
             </div>
           ` : ''}
         `;
@@ -968,6 +1324,10 @@
     async function runTextOptimization() {
       const rawText = document.getElementById('rawMapInput').value;
       const profile = document.getElementById('optProfileText')?.value || 'BALANCED';
+      const optSel = document.getElementById('optProfile');
+      if (optSel) optSel.value = profile;
+      updateProfileButtonsUi(profile);
+
       const progressSection = document.getElementById('progressSection');
       const progressBar = document.getElementById('progressBar');
       const progressMessage = document.getElementById('progressMessage');
@@ -980,6 +1340,7 @@
       if (scrapeWarnBanner) scrapeWarnBanner.classList.add('hidden');
       const fastPathBanner = document.getElementById('fastPathBanner');
       if (fastPathBanner) fastPathBanner.classList.add('hidden');
+
       progressSection.classList.remove('hidden');
       progressBar.style.width = '50%';
       progressMessage.innerText = 'Przeliczanie optymalnego grafu przesiadek...';
@@ -1003,7 +1364,6 @@
 
         const data = await res.json();
         handleOptimizationSuccess(data);
-
       } catch (err) {
         progressSection.classList.add('hidden');
         errorAlert.classList.remove('hidden');
@@ -1026,7 +1386,7 @@
 
       setTimeout(() => {
         progressSection.classList.add('hidden');
-      }, 2000);
+      }, 1600);
 
       renderScrapeErrorWarning(data.segments);
       renderFastPathBanner(data);
@@ -1045,7 +1405,7 @@
         const totalSegs = Number(data.total_route_segments || 0);
         if (desc) {
           desc.innerText = totalSegs > 1
-            ? `Znaleziono wolne miejsca bez przesiadek na całą trasę (${totalSegs} odcinków pośrednich pominiętych). Aby zobaczyć mapę wszystkich miejsc na krótszych fragmentach, możesz uruchomić pełne skanowanie.`
+            ? `Znaleziono wolne miejsca bez przesiadek na całą trasę (${totalSegs} odcinków pośrednich pominiętych). Aby zobaczyć mapę wszystkich miejsc, możesz uruchomić pełne skanowanie.`
             : 'Znaleziono wolne miejsca bez przesiadek na całą trasę.';
         }
         banner.classList.remove('hidden');
@@ -1078,7 +1438,7 @@
         const li = document.createElement('li');
         const timePart = seg.departure_time ? ` (${seg.departure_time})` : '';
         const reason = seg.error_reason || 'nieznany błąd odczytu';
-        li.innerHTML = `<span class="font-bold text-amber-300">${escapeHtml(seg.from_station)} → ${escapeHtml(seg.to_station)}${escapeHtml(timePart)}</span>: ${escapeHtml(reason)}`;
+        li.innerHTML = `<strong>${escapeHtml(seg.from_station)} &rarr; ${escapeHtml(seg.to_station)}${escapeHtml(timePart)}</strong>: <span style="color: var(--text);">${escapeHtml(reason)}</span>`;
         listEl.appendChild(li);
       });
 
@@ -1120,7 +1480,7 @@
         ) ? step.booking_url : '';
 
         const linkHtml = bookingUrl
-          ? `<a href="${escapeHtml(bookingUrl)}" target="_blank" rel="noopener noreferrer" class="flex-shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-pkp-orange/15 hover:bg-pkp-orange/25 border border-pkp-orange/40 text-pkp-orange font-semibold text-[11px] transition-colors">
+          ? `<a href="${escapeHtml(bookingUrl)}" target="_blank" rel="noopener noreferrer" class="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-semibold text-xs transition-opacity hover:opacity-85" style="background-color: var(--accent-bg); color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);">
               <span>Otwórz odcinek w e-IC</span>
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
@@ -1129,17 +1489,23 @@
           : '';
 
         const item = document.createElement('div');
-        item.className = 'bg-pkp-dark border border-pkp-borderLight rounded-lg p-3 text-xs text-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow';
+        item.className = 'rail-tonal rounded-2xl p-3.5 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3';
         const tagsBadgesHtml = (step && !step.is_standing && step.seat_tags && step.seat_tags.length)
-          ? `<div class="mt-1 flex flex-wrap gap-1">${renderSeatTagsBadges(step.seat_tags)}</div>`
+          ? `<div class="mt-1.5 flex flex-wrap gap-1">${renderSeatTagsBadges(step.seat_tags)}</div>`
           : '';
+
+        const isStanding = Boolean(step && step.is_standing);
+        const dotStyle = isStanding
+          ? 'background-color: var(--amber-bg); color: var(--amber);'
+          : 'background-color: var(--emerald-bg); color: var(--emerald);';
+
         item.innerHTML = `
           <div class="flex items-start gap-3 flex-1">
-            <div class="w-6 h-6 rounded-full bg-pkp-orange/20 text-pkp-orange font-bold flex items-center justify-center text-xs flex-shrink-0 mt-0.5">
+            <div class="w-6 h-6 rounded-full font-bold flex items-center justify-center text-xs shrink-0 mt-0.5 tabular-nums" style="${dotStyle}">
               ${idx + 1}
             </div>
             <div class="flex-1 leading-relaxed">
-              <span class="font-medium text-white">${escapeHtml(instr)}</span>
+              <span class="font-semibold">${escapeHtml(instr)}</span>
               ${tagsBadgesHtml}
             </div>
           </div>
@@ -1153,7 +1519,7 @@
 
     function renderCarriageFilter(seatMatrix) {
       const select = document.getElementById('carriageFilter');
-      const carriages = [...new Set(seatMatrix.map(s => s.carriage_no))].sort((a,b) => a-b);
+      const carriages = [...new Set(seatMatrix.map(s => s.carriage_no))].sort((a, b) => a - b);
       select.innerHTML = '<option value="ALL">Wszystkie wagony</option>';
       carriages.forEach(c => {
         select.innerHTML += `<option value="${escapeHtml(c)}">Wagon ${escapeHtml(c)}</option>`;
@@ -1165,42 +1531,47 @@
       const btn = document.getElementById('toggleFilterSelectedBtn');
       if (filterOnlyRecommended) {
         btn.innerText = 'Pokaż wszystkie wolne miejsca w pociągu';
-        btn.className = 'px-3 py-1 rounded bg-pkp-orange hover:bg-pkp-orangeHover text-white font-bold transition-colors';
+        btn.style.backgroundColor = 'var(--accent)';
+        btn.style.color = '#ffffff';
+        btn.style.border = 'none';
       } else {
         btn.innerText = 'Pokaż tylko miejsca z wybranego wariantu';
-        btn.className = 'px-3 py-1 rounded bg-pkp-surfaceHover hover:bg-pkp-border border border-pkp-borderLight text-slate-200 transition-colors';
+        btn.style.backgroundColor = 'var(--tonal)';
+        btn.style.color = 'var(--text)';
+        btn.style.border = '1px solid var(--hairline)';
       }
       renderMatrix();
     }
 
     function renderStrategies(strategies) {
+      const section = document.getElementById('strategiesSection');
       const container = document.getElementById('strategiesContainer');
+      if (section) section.classList.remove('hidden');
       container.innerHTML = '';
 
       if (!strategies || strategies.length === 0) {
-        container.innerHTML = '<div class="col-span-3 text-center text-slate-400 py-6">Brak dostępnych wariantów.</div>';
+        container.innerHTML = '<div class="col-span-3 text-center py-6 text-xs" style="color: var(--muted);">Brak dostępnych wariantów dla wybranych filtrów.</div>';
         return;
       }
 
       strategies.forEach((strat, idx) => {
         const isSelected = idx === selectedStrategyIndex;
-        const cardBorder = isSelected ? 'border-pkp-orange ring-1 ring-pkp-orange' : 'border-pkp-border hover:border-pkp-borderLight';
 
         let stepsHtml = '';
         strat.steps.forEach(step => {
           const compStr = step.compartment ? ` (Przedział ${escapeHtml(step.compartment)})` : '';
           const altsStr = (step.alternative_seats_in_same_carriage && step.alternative_seats_in_same_carriage.length)
-            ? `<div class="text-[10px] text-blue-300 mt-0.5">↳ Inne wolne fotele w wagonie: ${step.alternative_seats_in_same_carriage.map(m => 'm' + escapeHtml(m)).join(', ')}</div>`
+            ? `<div class="text-[11px] mt-1" style="color: var(--navy);">Alternatywnie w wagonie: ${step.alternative_seats_in_same_carriage.map(m => 'm.' + escapeHtml(m)).join(', ')}</div>`
             : '';
 
           if (step.is_standing) {
             stepsHtml += `
-              <div class="text-xs flex items-center gap-2 text-rose-300 bg-rose-950/40 p-2 rounded border border-rose-900/50 my-1">
-                <svg class="w-3.5 h-3.5 text-rose-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <div class="text-xs flex items-center gap-2 p-2.5 rounded-xl my-1" style="background-color: var(--amber-bg); color: var(--amber);">
+                <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
                 </svg>
                 <div>
-                  <strong>${escapeHtml(step.from_station_name)} → ${escapeHtml(step.to_station_name)}</strong>: KORYTARZ (${escapeHtml(step.duration_min)} min)
+                  <strong>${escapeHtml(step.from_station_name)} &rarr; ${escapeHtml(step.to_station_name)}</strong>: KORYTARZ (${escapeHtml(step.duration_min)} min)
                 </div>
               </div>`;
           } else {
@@ -1209,14 +1580,17 @@
               ? `<div class="mt-1 flex flex-wrap gap-1">${renderSeatTagsBadges(step.seat_tags)}</div>`
               : '';
             stepsHtml += `
-              <div class="text-xs flex items-center gap-2 text-emerald-300 bg-emerald-950/30 p-2 rounded border border-emerald-900/50 my-1">
-                <svg class="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12v7m14-7v7m-7-7v7" />
-                </svg>
-                <div class="flex-1">
-                  <strong>${escapeHtml(step.from_station_name)} → ${escapeHtml(step.to_station_name)}</strong>: Wagon ${escapeHtml(step.carriage_no)}, m. ${escapeHtml(step.seat_no)}${compStr} (${escapeHtml(step.duration_min)} min)
+              <div class="text-xs flex items-start gap-2 p-2.5 rounded-xl my-1" style="background-color: var(--emerald-bg); color: var(--text);">
+                <span class="w-2 h-2 rounded-full mt-1.5 shrink-0" style="background-color: var(--emerald);"></span>
+                <div class="flex-1 min-w-0">
+                  <div>
+                    <strong class="font-semibold">${escapeHtml(step.from_station_name)} &rarr; ${escapeHtml(step.to_station_name)}</strong>
+                  </div>
+                  <div class="text-[11px] tabular-nums" style="color: var(--emerald);">
+                    Wagon ${escapeHtml(step.carriage_no)}, m. ${escapeHtml(step.seat_no)}${compStr} (${escapeHtml(step.duration_min)} min)
+                  </div>
                   ${stepTagsHtml}
-                  ${transferText ? `<div class="text-[10px] text-amber-300 italic">↳ ${escapeHtml(transferText)}</div>` : ''}
+                  ${transferText ? `<div class="text-[11px] mt-0.5" style="color: var(--amber);">${escapeHtml(transferText)}</div>` : ''}
                   ${altsStr}
                 </div>
               </div>`;
@@ -1224,7 +1598,10 @@
         });
 
         const card = document.createElement('div');
-        card.className = `bg-pkp-surface border ${cardBorder} rounded-xl p-4 cursor-pointer transition-all shadow-lg`;
+        card.className = 'rail-card rounded-2xl p-4 cursor-pointer transition-all';
+        if (isSelected) {
+          card.style.border = '1.5px solid var(--accent)';
+        }
         card.onclick = () => {
           selectedStrategyIndex = idx;
           renderStrategies(currentAnalysisData.strategies);
@@ -1232,20 +1609,22 @@
           renderPurchaseInstructions(currentAnalysisData);
         };
 
-        const rankBadgeClass = isSelected ? 'bg-pkp-orange text-white' : 'bg-pkp-surfaceHover text-slate-300';
-        const rankLabel = idx === 0 ? 'Wariant Optymalny' : (idx === 1 ? 'Wariant Alternatywny' : 'Wariant Rezerwowy');
+        const rankLabel = idx === 0 ? 'Optymalny' : (idx === 1 ? 'Alternatywny' : 'Rezerwowy');
+        const rankStyle = isSelected
+          ? 'background-color: var(--accent); color: #ffffff;'
+          : 'background-color: var(--tonal); color: var(--muted);';
 
         card.innerHTML = `
           <div class="flex items-center justify-between mb-2">
-            <span class="text-xs font-bold px-2 py-0.5 rounded ${rankBadgeClass}">
+            <span class="text-[11px] font-bold px-2.5 py-0.5 rounded-full" style="${rankStyle}">
               #${escapeHtml(strat.rank)} ${rankLabel}
             </span>
-            <span class="text-xs text-slate-400 font-mono">${escapeHtml(strat.total_score)} pkt</span>
+            <span class="text-[11px] font-mono tabular-nums" style="color: var(--muted);">${escapeHtml(strat.total_score)} pkt</span>
           </div>
-          <h3 class="text-sm font-bold text-white mb-1">${escapeHtml(strat.title)}</h3>
-          <div class="text-xs text-slate-400 flex items-center gap-3 mb-3">
-            <span>Przesiadki: <strong class="text-white">${escapeHtml(strat.transfers_count)}</strong></span>
-            <span>Stanie: <strong class="text-white">${escapeHtml(strat.total_standing_min)} min</strong></span>
+          <h3 class="text-sm font-bold mb-1.5">${escapeHtml(strat.title)}</h3>
+          <div class="text-xs flex items-center gap-3 mb-3 tabular-nums" style="color: var(--muted);">
+            <span>Przesiadki: <strong style="color: var(--text);">${escapeHtml(strat.transfers_count)}</strong></span>
+            <span>Stanie: <strong style="color: var(--text);">${escapeHtml(strat.total_standing_min)} min</strong></span>
           </div>
           <div class="space-y-1">
             ${stepsHtml}
@@ -1257,6 +1636,8 @@
 
     function renderMatrix() {
       if (!currentAnalysisData) return;
+      const matrixSection = document.getElementById('matrixSection');
+      if (matrixSection) matrixSection.classList.remove('hidden');
 
       const table = document.getElementById('ganttTable');
       const carriageFilter = document.getElementById('carriageFilter').value;
@@ -1290,8 +1671,8 @@
         return parseInt(a.seat_no) - parseInt(b.seat_no);
       });
 
-      let headerHtml = '<thead><tr class="bg-pkp-navy text-slate-200 border-b border-pkp-border">';
-      headerHtml += '<th class="p-2.5 border border-pkp-border text-left font-bold text-xs">Miejsce / Wagon (Przedział)</th>';
+      let headerHtml = '<thead><tr style="background-color: var(--tonal); border-bottom: 1px solid var(--hairline);">';
+      headerHtml += '<th class="sticky left-0 z-10 p-3 min-w-[175px] whitespace-nowrap text-left font-bold text-xs border-r rail-hairline" style="background-color: var(--tonal);">Miejsce / Wagon</th>';
       segments.forEach(seg => {
         const metaParts = [];
         if (seg.departure_time) metaParts.push(escapeHtml(seg.departure_time));
@@ -1301,22 +1682,22 @@
           ? ` title="${escapeHtml(seg.error_reason || 'Błąd odczytu dostępności odcinka')}"`
           : '';
         const errorBadgeHtml = isScrapeError
-          ? `<div class="mt-1 inline-block px-1.5 py-0.5 rounded bg-amber-950/80 border border-amber-600/70 text-amber-300 text-[10px] font-semibold">Błąd odczytu</div>`
+          ? `<div class="mt-1 inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold" style="background-color: var(--amber-bg); color: var(--amber);">Błąd odczytu</div>`
           : '';
-        const thExtraClass = isScrapeError ? ' bg-amber-950/40 border-amber-700/70' : '';
-        headerHtml += `<th class="p-2.5 border border-pkp-border${thExtraClass} font-bold text-xs"${errorTooltip}>${escapeHtml(seg.from_station)} → ${escapeHtml(seg.to_station)}<div class="text-[10px] text-pkp-orange font-mono">${metaParts.join(' &bull; ')}</div>${errorBadgeHtml}</th>`;
+        const thStyle = isScrapeError ? 'background-color: var(--amber-bg);' : '';
+        headerHtml += `<th class="p-3 border-r rail-hairline font-semibold text-xs"${errorTooltip} style="${thStyle}">${escapeHtml(seg.from_station)} &rarr; ${escapeHtml(seg.to_station)}<div class="text-[10px] font-mono mt-0.5" style="color: var(--accent);">${metaParts.join(' &bull; ')}</div>${errorBadgeHtml}</th>`;
       });
       headerHtml += '</tr></thead>';
 
-      let bodyHtml = '<tbody class="divide-y divide-pkp-border">';
+      let bodyHtml = '<tbody>';
       let lastCarriage = null;
 
       filteredSeats.forEach(seat => {
         if (seat.carriage_no !== lastCarriage) {
           lastCarriage = seat.carriage_no;
-          bodyHtml += `<tr class="bg-pkp-navy/60 text-white font-bold text-left border-y border-pkp-border">
-            <td colspan="${segments.length + 1}" class="px-3 py-1.5 text-xs tracking-wider">
-              WAGON ${escapeHtml(seat.carriage_no)} &bull; Klasa ${escapeHtml(currentTicketClass)}
+          bodyHtml += `<tr style="background-color: var(--tonal); border-top: 1px solid var(--hairline); border-bottom: 1px solid var(--hairline);">
+            <td colspan="${segments.length + 1}" class="px-3 py-1.5 text-xs font-bold text-left tracking-wide" style="color: var(--navy);">
+              Wagon ${escapeHtml(seat.carriage_no)} &bull; Klasa ${escapeHtml(currentTicketClass)}
             </td>
           </tr>`;
         }
@@ -1324,14 +1705,14 @@
         const seatInt = parseInt(seat.seat_no);
         const compartment = !isNaN(seatInt) && seatInt >= 10 ? Math.floor(seatInt / 10) : 1;
 
-        bodyHtml += `<tr class="hover:bg-pkp-surfaceHover/50 transition-colors">`;
+        bodyHtml += `<tr style="border-bottom: 1px solid var(--hairline);">`;
         const rowTagsHtml = (seat.seat_tags && seat.seat_tags.length)
           ? `<div class="mt-1 flex flex-wrap gap-1">${renderSeatTagsBadges(seat.seat_tags)}</div>`
           : '';
-        bodyHtml += `<td class="p-2.5 border border-pkp-border font-medium text-left bg-pkp-surface/90 text-slate-200">
-          <div class="flex items-center justify-between gap-2">
-            <span>W${escapeHtml(seat.carriage_no)} / Miejsce <strong>${escapeHtml(seat.seat_no)}</strong></span>
-            <span class="text-[10px] text-slate-400 font-mono">Przedział ${compartment}</span>
+        bodyHtml += `<td class="sticky left-0 z-10 p-2.5 min-w-[175px] whitespace-nowrap border-r rail-hairline text-left" style="background-color: var(--card);">
+          <div class="flex items-center justify-between gap-3">
+            <span>W${escapeHtml(seat.carriage_no)} / <strong>m. ${escapeHtml(seat.seat_no)}</strong></span>
+            <span class="text-[10px] font-mono" style="color: var(--muted);">Przedział ${compartment}</span>
           </div>
           ${rowTagsHtml}
         </td>`;
@@ -1345,21 +1726,21 @@
           let cellTitleAttr = '';
 
           if (isScrapeError) {
-            cellClass = 'bg-amber-950/60 text-amber-300 border border-amber-700/70 font-semibold';
+            cellClass = 'cell-error';
             cellText = 'BŁĄD ODCZYTU';
             cellTitleAttr = ` title="${escapeHtml(seg.error_reason || 'Błąd odczytu dostępności odcinka')}"`;
           } else if (isAlgorithmSelected) {
             cellClass = 'cell-selected';
             cellText = 'WYBRANE';
           } else if (isFree === 1) {
-            cellClass = 'bg-emerald-950/60 text-emerald-400 border border-emerald-900/60 font-semibold';
+            cellClass = 'cell-free';
             cellText = 'WOLNE';
           } else {
-            cellClass = 'bg-rose-950/30 text-rose-400/80 border border-rose-950/60';
+            cellClass = 'cell-occupied';
             cellText = 'ZAJĘTE';
           }
 
-          bodyHtml += `<td class="p-2.5 border border-pkp-border ${cellClass} transition-all"${cellTitleAttr}>${cellText}</td>`;
+          bodyHtml += `<td class="p-2.5 border-r rail-hairline ${cellClass} transition-colors text-[11px]"${cellTitleAttr}>${cellText}</td>`;
         });
         bodyHtml += '</tr>';
       });
@@ -1400,7 +1781,6 @@ W6 m14/m16`;
     let currentTicketClass = 2;
     let filterOnlyRecommended = true;
 
-    // --- Interactive Polish Calendar Picker with manual typing support ---
     const MONTH_NAMES_PL = [
       'Styczeń', 'Luty', 'Marzec', 'Kwiecień', 'Maj', 'Czerwiec',
       'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień'
@@ -1465,6 +1845,10 @@ W6 m14/m16`;
         if (popup && !popup.contains(e.target) && e.target !== dateInput && e.target !== toggleBtn) {
           closeCalendar();
         }
+        const fSugg = document.getElementById('fromSuggestions');
+        const tSugg = document.getElementById('toSuggestions');
+        if (fSugg && !fSugg.contains(e.target) && e.target.id !== 'fromStation') fSugg.classList.add('hidden');
+        if (tSugg && !tSugg.contains(e.target) && e.target.id !== 'toStation') tSugg.classList.add('hidden');
       });
 
       const prevBtn = document.getElementById('calPrevMonth');
@@ -1516,7 +1900,6 @@ W6 m14/m16`;
       if (tDisp) tDisp.value = display;
       if (tTime) {
         tTime.value = `${hh}:${mm}`;
-        // Clamp past time if user enters an earlier hour on today's date
         tTime.addEventListener('blur', () => {
           const curDateVal = document.getElementById('travelDate')?.value;
           const nowCheck = new Date();
@@ -1561,7 +1944,6 @@ W6 m14/m16`;
 
       const today = new Date();
       today.setHours(0, 0, 0, 0);
-
       if (parsed < today) return;
 
       selectedDate = parsed;
@@ -1627,14 +2009,21 @@ W6 m14/m16`;
         const isSelected = selectedDate && cellDate.getTime() === (new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate())).getTime();
 
         if (isPast) {
-          btn.classList.add('text-slate-600', 'cursor-not-allowed', 'opacity-30');
+          btn.style.color = 'var(--muted)';
+          btn.style.opacity = '0.3';
+          btn.classList.add('cursor-not-allowed');
           btn.disabled = true;
         } else if (isSelected) {
-          btn.classList.add('bg-pkp-orange', 'text-white', 'font-bold', 'shadow-md', 'shadow-orange-500/40');
+          btn.style.backgroundColor = 'var(--accent)';
+          btn.style.color = '#ffffff';
+          btn.classList.add('font-bold');
         } else if (isToday) {
-          btn.classList.add('border', 'border-pkp-orange', 'text-pkp-orange', 'font-bold', 'hover:bg-pkp-surfaceHover');
+          btn.style.border = '1px solid var(--accent)';
+          btn.style.color = 'var(--accent)';
+          btn.classList.add('font-bold');
         } else {
-          btn.classList.add('text-slate-200', 'hover:bg-pkp-surfaceHover');
+          btn.style.color = 'var(--text)';
+          btn.classList.add('hover:opacity-75');
         }
 
         if (!isPast) {
@@ -1650,7 +2039,6 @@ W6 m14/m16`;
       }
     }
 
-    // --- Collapsible Scraper Console Toggle ---
     function toggleConsoleDetails() {
       const consoleEl = document.getElementById('liveScraperConsole');
       const chevron = document.getElementById('consoleChevron');
@@ -1658,19 +2046,10 @@ W6 m14/m16`;
       if (!consoleEl) return;
 
       const isHidden = consoleEl.classList.toggle('hidden');
-      if (chevron) {
-        if (isHidden) {
-          chevron.classList.remove('rotate-180');
-        } else {
-          chevron.classList.add('rotate-180');
-        }
-      }
-      if (label) {
-        label.innerText = isHidden ? 'Pokaż szczegóły operacji (konsola)' : 'Ukryj szczegóły operacji (konsola)';
-      }
+      if (chevron) chevron.classList.toggle('rotate-180', !isHidden);
+      if (label) label.innerText = isHidden ? 'Pokaż szczegóły operacji (konsola)' : 'Ukryj szczegóły operacji (konsola)';
     }
 
-    // --- Maintenance Window Detector (23:45 - 00:30, and until 01:00 at end of month) ---
     function checkMaintenanceWindow() {
       const now = new Date();
       const hours = now.getHours();
@@ -1679,7 +2058,6 @@ W6 m14/m16`;
       const month = now.getMonth();
       const year = now.getFullYear();
 
-      // Check if today is the 1st of the month or last day of the month
       const isFirstDay = (day === 1);
       const isLastDay = new Date(year, month, day + 1).getDate() === 1;
 
@@ -1710,6 +2088,10 @@ W6 m14/m16`;
     }
 
     window.addEventListener('DOMContentLoaded', () => {
+      updateThemeUi();
+      switchTab('live');
+      selectTicketClass(2);
+      updateProfileButtonsUi('BALANCED');
       initCalendar();
       updateSeatFiltersUi();
       checkMaintenanceWindow();

@@ -592,8 +592,17 @@
       </div>
 
       <!-- Tabela miejsc -->
-      <div class="overflow-x-auto scrollbar-thin rounded-2xl border rail-hairline" style="background-color: var(--canvas);">
+      <div id="ganttScrollWrap" class="overflow-x-auto scrollbar-thin rounded-2xl border rail-hairline" style="background-color: var(--canvas);">
         <table id="ganttTable" class="w-full text-center border-collapse text-xs tabular-nums"></table>
+      </div>
+
+      <!-- Lewitujący pasek przewijania stacji (widoczny przy długiej liście miejsc) -->
+      <div id="ganttFloatingScrollDock" class="hidden sticky bottom-3 z-20 mt-2 mx-auto max-w-2xl rail-popup rounded-2xl px-3 py-2 flex items-center gap-2.5">
+        <button type="button" onclick="scrollGanttHorizontally(-260)" title="Przewiń w lewo" class="rail-tonal w-8 h-7 rounded-lg flex items-center justify-center text-xs font-bold shrink-0 hover:opacity-80">&larr;</button>
+        <div id="ganttFakeScrollTrack" class="flex-1 overflow-x-auto scrollbar-thin">
+          <div id="ganttFakeScrollSpacer" class="h-2.5"></div>
+        </div>
+        <button type="button" onclick="scrollGanttHorizontally(260)" title="Przewiń w prawo" class="rail-tonal w-8 h-7 rounded-lg flex items-center justify-center text-xs font-bold shrink-0 hover:opacity-80">&rarr;</button>
       </div>
     </section>
 
@@ -1766,6 +1775,49 @@
       bodyHtml += '</tbody>';
 
       table.innerHTML = headerHtml + bodyHtml;
+      requestAnimationFrame(syncFloatingGanttScroll);
+    }
+
+    let ganttScrollSyncBound = false;
+    let isSyncingGanttScroll = false;
+
+    function scrollGanttHorizontally(deltaPx) {
+      const wrap = document.getElementById('ganttScrollWrap');
+      if (!wrap) return;
+      wrap.scrollBy({ left: deltaPx, behavior: 'smooth' });
+    }
+
+    function syncFloatingGanttScroll() {
+      const wrap = document.getElementById('ganttScrollWrap');
+      const dock = document.getElementById('ganttFloatingScrollDock');
+      const track = document.getElementById('ganttFakeScrollTrack');
+      const spacer = document.getElementById('ganttFakeScrollSpacer');
+      if (!wrap || !dock || !track || !spacer) return;
+
+      if (!ganttScrollSyncBound) {
+        ganttScrollSyncBound = true;
+        wrap.addEventListener('scroll', () => {
+          if (isSyncingGanttScroll) return;
+          isSyncingGanttScroll = true;
+          track.scrollLeft = wrap.scrollLeft;
+          isSyncingGanttScroll = false;
+        });
+        track.addEventListener('scroll', () => {
+          if (isSyncingGanttScroll) return;
+          isSyncingGanttScroll = true;
+          wrap.scrollLeft = track.scrollLeft;
+          isSyncingGanttScroll = false;
+        });
+      }
+
+      const overflow = wrap.scrollWidth - wrap.clientWidth;
+      if (overflow > 4) {
+        spacer.style.width = wrap.scrollWidth + 'px';
+        dock.classList.remove('hidden');
+        track.scrollLeft = wrap.scrollLeft;
+      } else {
+        dock.classList.add('hidden');
+      }
     }
 
     function loadFixtureKoluszkiOpole() {
@@ -2115,6 +2167,7 @@ W6 m14/m16`;
       updateSeatFiltersUi();
       checkMaintenanceWindow();
       setInterval(checkMaintenanceWindow, 30000);
+      window.addEventListener('resize', () => requestAnimationFrame(syncFloatingGanttScroll));
     });
   </script>
 </body>

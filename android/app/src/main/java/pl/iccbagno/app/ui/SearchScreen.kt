@@ -74,10 +74,15 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import pl.iccbagno.app.R
@@ -117,6 +122,8 @@ fun SearchScreen(
     onClearHistory: () -> Unit
 ) {
     val colors = LocalRailColors.current
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
     var showFilters by remember { mutableStateOf(false) }
 
     val visibleTrains = ui.trains.filter { train ->
@@ -144,10 +151,14 @@ fun SearchScreen(
                         Spacer(modifier = Modifier.width(10.dp))
                         Column {
                             Text(
-                                text = "SiadaICie",
-                                fontWeight = FontWeight.Bold,
+                                text = buildAnnotatedString {
+                                    withStyle(SpanStyle(color = colors.textPrimary)) { append("SIADA") }
+                                    withStyle(SpanStyle(color = colors.accent)) { append("IC") }
+                                    withStyle(SpanStyle(color = colors.textPrimary)) { append("IE") }
+                                },
+                                fontWeight = FontWeight.ExtraBold,
                                 fontSize = 19.sp,
-                                color = colors.textPrimary
+                                letterSpacing = 0.5.sp
                             )
                             Text(
                                 text = "Wolne miejsca PKP Intercity",
@@ -293,7 +304,11 @@ fun SearchScreen(
                                 )
 
                                 AnimatedVisibility(visible = ui.fromSuggestions.isNotEmpty()) {
-                                    SuggestionsList(ui.fromSuggestions, onSelectFrom)
+                                    SuggestionsList(ui.fromSuggestions) { st ->
+                                        onSelectFrom(st)
+                                        focusManager.clearFocus()
+                                        keyboardController?.hide()
+                                    }
                                 }
 
                                 HorizontalDivider(
@@ -309,7 +324,11 @@ fun SearchScreen(
                                 )
 
                                 AnimatedVisibility(visible = ui.toSuggestions.isNotEmpty()) {
-                                    SuggestionsList(ui.toSuggestions, onSelectTo)
+                                    SuggestionsList(ui.toSuggestions) { st ->
+                                        onSelectTo(st)
+                                        focusManager.clearFocus()
+                                        keyboardController?.hide()
+                                    }
                                 }
                             }
 
@@ -441,7 +460,11 @@ fun SearchScreen(
                         }
 
                         Button(
-                            onClick = onSearchTrains,
+                            onClick = {
+                                focusManager.clearFocus()
+                                keyboardController?.hide()
+                                onSearchTrains()
+                            },
                             enabled = !ui.isLoadingTrains,
                             shape = RoundedCornerShape(16.dp),
                             colors = ButtonDefaults.buttonColors(

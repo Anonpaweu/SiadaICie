@@ -665,7 +665,7 @@ fun ResultScreen(
                                     )
                                 }
                                 Text(
-                                    text = "Pomogłem? Buy me a coffee",
+                                    text = "Pomogłem? Buy me a coffee :D",
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     color = colors.textPrimary

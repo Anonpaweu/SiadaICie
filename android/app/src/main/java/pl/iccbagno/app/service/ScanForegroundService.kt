@@ -60,6 +60,7 @@ class ScanForegroundService : Service() {
     companion object {
         const val CHANNEL_ID = "iccbagno_scan_channel"
         const val NOTIFICATION_ID = 1001
+        private const val NOTIFICATION_ID_DONE = 2002
         const val ACTION_START = "pl.iccbagno.app.action.START_SCAN"
         const val ACTION_CANCEL = "pl.iccbagno.app.action.CANCEL_SCAN"
 
@@ -299,6 +300,10 @@ class ScanForegroundService : Service() {
             val repo = StationsRepository(applicationContext)
             val scheduleClient = ScheduleClient(repo)
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            try {
+                nm.cancel(NOTIFICATION_ID_DONE)
+            } catch (_: Exception) {
+            }
 
             val scanner = EbiletWebViewScanner(
                 context = applicationContext,
@@ -344,6 +349,7 @@ class ScanForegroundService : Service() {
                         error = errorText,
                         debugWebView = null
                     )
+                    notifyScanCompleted(nm, trainNumber, errorText)
                     return@launch
                 }
 
@@ -380,6 +386,7 @@ class ScanForegroundService : Service() {
                         error = details,
                         debugWebView = null
                     )
+                    notifyScanCompleted(nm, trainNumber, details)
                     return@launch
                 }
 
@@ -404,6 +411,11 @@ class ScanForegroundService : Service() {
                     error = null,
                     debugWebView = null
                 )
+                notifyScanCompleted(
+                    nm,
+                    trainNumber,
+                    "Znaleziono: ${strategies.first().title} ($fromStation -> $toStation)"
+                )
             } catch (_: CancellationException) {
                 _state.value = _state.value.copy(
                     isRunning = false,
@@ -411,11 +423,13 @@ class ScanForegroundService : Service() {
                     debugWebView = null
                 )
             } catch (e: Exception) {
+                val errMsg = e.message ?: "Błąd podczas skanowania."
                 _state.value = _state.value.copy(
                     isRunning = false,
-                    error = e.message ?: "Błąd podczas skanowania.",
+                    error = errMsg,
                     debugWebView = null
                 )
+                notifyScanCompleted(nm, trainNumber, errMsg)
             } finally {
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
@@ -459,6 +473,28 @@ class ScanForegroundService : Service() {
             .setContentIntent(openPending)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Anuluj", cancelPending)
             .build()
+    }
+
+    private fun notifyScanCompleted(nm: NotificationManager, trainNumber: String, summary: String) {
+        try {
+            val openIntent = Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            val openPending = PendingIntent.getActivity(
+                this, 2, openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                .setContentTitle("Zakończono skanowanie ($trainNumber)")
+                .setContentText(summary)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(summary))
+                .setSilent(true)
+                .setAutoCancel(true)
+                .setContentIntent(openPending)
+                .build()
+            nm.notify(NOTIFICATION_ID_DONE, notification)
+        } catch (_: Exception) {
+        }
     }
 
     override fun onDestroy() {

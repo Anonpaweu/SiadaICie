@@ -920,6 +920,70 @@ class TestEbiletV3RealDOM:
         assert ("Pabianice", "Warszawa Centralna") in calls
 
     @pytest.mark.asyncio
+    async def test_metro_hub_head_recovery_merges_35s_timed_out_hop(self):
+        """
+        Verifies that when an initial short metropolitan hop (e.g. Warszawa Centralna -> Warszawa Zachodnia, 5 min)
+        times out after 35s with e-IC's infinite spinner ('po 35s oczekiwania'), the scanner merges it with
+        the next segment (Warszawa Centralna -> Zyrardow).
+        """
+        from unittest.mock import AsyncMock, patch
+        from backend.app.scraper.ebilet_seat_scraper import LiveTrainScanner
+        from backend.app.scraper.ic_client import GraphicReservationUnavailableError
+        from backend.app.scraper.route_resolver import StationStop
+
+        mock_stops = [
+            StationStop(seq=0, eva_code="5100065", name="Warszawa Centralna", arrival_min=0, departure_min=0, departure_time="15:20"),
+            StationStop(seq=1, eva_code="5100067", name="Warszawa Zachodnia", arrival_min=4, departure_min=5, arrival_time="15:24", departure_time="15:25"),
+            StationStop(seq=2, eva_code="5100119", name="Żyrardów", arrival_min=35, departure_min=35, arrival_time="15:55"),
+        ]
+
+        scanner = LiveTrainScanner(headless=True)
+        calls = []
+
+        async def mock_scan_segment(**kwargs):
+            calls.append((kwargs["from_station"], kwargs["to_station"]))
+            if kwargs["from_station"] == "Warszawa Centralna" and kwargs["to_station"] == "Warszawa Zachodnia":
+                raise GraphicReservationUnavailableError(
+                    "SCRAPE_ERROR: Nie znaleziono pociągu IC 1644 na liście połączeń dla relacji Warszawa Centralna -> Warszawa Zachodnia po 35s oczekiwania."
+                )
+            if kwargs["from_station"] == "Warszawa Zachodnia" and kwargs["to_station"] == "Żyrardów":
+                return {"6": ["65"]}
+            if kwargs["from_station"] == "Warszawa Centralna" and kwargs["to_station"] == "Żyrardów":
+                return {"6": ["65"]}
+            return {}
+
+        scanner.scraper.scan_segment = AsyncMock(side_effect=mock_scan_segment)
+
+        with patch("backend.app.scraper.ebilet_seat_scraper.resolve_real_route", return_value=mock_stops), \
+             patch("backend.app.scraper.ebilet_seat_scraper.filter_and_merge_stops", return_value=mock_stops), \
+             patch("backend.app.scraper.ebilet_seat_scraper.async_playwright") as mock_pw:
+            mock_browser = AsyncMock()
+            mock_ctx = AsyncMock()
+            mock_page = AsyncMock()
+            mock_browser.new_context.return_value = mock_ctx
+            mock_ctx.new_page.return_value = mock_page
+            mock_pw_inst = AsyncMock()
+            mock_pw_inst.chromium.connect_over_cdp.side_effect = Exception("No CDP")
+            mock_pw_inst.chromium.launch.return_value = mock_browser
+            mock_pw.return_value.__aenter__.return_value = mock_pw_inst
+
+            full_map = await scanner.scan_full_train(
+                from_station="Warszawa Centralna",
+                to_station="Żyrardów",
+                travel_date="2026-11-27",
+                train_number="IC 1644",
+                fast_path=False,
+            )
+
+        assert len(full_map.segments) == 1
+        seg = full_map.segments[0]
+        assert seg.status == "OK"
+        assert seg.from_station == "Warszawa Centralna"
+        assert seg.to_station == "Żyrardów"
+        assert seg.carriages == {"6": ["65"]}
+        assert ("Warszawa Centralna", "Żyrardów") in calls
+
+    @pytest.mark.asyncio
     async def test_split_fast_path_recovers_blocked_overnight_route(self):
         """
         Verifies adaptive divide-and-conquer split Fast-Path:

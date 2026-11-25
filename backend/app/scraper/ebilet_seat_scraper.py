@@ -2441,7 +2441,14 @@ class LiveTrainScanner:
                     if seg.status != "SCRAPE_ERROR":
                         return False
                     err_low = (seg.error_reason or "").lower()
-                    if "nie znaleziono pociągu" not in err_low or "po 35s" in err_low:
+                    if not any(
+                        tok in err_low
+                        for tok in (
+                            "nie znaleziono pociągu",
+                            "nie znalazł żadnych połączeń",
+                            "timeout",
+                        )
+                    ):
                         return False
                     if not is_same_metro_hub(seg.from_station, seg.to_station):
                         return False

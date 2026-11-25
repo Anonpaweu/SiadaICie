@@ -1591,7 +1591,13 @@
         ? activeStrategy.purchase_instructions
         : (data.purchase_instructions || []);
 
-      if (!instructions.length) {
+      const fullRouteUrl = (
+        typeof data.full_route_booking_url === 'string'
+        && data.full_route_booking_url.startsWith('https://ebilet.intercity.pl/')
+      ) ? data.full_route_booking_url : '';
+      const hasStations = Array.isArray(data.stations) && data.stations.length >= 2;
+
+      if (!instructions.length && !(fullRouteUrl && hasStations)) {
         section.classList.add('hidden');
         return;
       }
@@ -1600,8 +1606,18 @@
         ? activeStrategy.tickets_to_buy.length
         : instructions.length;
 
-      countBadge.innerText = `Liczba biletów: ${ticketsCount}`;
+      countBadge.innerText = instructions.length
+        ? `Liczba biletów: ${ticketsCount}`
+        : 'Bilet bez gwarancji miejsca';
       list.innerHTML = '';
+
+      if (!instructions.length) {
+        const notice = document.createElement('div');
+        notice.className = 'rail-tonal rounded-2xl p-3.5 text-xs';
+        notice.style.color = 'var(--amber)';
+        notice.innerText = 'Brak wariantu siedzącego dla aktywnych filtrów — na części lub całości tej trasy brak wolnych miejsc siedzących (sprawdź filtry specjalne powyżej lub poniższy wariant bez gwarancji miejsca).';
+        list.appendChild(notice);
+      }
 
       instructions.forEach((instr, idx) => {
         const step = activeStrategy && Array.isArray(activeStrategy.steps) ? activeStrategy.steps[idx] : null;
@@ -1656,15 +1672,14 @@
       });
 
       const hasStandingLeg = Boolean(
-        activeStrategy
-        && (Number(activeStrategy.total_standing_min || 0) > 0 || (activeStrategy.steps || []).some(st => st && st.is_standing))
+        !instructions.length
+        || (
+          activeStrategy
+          && (Number(activeStrategy.total_standing_min || 0) > 0 || (activeStrategy.steps || []).some(st => st && st.is_standing))
+        )
       );
-      const fullRouteUrl = (
-        typeof data.full_route_booking_url === 'string'
-        && data.full_route_booking_url.startsWith('https://ebilet.intercity.pl/')
-      ) ? data.full_route_booking_url : '';
 
-      if (hasStandingLeg && fullRouteUrl && Array.isArray(data.stations) && data.stations.length >= 2) {
+      if (hasStandingLeg && fullRouteUrl && hasStations) {
         const firstSt = data.stations[0];
         const lastSt = data.stations[data.stations.length - 1];
         const fullInfo = getStandingBadgeInfo(data.full_route_standing_status);
@@ -1847,7 +1862,7 @@
       if (carriageFilter !== 'ALL') {
         filteredSeats = filteredSeats.filter(s => String(s.carriage_no) === carriageFilter);
       }
-      if (filterOnlyRecommended) {
+      if (filterOnlyRecommended && selectedSeatUids.size > 0) {
         filteredSeats = filteredSeats.filter(s => selectedSeatUids.has(s.seat_uid));
       }
 
@@ -1875,6 +1890,9 @@
       headerHtml += '</tr></thead>';
 
       let bodyHtml = '<tbody>';
+      if (filteredSeats.length === 0) {
+        bodyHtml += `<tr><td colspan="${segments.length + 1}" class="px-4 py-6 text-center text-xs" style="color: var(--muted);">Brak wolnych miejsc spełniających aktywne filtry. Spróbuj włączyć dodatkowe kategorie w pasku filtrów powyżej.</td></tr>`;
+      }
       let lastCarriage = null;
 
       filteredSeats.forEach(seat => {

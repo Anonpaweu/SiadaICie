@@ -130,9 +130,8 @@ fun SearchScreen(
     onOpenHistoryItem: (ScanHistoryItem) -> Unit,
     onRescanHistoryItem: (ScanHistoryItem) -> Unit,
     onRefreshHistory: () -> Unit,
-    onToggleFavorite: () -> Unit,
-    onApplyFavorite: (FavoriteRoute) -> Unit,
-    onRemoveFavorite: (FavoriteRoute) -> Unit,
+    isFavoritesOpen: Boolean,
+    onToggleFavorites: () -> Unit,
     onClearHistory: () -> Unit
 ) {
     val colors = LocalRailColors.current
@@ -379,36 +378,27 @@ fun SearchScreen(
                                     }
                                 }
 
-                                val fromTrim = ui.fromQuery.trim()
-                                val toTrim = ui.toQuery.trim()
-                                val isFav = fromTrim.isNotEmpty() && toTrim.isNotEmpty() && ui.favorites.any {
-                                    it.fromStation.equals(fromTrim, ignoreCase = true) &&
-                                        it.toStation.equals(toTrim, ignoreCase = true)
-                                }
+                                val hasFavorites = ui.favorites.isNotEmpty()
                                 Surface(
-                                    onClick = onToggleFavorite,
+                                    onClick = {
+                                        focusManager.clearFocus()
+                                        keyboardController?.hide()
+                                        onToggleFavorites()
+                                    },
                                     shape = CircleShape,
-                                    color = if (isFav) colors.accentContainer else colors.cardTonal,
+                                    color = if (isFavoritesOpen || hasFavorites) colors.accentContainer else colors.cardTonal,
                                     modifier = Modifier.size(40.dp)
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
                                         Icon(
-                                            imageVector = if (isFav) Icons.Default.Star else Icons.Default.StarBorder,
-                                            contentDescription = if (isFav) "Usuń z ulubionych" else "Dodaj do ulubionych",
-                                            tint = if (isFav) colors.accent else colors.textSecondary,
+                                            imageVector = if (isFavoritesOpen || hasFavorites) Icons.Default.Star else Icons.Default.StarBorder,
+                                            contentDescription = "Ulubione połączenia",
+                                            tint = if (isFavoritesOpen || hasFavorites) colors.accent else colors.textSecondary,
                                             modifier = Modifier.size(20.dp)
                                         )
                                     }
                                 }
                             }
-                        }
-
-                        AnimatedVisibility(visible = ui.favoritesHint != null) {
-                            Text(
-                                text = ui.favoritesHint.orEmpty(),
-                                fontSize = 11.sp,
-                                color = colors.corridorAmber
-                            )
                         }
 
                         // Date, time filter & class controls
@@ -551,85 +541,6 @@ fun SearchScreen(
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text("Szukaj pociągów", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Favorite routes ("Moje ulubione", max 4)
-            if (ui.favorites.isNotEmpty()) {
-                item(key = "favorites_bar") {
-                    Surface(
-                        color = colors.card,
-                        shape = RoundedCornerShape(18.dp),
-                        border = BorderStroke(1.dp, colors.hairline),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 14.dp, vertical = 12.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Star,
-                                    contentDescription = null,
-                                    tint = colors.accent,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Text(
-                                    text = "Moje ulubione (${ui.favorites.size}/4)",
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 13.sp,
-                                    color = colors.textPrimary
-                                )
-                            }
-                            FlowRow(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                ui.favorites.forEach { fav ->
-                                    Surface(
-                                        onClick = { onApplyFavorite(fav) },
-                                        shape = RoundedCornerShape(12.dp),
-                                        color = colors.cardTonal,
-                                        border = BorderStroke(1.dp, colors.hairline)
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.padding(start = 10.dp, end = 6.dp, top = 7.dp, bottom = 7.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                        ) {
-                                            Text(
-                                                text = "${fav.fromStation} -> ${fav.toStation}",
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.Medium,
-                                                color = colors.textPrimary,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(20.dp)
-                                                    .clip(CircleShape)
-                                                    .clickable { onRemoveFavorite(fav) },
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Default.Close,
-                                                    contentDescription = "Usuń ulubioną trasę",
-                                                    tint = colors.textSecondary,
-                                                    modifier = Modifier.size(13.dp)
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
                             }
                         }
                     }
@@ -972,7 +883,7 @@ private fun HistorySummaryCard(
 }
 
 @Composable
-private fun StationFieldRow(
+internal fun StationFieldRow(
     label: String,
     value: String,
     placeholder: String,
@@ -1034,7 +945,7 @@ private fun StationFieldRow(
 }
 
 @Composable
-private fun SuggestionsList(items: List<StationInfo>, onSelect: (StationInfo) -> Unit) {
+internal fun SuggestionsList(items: List<StationInfo>, onSelect: (StationInfo) -> Unit) {
     val colors = LocalRailColors.current
     Surface(
         color = colors.cardTonal,

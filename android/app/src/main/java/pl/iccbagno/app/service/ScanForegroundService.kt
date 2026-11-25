@@ -61,6 +61,7 @@ class ScanForegroundService : Service() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var scanJob: Job? = null
+    private val userCancelled = AtomicBoolean(false)
 
     companion object {
         const val CHANNEL_ID = "iccbagno_scan_channel"
@@ -243,6 +244,7 @@ class ScanForegroundService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_CANCEL -> {
+                userCancelled.set(true)
                 scanJob?.cancel()
                 _state.value = _state.value.copy(
                     isRunning = false,
@@ -253,6 +255,7 @@ class ScanForegroundService : Service() {
                 stopSelf()
             }
             ACTION_START -> {
+                userCancelled.set(false)
                 val fromSt = intent.getStringExtra(EXTRA_FROM) ?: return START_NOT_STICKY
                 val toSt = intent.getStringExtra(EXTRA_TO) ?: return START_NOT_STICKY
                 val date = intent.getStringExtra(EXTRA_DATE) ?: return START_NOT_STICKY
@@ -437,11 +440,22 @@ class ScanForegroundService : Service() {
                     "Znaleziono: ${strategies.first().title} ($fromStation -> $toStation)"
                 )
             } catch (_: CancellationException) {
-                _state.value = _state.value.copy(
-                    isRunning = false,
-                    statusMessage = "Skanowanie anulowane.",
-                    debugWebView = null
-                )
+                if (userCancelled.get()) {
+                    _state.value = _state.value.copy(
+                        isRunning = false,
+                        statusMessage = "Skanowanie anulowane przez użytkownika.",
+                        debugWebView = null
+                    )
+                } else {
+                    val errMsg = "Skanowanie zostało przerwane w tle."
+                    _state.value = _state.value.copy(
+                        isRunning = false,
+                        error = errMsg,
+                        statusMessage = errMsg,
+                        debugWebView = null
+                    )
+                    notifyScanCompleted(nm, trainNumber, errMsg)
+                }
             } catch (e: Exception) {
                 val errMsg = e.message ?: "Błąd podczas skanowania."
                 _state.value = _state.value.copy(

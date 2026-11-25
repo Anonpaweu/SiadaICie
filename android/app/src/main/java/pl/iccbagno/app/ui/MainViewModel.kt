@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -53,7 +54,6 @@ data class SearchUiState(
     val forceFullScan: Boolean = false,
     val debugWebViewEnabled: Boolean = false,
     val favorites: List<FavoriteRoute> = emptyList(),
-    val favoritesHint: String? = null,
     val isLoadingTrains: Boolean = false,
     val trainsError: String? = null,
     val trains: List<TrainConnection> = emptyList(),
@@ -126,30 +126,62 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         prefs.edit().putString("favorite_routes_json", arr.toString()).apply()
     }
 
-    fun toggleFavoriteCurrentRoute() {
+    private fun validateFavoriteRoute(
+        from: String,
+        to: String,
+        excludeIndex: Int? = null
+    ): Pair<FavoriteRoute?, String?> {
+        val fromTrim = from.trim()
+        val toTrim = to.trim()
+        if (fromTrim.isEmpty() || toTrim.isEmpty()) {
+            return null to "Wpisz stację początkową i docelową."
+        }
+        if (fromTrim.equals(toTrim, ignoreCase = true)) {
+            return null to "Stacja początkowa i docelowa muszą być różne."
+        }
+        val duplicate = _uiState.value.favorites.withIndex().any { (idx, existing) ->
+            idx != excludeIndex &&
+                existing.fromStation.equals(fromTrim, ignoreCase = true) &&
+                existing.toStation.equals(toTrim, ignoreCase = true)
+        }
+        if (duplicate) {
+            return null to "To połączenie jest już na liście ulubionych."
+        }
+        return FavoriteRoute(fromTrim, toTrim) to null
+    }
+
+    fun addFavorite(from: String, to: String): String? {
         val st = _uiState.value
-        val from = st.fromQuery.trim()
-        val to = st.toQuery.trim()
-        if (from.isEmpty() || to.isEmpty()) {
-            _uiState.update { it.copy(favoritesHint = "Podaj stację początkową i docelową, aby dodać do ulubionych.") }
-            return
-        }
-        val existingIdx = st.favorites.indexOfFirst {
-            it.fromStation.equals(from, ignoreCase = true) && it.toStation.equals(to, ignoreCase = true)
-        }
-        if (existingIdx >= 0) {
-            val updated = st.favorites.filterIndexed { i, _ -> i != existingIdx }
-            saveFavorites(updated)
-            _uiState.update { it.copy(favorites = updated, favoritesHint = null) }
-            return
-        }
         if (st.favorites.size >= 4) {
-            _uiState.update { it.copy(favoritesHint = "Możesz zapisać maksymalnie 4 ulubione trasy.") }
-            return
+            return "Możesz zapisać maksymalnie 4 ulubione połączenia."
         }
-        val updated = listOf(FavoriteRoute(from, to)) + st.favorites
+        val (route, err) = validateFavoriteRoute(from, to)
+        if (route == null) return err
+        val updated = st.favorites + route
         saveFavorites(updated)
-        _uiState.update { it.copy(favorites = updated, favoritesHint = null) }
+        _uiState.update { it.copy(favorites = updated) }
+        return null
+    }
+
+    fun updateFavorite(index: Int, from: String, to: String): String? {
+        val st = _uiState.value
+        if (index !in st.favorites.indices) {
+            return "Nie znaleziono połączenia do edycji."
+        }
+        val (route, err) = validateFavoriteRoute(from, to, excludeIndex = index)
+        if (route == null) return err
+        val updated = st.favorites.toMutableList().apply { set(index, route) }
+        saveFavorites(updated)
+        _uiState.update { it.copy(favorites = updated) }
+        return null
+    }
+
+    suspend fun searchStationsForFavorites(query: String): List<StationInfo> {
+        val trimmed = query.trim()
+        if (trimmed.length < 2) return emptyList()
+        return withContext(Dispatchers.IO) {
+            stationsRepo.searchStations(trimmed, 8)
+        }
     }
 
     fun applyFavorite(fav: FavoriteRoute) {
@@ -158,8 +190,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 fromQuery = fav.fromStation,
                 toQuery = fav.toStation,
                 fromSuggestions = emptyList(),
-                toSuggestions = emptyList(),
-                favoritesHint = null
+                toSuggestions = emptyList()
             )
         }
     }
@@ -170,7 +201,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 it.toStation.equals(fav.toStation, ignoreCase = true)
         }
         saveFavorites(updated)
-        _uiState.update { it.copy(favorites = updated, favoritesHint = null) }
+        _uiState.update { it.copy(favorites = updated) }
     }
 
     private fun saveFilterPrefs(directOnly: Boolean, filters: SeatFilterPrefs) {

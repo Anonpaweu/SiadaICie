@@ -17,6 +17,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -503,6 +504,11 @@ class EbiletWebViewScanner(
             android.view.View.MeasureSpec.makeMeasureSpec(900, android.view.View.MeasureSpec.EXACTLY)
         )
         wv.layout(0, 0, 1280, 900)
+        try {
+            wv.onResume()
+            wv.resumeTimers()
+        } catch (_: Exception) {
+        }
 
         worker
     }
@@ -1566,6 +1572,9 @@ class EbiletWebViewScanner(
                             )
                         )
                     }
+                } catch (_: TimeoutCancellationException) {
+                    Log.w(TAG, "Fast-Path timeout (75s) for ${sFirst.name} -> ${sLast.name}, falling back to segments")
+                    onProgress(22, "Fast-Path przekroczył limit czasu - przechodzę do skanowania odcinków...")
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: GraphicReservationException) {
@@ -1659,6 +1668,9 @@ class EbiletWebViewScanner(
                                     status = "OK"
                                 ) to false
                             } else null to false
+                        } catch (_: TimeoutCancellationException) {
+                            Log.w(TAG, "Split Fast-Path timeout (60s) for ${sa.name} -> ${sb.name}")
+                            null to false
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: GraphicReservationException) {
@@ -1771,6 +1783,12 @@ class EbiletWebViewScanner(
                         carriages = emptyMap()
                         seatTags = emptyMap()
                     }
+                } catch (_: TimeoutCancellationException) {
+                    Log.w(TAG, "WebView segment timeout (75s) for ${sFrom.name} -> ${sTo.name}")
+                    status = "SCRAPE_ERROR"
+                    errReason = "SCRAPE_ERROR: Przekroczono limit czasu skanowania odcinka (75s)."
+                    carriages = emptyMap()
+                    seatTags = emptyMap()
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: GraphicReservationException) {
@@ -1992,6 +2010,11 @@ class EbiletWebViewScanner(
                         status = if (cars.values.any { it.isNotEmpty() }) "OK" else "SOLD_OUT",
                         errorReason = if (cars.values.any { it.isNotEmpty() }) null else "Brak wolnych miejsc w Klasie $ticketClass."
                     )
+                } catch (_: TimeoutCancellationException) {
+                    Log.w(TAG, "Merged boundary timeout (60s) for ${first.fromStation} -> ${second.toStation}")
+                    null
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (_: Exception) {
                     null
                 }

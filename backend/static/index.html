@@ -585,6 +585,17 @@
       </div>
     </section>
 
+    <!-- Smart podpowiedź o miejscu z rowerem (tylko gdy Rower wyłączony i daje wyraźną poprawę) -->
+    <div id="bikeSuggestionBanner" class="hidden rounded-2xl p-3.5 flex flex-wrap items-center justify-between gap-3" style="background-color: var(--emerald-bg); border: 1px solid color-mix(in srgb, var(--emerald) 35%, transparent);">
+      <div class="flex-1 min-w-[200px]">
+        <div class="text-xs font-bold" style="color: var(--text);">Podpowiedź: włącz filtr Rower</div>
+        <div id="bikeSuggestionText" class="text-xs mt-0.5" style="color: var(--muted);"></div>
+      </div>
+      <button type="button" onclick="enableBikeFilterFromHint()" class="shrink-0 px-3.5 py-1.5 rounded-xl text-white text-xs font-semibold transition-opacity hover:opacity-90" style="background-color: var(--emerald);">
+        Włącz filtr Rower
+      </button>
+    </div>
+
     <!-- Sekcja Wariantów + Przełącznik Profilu Optymalizacji -->
     <section id="strategiesSection" class="hidden scroll-mt-20 space-y-3">
       <div class="flex flex-wrap items-center justify-between gap-3">
@@ -874,6 +885,27 @@
       recomputeCurrentWithFilters();
     }
 
+    function renderBikeSuggestionBanner(data) {
+      const banner = document.getElementById('bikeSuggestionBanner');
+      const textEl = document.getElementById('bikeSuggestionText');
+      if (!banner || !textEl) return;
+      const msg = data && !data.no_seatmap_mode && !seatFiltersState.allow_bike
+        ? (data.bike_suggestion || '')
+        : '';
+      if (msg) {
+        textEl.innerText = msg;
+        banner.classList.remove('hidden');
+      } else {
+        banner.classList.add('hidden');
+      }
+    }
+
+    function enableBikeFilterFromHint() {
+      seatFiltersState.allow_bike = true;
+      updateSeatFiltersUi();
+      recomputeCurrentWithFilters();
+    }
+
     function confirmWheelchairModal(confirmed) {
       const modal = document.getElementById('wheelchairConfirmModal');
       if (modal) modal.classList.add('hidden');
@@ -920,6 +952,7 @@
         currentAnalysisData = data;
         selectedStrategyIndex = 0;
         const prevCarriage = document.getElementById('carriageFilter')?.value || 'ALL';
+        renderBikeSuggestionBanner(data);
         renderFastPathBanner(data);
         renderPurchaseInstructions(data);
         renderCarriageFilter(data.seat_matrix, prevCarriage);
@@ -1649,6 +1682,7 @@
         statusEl.innerText = 'Przełączaj kategorie, aby od razu przeliczyć warianty';
       }
       updateSeatFiltersUi();
+      renderBikeSuggestionBanner(data);
       renderPurchaseInstructions(data);
       renderCarriageFilter(data.seat_matrix);
       renderStrategies(data.strategies);

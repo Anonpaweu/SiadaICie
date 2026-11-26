@@ -75,6 +75,7 @@ class AnalyzeResponse(BaseModel):
     full_route_booking_url: Optional[str] = None
     full_route_standing_status: Optional[str] = None
     no_seatmap_mode: bool = False
+    bike_suggestion: Optional[str] = None
 
 
 OptimizationResponse = AnalyzeResponse

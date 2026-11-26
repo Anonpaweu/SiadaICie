@@ -184,3 +184,116 @@ def test_recompute_endpoint_filters_special_and_wheelchair_without_rescrape(monk
     assert re_data["strategies"][0]["steps"][0]["seat_no"] == "37"
     assert re_data["strategies"][0]["steps"][0]["seat_tags"] == [TAG_WHEELCHAIR]
     assert [s["seat_no"] for s in re_data["seat_matrix"]] == ["37"]
+
+
+def test_bike_suggestion_triggered_only_when_bike_disabled_and_strictly_better(monkeypatch):
+    from backend.app import main as main_mod
+    from backend.app.models.domain import FullTrainAvailabilityMap, SegmentAvailabilityMap
+    from backend.app.scraper.ebilet_seat_scraper import LiveTrainScanner
+
+    sample_map = FullTrainAvailabilityMap(
+        train_number="IC 6120",
+        travel_date="2026-11-27",
+        fast_path_used=False,
+        total_route_segments=2,
+        segments=[
+            SegmentAvailabilityMap(
+                segment_index=0,
+                from_station="Wrocław Główny",
+                to_station="Oleśnica",
+                departure_time="19:30",
+                duration_min=25,
+                from_eva="5100069",
+                to_eva="5100185",
+                segment_date="2026-11-27",
+                carriages={"7": ["12"]},
+                seat_tags={"7_12": [TAG_BIKE]},
+                status="OK",
+            ),
+            SegmentAvailabilityMap(
+                segment_index=1,
+                from_station="Oleśnica",
+                to_station="Warszawa Centralna",
+                departure_time="19:55",
+                duration_min=210,
+                from_eva="5100185",
+                to_eva="5100065",
+                segment_date="2026-11-27",
+                carriages={"5": ["44"], "7": ["12"]},
+                seat_tags={"7_12": [TAG_BIKE]},
+                status="OK",
+            ),
+        ],
+    )
+
+    async def mock_scan_bike(self, **kwargs):
+        return sample_map
+
+    monkeypatch.setattr(main_mod, "check_grm_available", lambda *a, **kw: True)
+    monkeypatch.setattr(LiveTrainScanner, "scan_full_train", mock_scan_bike)
+
+    # With default allow_bike=True: uses bike seat, no suggestion needed
+    resp_on = client.post(
+        "/api/v1/optimize",
+        json={
+            "from_station": "Wrocław Główny",
+            "to_station": "Warszawa Centralna",
+            "date": "2026-11-27",
+            "time": "19:30",
+            "train_number": "IC 6120",
+        },
+    )
+    assert resp_on.status_code == 200
+    assert resp_on.json()["bike_suggestion"] is None
+
+    # Turn allow_bike=False via recompute: standing 25 min -> triggers bike suggestion
+    resp_off = client.post(
+        "/api/v1/recompute",
+        json={
+            "profile": "BALANCED",
+            "seat_filters": {"allow_bike": False},
+        },
+    )
+    assert resp_off.status_code == 200
+    d_off = resp_off.json()
+    assert d_off["strategies"][0]["total_standing_min"] == 25
+    assert d_off["bike_suggestion"] is not None
+    assert "100%" in d_off["bike_suggestion"]
+
+    # Non-bike special seats (e.g. ELDERLY) must NEVER trigger a suggestion
+    elderly_map = FullTrainAvailabilityMap(
+        train_number="IC 6120",
+        travel_date="2026-11-27",
+        fast_path_used=False,
+        total_route_segments=1,
+        segments=[
+            SegmentAvailabilityMap(
+                segment_index=0,
+                from_station="Wrocław Główny",
+                to_station="Warszawa Centralna",
+                departure_time="19:30",
+                duration_min=235,
+                carriages={"7": ["15"]},
+                seat_tags={"7_15": [TAG_ELDERLY]},
+                status="OK",
+            )
+        ],
+    )
+
+    async def mock_scan_elderly(self, **kwargs):
+        return elderly_map
+
+    monkeypatch.setattr(LiveTrainScanner, "scan_full_train", mock_scan_elderly)
+    resp_elderly = client.post(
+        "/api/v1/optimize",
+        json={
+            "from_station": "Wrocław Główny",
+            "to_station": "Warszawa Centralna",
+            "date": "2026-11-27",
+            "time": "19:30",
+            "train_number": "IC 6120",
+            "seat_filters": {"allow_bike": False},
+        },
+    )
+    assert resp_elderly.status_code == 200
+    assert resp_elderly.json()["bike_suggestion"] is None

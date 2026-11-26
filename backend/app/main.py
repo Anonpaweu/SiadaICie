@@ -47,9 +47,9 @@ from backend.app.models.schemas import (
     TrainRouteResponse,
     TrainStopItem,
 )
-from backend.app.optimizer.solver import OptimizerConfig, SeatMeta, parse_profile, solve_top_strategies
+from backend.app.optimizer.solver import OptimizerConfig, SeatMeta, format_transfers_pl, parse_profile, solve_top_strategies
 from backend.app.scraper.ebilet_seat_scraper import LiveTrainScanner
-from backend.app.scraper.grm_parser import build_eic_search_url, is_seat_allowed
+from backend.app.scraper.grm_parser import TAG_BIKE, build_eic_search_url, is_seat_allowed
 from backend.app.scraper.ic_client import GraphicReservationUnavailableError, PKPIntercityScraper
 from backend.app.scraper.non_grm_scanner import check_grm_available, scan_non_grm_train
 from backend.app.scraper.mock_provider import (
@@ -222,6 +222,65 @@ def _aggregate_standing_status(statuses: List[Optional[str]]) -> Optional[str]:
     return None
 
 
+def _compute_bike_suggestion(
+    avail: Dict[str, List[int]],
+    meta: Dict[str, SeatMeta],
+    station_names: List[str],
+    segment_durations: List[int],
+    profile: str,
+    active_filters: SeatFilterPrefs,
+    current_strategies: list,
+) -> Optional[str]:
+    """
+    Suggests enabling `allow_bike` (strictly for BIKE seats only, never other special categories)
+    when `allow_bike` is False and enabling it strictly reduces standing time or transfers.
+    """
+    if getattr(active_filters, "allow_bike", True) or not avail:
+        return None
+    if not any(TAG_BIKE in getattr(m, "seat_tags", []) for m in meta.values()):
+        return None
+
+    bike_filters = SeatFilterPrefs(
+        allow_bike=True,
+        allow_pregnant=bool(getattr(active_filters, "allow_pregnant", False)),
+        allow_child=bool(getattr(active_filters, "allow_child", False)),
+        allow_elderly=bool(getattr(active_filters, "allow_elderly", False)),
+        allow_prm_assist=bool(getattr(active_filters, "allow_prm_assist", False)),
+        allow_wheelchair=bool(getattr(active_filters, "allow_wheelchair", False)),
+    )
+    bike_cfg = OptimizerConfig(profile=parse_profile(profile), seat_filters=bike_filters)
+    bike_strategies = solve_top_strategies(
+        avail, meta, station_names, segment_durations, config=bike_cfg, top_k=1
+    )
+    if not bike_strategies:
+        return None
+
+    best_bike = bike_strategies[0]
+    best_cur = current_strategies[0] if current_strategies else None
+    is_better = (
+        best_cur is None
+        or best_bike.total_standing_min < best_cur.total_standing_min
+        or (
+            best_bike.total_standing_min == best_cur.total_standing_min
+            and best_bike.transfers_count < best_cur.transfers_count
+        )
+    )
+    if not is_better:
+        return None
+
+    if best_bike.transfers_count == 0 and best_bike.total_standing_min == 0:
+        return "Z miejscem rowerowym pojedziesz 100% trasy na siedząco bez przesiadek."
+    if best_cur is not None and best_bike.total_standing_min < best_cur.total_standing_min:
+        return (
+            f"Z miejscem rowerowym skrócisz stanie z {best_cur.total_standing_min} min "
+            f"do {best_bike.total_standing_min} min ({format_transfers_pl(best_bike.transfers_count)})."
+        )
+    return (
+        f"Z miejscem rowerowym masz wygodniejszy wariant: "
+        f"{format_transfers_pl(best_bike.transfers_count)}, stanie {best_bike.total_standing_min} min."
+    )
+
+
 def _build_optimization_response(
     avail: Dict[str, List[int]],
     meta: Dict[str, SeatMeta],
@@ -372,6 +431,16 @@ def _build_optimization_response(
                 direct_only=True,
             )
 
+    bike_suggestion = _compute_bike_suggestion(
+        avail=avail,
+        meta=meta,
+        station_names=station_names,
+        segment_durations=segment_durations,
+        profile=profile,
+        active_filters=active_filters,
+        current_strategies=strategies,
+    )
+
     return OptimizationResponse(
         stations=station_names,
         segments=segments_info,
@@ -383,6 +452,7 @@ def _build_optimization_response(
         total_route_segments=total_route_segments or len(segments_info),
         full_route_booking_url=full_route_booking_url,
         full_route_standing_status=full_route_standing_status,
+        bike_suggestion=bike_suggestion,
     )
 
 

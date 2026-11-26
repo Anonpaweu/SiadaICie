@@ -488,6 +488,7 @@ fun ResultScreen(
                             val isEipEmpty = Regex("^EIP\\b", RegexOption.IGNORE_CASE)
                                 .containsMatchIn(scan.trainNumber.trim())
                             val isOverbookedFull = fullRouteStandingStatus == "OVERBOOKED"
+                            val isSpecialOnlyFull = fullRouteStandingStatus == "SPECIAL_ONLY"
                             if (isOverbookedFull && !isEipEmpty) {
                                 Surface(
                                     color = colors.errorContainer,
@@ -502,6 +503,42 @@ fun ResultScreen(
                                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp)
                                     )
                                 }
+                            } else if (isSpecialOnlyFull && !isEipEmpty) {
+                                Surface(
+                                    color = colors.corridorAmberContainer,
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(
+                                        text = "Na całej trasie e-IC nie sprzedaje zwykłych biletów ani biletów bez gwarancji — dostępne są wyłącznie miejsca specjalne (dla uprawnionych) lub 1. klasa.",
+                                        color = colors.corridorAmber,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp)
+                                    )
+                                }
+                                if (!scan.fullRouteBookingUrl.isNullOrBlank()) {
+                                    OutlinedButton(
+                                        onClick = { onOpenBooking(scan.fullRouteBookingUrl) },
+                                        shape = RoundedCornerShape(12.dp),
+                                        border = BorderStroke(1.dp, colors.corridorAmber.copy(alpha = 0.7f)),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(
+                                            text = "Sprawdź miejsca specjalne / 1. klasę (e-IC)",
+                                            color = colors.corridorAmber,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 13.sp
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                                            contentDescription = null,
+                                            tint = colors.corridorAmber,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                    }
+                                }
                             } else if (scan.strategies.isEmpty() && !isEipEmpty && !scan.fullRouteBookingUrl.isNullOrBlank()) {
                                 OutlinedButton(
                                     onClick = { onOpenBooking(scan.fullRouteBookingUrl) },
@@ -510,11 +547,7 @@ fun ResultScreen(
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
                                     Text(
-                                        text = if (fullRouteStandingStatus == "SPECIAL_ONLY") {
-                                            "Sprawdź specjalne / 1. klasę w e-IC"
-                                        } else {
-                                            "Sprawdź bilet bez gwarancji w e-IC"
-                                        },
+                                        text = "Sprawdź bilet bez gwarancji w e-IC",
                                         color = colors.corridorAmber,
                                         fontWeight = FontWeight.SemiBold,
                                         fontSize = 13.sp
@@ -1025,7 +1058,13 @@ fun ResultScreen(
                             isEipTrain = isEipTrain,
                             onOpenBooking = onOpenBooking
                         )
-                        if (selectedStrategy.totalStandingMin > 0 && !isEipTrain && !scan.fullRouteBookingUrl.isNullOrBlank() && fullRouteStandingStatus != "OVERBOOKED") {
+                        if (
+                            selectedStrategy.totalStandingMin > 0 &&
+                            !isEipTrain &&
+                            !scan.fullRouteBookingUrl.isNullOrBlank() &&
+                            fullRouteStandingStatus != "OVERBOOKED" &&
+                            fullRouteStandingStatus != "SPECIAL_ONLY"
+                        ) {
                             OutlinedButton(
                                 onClick = { onOpenBooking(scan.fullRouteBookingUrl) },
                                 shape = RoundedCornerShape(14.dp),
@@ -1035,11 +1074,7 @@ fun ResultScreen(
                                     .height(44.dp)
                             ) {
                                 Text(
-                                    text = if (fullRouteStandingStatus == "SPECIAL_ONLY") {
-                                        "Alternatywa: sprawdź całą trasę w e-IC (tylko specjalne)"
-                                    } else {
-                                        "Alternatywa: 1 bilet bez gwarancji (cała trasa)"
-                                    },
+                                    text = "Alternatywa: 1 bilet bez gwarancji (cała trasa)",
                                     color = colors.corridorAmber,
                                     fontWeight = FontWeight.SemiBold,
                                     fontSize = 13.sp
@@ -1214,7 +1249,7 @@ private fun TimelineStepCard(
                             isOverbookedStep ->
                                 "BRAK BILETÓW W TEJ KLASIE (nawet stojących)"
                             step.isStanding && step.standingStatus == "SPECIAL_ONLY" ->
-                                "Korytarz — dostępne tylko miejsca specjalne"
+                                "Tylko miejsca specjalne (brak zwykłych i stojących)"
                             step.isStanding ->
                                 "KORYTARZ - brak miejsca siedzącego"
                             step.seatNo.startsWith("AUTO") ->
@@ -1238,7 +1273,7 @@ private fun TimelineStepCard(
                 )
             } else if (step.isStanding && step.standingStatus == "SPECIAL_ONLY") {
                 Text(
-                    text = "Na tym odcinku zostały tylko miejsca specjalne (np. senior, z dzieckiem, ciąża). Włącz odpowiedni filtr powyżej lub kup bilet bez gwarancji.",
+                    text = "Na tym odcinku e-IC nie sprzedaje zwykłych biletów ani biletów bez gwarancji miejsca — dostępne są wyłącznie miejsca specjalne (dla uprawnionych) lub 1. klasa.",
                     fontSize = 12.sp,
                     color = colors.textSecondary
                 )
@@ -1317,7 +1352,7 @@ private fun TimelineStepCard(
                 ) {
                     Text(
                         text = if (step.standingStatus == "SPECIAL_ONLY") {
-                            "Kup bez gwarancji / sprawdź specjalne (e-IC)"
+                            "Sprawdź miejsca specjalne / 1. klasę (e-IC)"
                         } else {
                             "Kup bilet bez gwarancji (e-IC)"
                         },

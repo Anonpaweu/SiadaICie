@@ -18,8 +18,10 @@ import org.json.JSONObject
 import pl.iccbagno.app.data.ScanHistoryItem
 import pl.iccbagno.app.data.ScanHistoryStore
 import pl.iccbagno.app.data.StationsRepository
+import pl.iccbagno.app.domain.RouteHelpers
 import pl.iccbagno.app.domain.SeatFilterPrefs
 import pl.iccbagno.app.domain.StationInfo
+import pl.iccbagno.app.domain.StationStop
 import pl.iccbagno.app.domain.TrainConnection
 import pl.iccbagno.app.optimizer.OptimizationProfile
 import pl.iccbagno.app.scraper.ScheduleClient
@@ -57,6 +59,10 @@ data class SearchUiState(
     val isLoadingTrains: Boolean = false,
     val trainsError: String? = null,
     val trains: List<TrainConnection> = emptyList(),
+    val trainRoutesByKey: Map<String, List<StationStop>> = emptyMap(),
+    val loadingRouteKeys: Set<String> = emptySet(),
+    val routeErrorsByKey: Map<String, String> = emptyMap(),
+    val selectedStartStopByKey: Map<String, StationStop> = emptyMap(),
     val selectedStrategyIdx: Int = 0,
     val lastScannedTrain: TrainConnection? = null
 )
@@ -248,11 +254,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectFromStation(st: StationInfo) {
-        _uiState.update { it.copy(fromQuery = st.name, fromSuggestions = emptyList()) }
+        _uiState.update {
+            it.copy(
+                fromQuery = st.name,
+                fromSuggestions = emptyList(),
+                trainRoutesByKey = emptyMap(),
+                loadingRouteKeys = emptySet(),
+                routeErrorsByKey = emptyMap(),
+                selectedStartStopByKey = emptyMap()
+            )
+        }
     }
 
     fun selectToStation(st: StationInfo) {
-        _uiState.update { it.copy(toQuery = st.name, toSuggestions = emptyList()) }
+        _uiState.update {
+            it.copy(
+                toQuery = st.name,
+                toSuggestions = emptyList(),
+                trainRoutesByKey = emptyMap(),
+                loadingRouteKeys = emptySet(),
+                routeErrorsByKey = emptyMap(),
+                selectedStartStopByKey = emptyMap()
+            )
+        }
     }
 
     fun dismissSuggestions() {
@@ -265,13 +289,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 fromQuery = it.toQuery,
                 toQuery = it.fromQuery,
                 fromSuggestions = emptyList(),
-                toSuggestions = emptyList()
+                toSuggestions = emptyList(),
+                trainRoutesByKey = emptyMap(),
+                loadingRouteKeys = emptySet(),
+                routeErrorsByKey = emptyMap(),
+                selectedStartStopByKey = emptyMap()
             )
         }
     }
 
     fun setTravelDate(isoDate: String) {
-        _uiState.update { it.copy(travelDate = isoDate) }
+        _uiState.update {
+            it.copy(
+                travelDate = isoDate,
+                trainRoutesByKey = emptyMap(),
+                loadingRouteKeys = emptySet(),
+                routeErrorsByKey = emptyMap(),
+                selectedStartStopByKey = emptyMap()
+            )
+        }
     }
 
     fun setMinDepartureTime(hhMm: String) {
@@ -395,6 +431,62 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         ScanHistoryStore.clear(getApplication<Application>().applicationContext)
     }
 
+    fun trainKey(train: TrainConnection): String = "${train.trainNumber}_${train.departure}"
+
+    fun loadTrainRouteStops(train: TrainConnection) {
+        val st = _uiState.value
+        val key = trainKey(train)
+        if (st.trainRoutesByKey.containsKey(key) || key in st.loadingRouteKeys) return
+        val from = st.fromQuery.trim()
+        val to = st.toQuery.trim()
+        if (from.isEmpty() || to.isEmpty()) return
+
+        _uiState.update {
+            it.copy(
+                loadingRouteKeys = it.loadingRouteKeys + key,
+                routeErrorsByKey = it.routeErrorsByKey - key
+            )
+        }
+        viewModelScope.launch {
+            try {
+                val stops = scheduleClient.resolveRealRoute(
+                    fromStation = from,
+                    toStation = to,
+                    travelDate = st.travelDate,
+                    trainNumber = train.trainNumber,
+                    depTime = train.departure
+                )
+                _uiState.update { cur ->
+                    cur.copy(
+                        loadingRouteKeys = cur.loadingRouteKeys - key,
+                        trainRoutesByKey = if (stops.size >= 2) cur.trainRoutesByKey + (key to stops) else cur.trainRoutesByKey,
+                        routeErrorsByKey = if (stops.size < 2) cur.routeErrorsByKey + (key to "Nie udało się pobrać listy przystanków.") else cur.routeErrorsByKey
+                    )
+                }
+            } catch (_: Exception) {
+                _uiState.update { cur ->
+                    cur.copy(
+                        loadingRouteKeys = cur.loadingRouteKeys - key,
+                        routeErrorsByKey = cur.routeErrorsByKey + (key to "Nie udało się pobrać listy przystanków.")
+                    )
+                }
+            }
+        }
+    }
+
+    fun toggleSelectedStartStop(train: TrainConnection, stop: StationStop) {
+        val key = trainKey(train)
+        _uiState.update { st ->
+            val current = st.selectedStartStopByKey[key]
+            val nextMap = if (current != null && current.seq == stop.seq && current.name == stop.name) {
+                st.selectedStartStopByKey - key
+            } else {
+                st.selectedStartStopByKey + (key to stop)
+            }
+            st.copy(selectedStartStopByKey = nextMap)
+        }
+    }
+
     fun searchTrains() {
         val st = _uiState.value
         val from = st.fromQuery.trim()
@@ -404,7 +496,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         dismissSuggestions()
-        _uiState.update { it.copy(isLoadingTrains = true, trainsError = null, trains = emptyList()) }
+        _uiState.update {
+            it.copy(
+                isLoadingTrains = true,
+                trainsError = null,
+                trains = emptyList(),
+                trainRoutesByKey = emptyMap(),
+                loadingRouteKeys = emptySet(),
+                routeErrorsByKey = emptyMap(),
+                selectedStartStopByKey = emptyMap()
+            )
+        }
 
         viewModelScope.launch {
             try {
@@ -431,20 +533,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun startTrainScan(train: TrainConnection) {
         val st = _uiState.value
+        val customStart = st.selectedStartStopByKey[trainKey(train)]
+        val effectiveFrom = customStart?.name ?: st.fromQuery.trim()
+        val effectiveDepTime = customStart?.let {
+            it.departureTime.ifBlank { it.arrivalTime.ifBlank { train.departure } }
+        } ?: train.departure
+        val effectiveDate = if (customStart != null) {
+            RouteHelpers.computeSegmentDate(st.travelDate, customStart.dayOffset)
+        } else {
+            st.travelDate
+        }
+        val effectiveTrain = if (customStart != null) {
+            train.copy(departure = effectiveDepTime)
+        } else {
+            train
+        }
+
         _uiState.update {
             it.copy(
                 selectedStrategyIdx = 0,
                 activeScreen = AppScreen.SCAN_RESULT,
-                lastScannedTrain = train
+                lastScannedTrain = effectiveTrain
             )
         }
         ScanForegroundService.startScan(
             context = getApplication<Application>().applicationContext,
-            fromStation = st.fromQuery.trim(),
+            fromStation = effectiveFrom,
             toStation = st.toQuery.trim(),
-            travelDate = st.travelDate,
+            travelDate = effectiveDate,
             trainNumber = train.trainNumber,
-            depTime = train.departure,
+            depTime = effectiveDepTime,
             ticketClass = st.ticketClass,
             profile = st.profile,
             forceFull = st.forceFullScan,

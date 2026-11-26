@@ -2010,6 +2010,25 @@ class EbiletWebViewScanner(
                         status = if (cars.values.any { it.isNotEmpty() }) "OK" else "SOLD_OUT",
                         errorReason = if (cars.values.any { it.isNotEmpty() }) null else "Brak wolnych miejsc w Klasie $ticketClass."
                     )
+                } catch (e: GraphicReservationException) {
+                    if (GrmParser.isSoldOutReason(e.message)) {
+                        SegmentAvailabilityMap(
+                            segmentIndex = first.segmentIndex,
+                            fromStation = first.fromStation,
+                            toStation = second.toStation,
+                            departureTime = first.departureTime,
+                            durationMin = mergedDur,
+                            fromEva = first.fromEva,
+                            toEva = second.toEva,
+                            segmentDate = first.segmentDate,
+                            carriages = emptyMap(),
+                            seatTags = emptyMap(),
+                            status = "SOLD_OUT",
+                            errorReason = e.message ?: "Brak wolnych miejsc w Klasie $ticketClass."
+                        )
+                    } else {
+                        null
+                    }
                 } catch (_: TimeoutCancellationException) {
                     Log.w(TAG, "Merged boundary timeout (60s) for ${first.fromStation} -> ${second.toStation}")
                     null

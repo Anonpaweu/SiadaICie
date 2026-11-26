@@ -98,6 +98,7 @@ import pl.iccbagno.app.data.ScanHistoryItem
 import pl.iccbagno.app.data.ScanHistorySerializer
 import pl.iccbagno.app.domain.SeatFilterPrefs
 import pl.iccbagno.app.domain.StationInfo
+import pl.iccbagno.app.domain.StationStop
 import pl.iccbagno.app.domain.TrainConnection
 import pl.iccbagno.app.optimizer.SeatOptimizer
 import pl.iccbagno.app.service.ScanProgressState
@@ -124,6 +125,8 @@ fun SearchScreen(
     onSeatFiltersChange: (SeatFilterPrefs) -> Unit,
     onSearchTrains: () -> Unit,
     onSelectTrain: (TrainConnection) -> Unit,
+    onExpandTrainStops: (TrainConnection) -> Unit,
+    onSelectStartStop: (TrainConnection, StationStop) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenSupport: () -> Unit,
     onOpenCurrentScan: () -> Unit,
@@ -139,6 +142,7 @@ fun SearchScreen(
     val keyboardController = LocalSoftwareKeyboardController.current
     var showFilters by remember { mutableStateOf(false) }
     var showHistoryInfoDialog by remember { mutableStateOf(false) }
+    var showMidJourneyInfoDialog by remember { mutableStateOf(false) }
     var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
     LaunchedEffect(history.size) {
@@ -712,9 +716,17 @@ fun SearchScreen(
                         items = visibleTrains,
                         key = { "${it.trainNumber}_${it.departure}" }
                     ) { train ->
+                        val tKey = "${train.trainNumber}_${train.departure}"
                         BoardingPassTrainCard(
                             train = train,
                             enabled = !scan.isRunning,
+                            stops = ui.trainRoutesByKey[tKey].orEmpty(),
+                            isLoadingStops = tKey in ui.loadingRouteKeys,
+                            stopsError = ui.routeErrorsByKey[tKey],
+                            selectedStartStop = ui.selectedStartStopByKey[tKey],
+                            onExpandStops = { onExpandTrainStops(train) },
+                            onSelectStartStop = { stop -> onSelectStartStop(train, stop) },
+                            onShowStartStopInfo = { showMidJourneyInfoDialog = true },
                             onClick = { onSelectTrain(train) }
                         )
                     }
@@ -799,6 +811,33 @@ fun SearchScreen(
             },
             confirmButton = {
                 TextButton(onClick = { showHistoryInfoDialog = false }) {
+                    Text("Rozumiem", color = colors.accent)
+                }
+            }
+        )
+    }
+
+    if (showMidJourneyInfoDialog) {
+        AlertDialog(
+            onDismissRequest = { showMidJourneyInfoDialog = false },
+            containerColor = colors.card,
+            title = {
+                Text(
+                    text = "Skanowanie od wybranej stacji",
+                    color = colors.textPrimary,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    text = "Jedziesz już tym pociągiem bez gwarancji miejsca? Rozwiń trasę, zaznacz najbliższą stację przed sobą i kliknij Skanuj. Aplikacja sprawdzi aktualne wolne miejsca na resztę podróży z pominięciem stacji już miniętych. Bez wybrania przystanku skan obejmie całą trasę.",
+                    color = colors.textSecondary,
+                    fontSize = 13.sp,
+                    lineHeight = 19.sp
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showMidJourneyInfoDialog = false }) {
                     Text("Rozumiem", color = colors.accent)
                 }
             }
@@ -994,13 +1033,22 @@ internal fun SuggestionsList(items: List<StationInfo>, onSelect: (StationInfo) -
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun BoardingPassTrainCard(
     train: TrainConnection,
     enabled: Boolean,
+    stops: List<StationStop>,
+    isLoadingStops: Boolean,
+    stopsError: String?,
+    selectedStartStop: StationStop?,
+    onExpandStops: () -> Unit,
+    onSelectStartStop: (StationStop) -> Unit,
+    onShowStartStopInfo: () -> Unit,
     onClick: () -> Unit
 ) {
     val colors = LocalRailColors.current
+    var expanded by remember(train.trainNumber, train.departure) { mutableStateOf(false) }
     val brand = train.trainNumber.trim().split(Regex("\\s+")).firstOrNull()?.uppercase().orEmpty()
     val (badgeBg, badgeFg) = when (brand) {
         "EIP" -> Color(0xFFFEF3C7) to Color(0xFF92400E)
@@ -1010,125 +1058,267 @@ private fun BoardingPassTrainCard(
     }
 
     Surface(
-        onClick = onClick,
-        enabled = enabled,
         color = colors.card,
         shape = RoundedCornerShape(18.dp),
         shadowElevation = if (colors.isDark) 0.dp else 1.5.dp,
         border = if (colors.isDark) BorderStroke(1.dp, colors.hairline) else null,
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = enabled) { onClick() }
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Surface(color = badgeBg, shape = RoundedCornerShape(6.dp)) {
+                            Text(
+                                text = brand.ifEmpty { "IC" },
+                                color = badgeFg,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                            )
+                        }
+                        Text(
+                            text = train.trainNumber,
+                            color = colors.textPrimary,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 14.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
+                    Text(
+                        text = if (train.changes == 0) "Bezpośredni" else SeatOptimizer.formatTransfersPl(train.changes),
+                        color = if (train.changes == 0) colors.seatEmerald else colors.textSecondary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = train.departure.ifBlank { "--:--" },
+                        style = TextStyle(
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFeatureSettings = "tnum",
+                            color = colors.textPrimary
+                        )
+                    )
+
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(horizontal = 12.dp)
+                    ) {
+                        if (train.duration.isNotBlank()) {
+                            Text(
+                                text = formatDurationCompact(train.duration),
+                                fontSize = 11.sp,
+                                color = colors.textSecondary,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Spacer(modifier = Modifier.height(3.dp))
+                        }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(1.5.dp)
+                                .background(colors.hairline)
+                        )
+                    }
+
+                    Text(
+                        text = train.arrival.ifBlank { "--:--" },
+                        style = TextStyle(
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFeatureSettings = "tnum",
+                            color = colors.textPrimary
+                        )
+                    )
+
+                    Spacer(modifier = Modifier.width(12.dp))
+
+                    Surface(
+                        color = colors.accentContainer,
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Skanuj",
+                                color = colors.accent,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 12.sp
+                            )
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                contentDescription = null,
+                                tint = colors.accent,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            HorizontalDivider(color = colors.hairline.copy(alpha = 0.6f))
+
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = enabled) {
+                        val next = !expanded
+                        expanded = next
+                        if (next) onExpandStops()
+                    }
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Surface(color = badgeBg, shape = RoundedCornerShape(6.dp)) {
-                        Text(
-                            text = brand.ifEmpty { "IC" },
-                            color = badgeFg,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
-                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
-                        )
-                    }
-                    Text(
-                        text = train.trainNumber,
-                        color = colors.textPrimary,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 14.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-
                 Text(
-                    text = if (train.changes == 0) "Bezpośredni" else SeatOptimizer.formatTransfersPl(train.changes),
-                    color = if (train.changes == 0) colors.seatEmerald else colors.textSecondary,
+                    text = if (selectedStartStop != null) {
+                        "Skanuj od: ${selectedStartStop.name} (zmień)"
+                    } else {
+                        "Pokaż trasę i wybierz stację startową"
+                    },
                     fontSize = 11.sp,
-                    fontWeight = FontWeight.Medium
+                    fontWeight = if (selectedStartStop != null) FontWeight.SemiBold else FontWeight.Medium,
+                    color = if (selectedStartStop != null) colors.accent else colors.textSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                Icon(
+                    imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = if (expanded) "Zwiń trasę" else "Rozwiń trasę",
+                    tint = colors.textSecondary,
+                    modifier = Modifier.size(18.dp)
                 )
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = train.departure.ifBlank { "--:--" },
-                    style = TextStyle(
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFeatureSettings = "tnum",
-                        color = colors.textPrimary
-                    )
-                )
-
+            AnimatedVisibility(visible = expanded) {
                 Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier
-                        .weight(1f)
-                        .padding(horizontal = 12.dp)
-                ) {
-                    if (train.duration.isNotBlank()) {
-                        Text(
-                            text = formatDurationCompact(train.duration),
-                            fontSize = 11.sp,
-                            color = colors.textSecondary,
-                            fontWeight = FontWeight.Medium
-                        )
-                        Spacer(modifier = Modifier.height(3.dp))
-                    }
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(1.5.dp)
-                            .background(colors.hairline)
-                    )
-                }
-
-                Text(
-                    text = train.arrival.ifBlank { "--:--" },
-                    style = TextStyle(
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFeatureSettings = "tnum",
-                        color = colors.textPrimary
-                    )
-                )
-
-                Spacer(modifier = Modifier.width(12.dp))
-
-                Surface(
-                    color = colors.accentContainer,
-                    shape = RoundedCornerShape(10.dp)
+                        .fillMaxWidth()
+                        .background(colors.cardTonal.copy(alpha = 0.5f))
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Skanuj",
-                            color = colors.accent,
+                            text = "Od której stacji skanować?",
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
-                            fontSize = 12.sp
+                            color = colors.textPrimary
                         )
-                        Spacer(modifier = Modifier.width(3.dp))
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                            contentDescription = null,
-                            tint = colors.accent,
-                            modifier = Modifier.size(14.dp)
-                        )
+                        IconButton(
+                            onClick = onShowStartStopInfo,
+                            modifier = Modifier.size(26.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Info,
+                                contentDescription = "Informacja o wyborze stacji",
+                                tint = colors.textSecondary,
+                                modifier = Modifier.size(15.dp)
+                            )
+                        }
+                    }
+
+                    when {
+                        isLoadingStops -> {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(14.dp),
+                                    color = colors.accent,
+                                    strokeWidth = 2.dp
+                                )
+                                Text(
+                                    text = "Pobieranie przystanków...",
+                                    fontSize = 12.sp,
+                                    color = colors.textSecondary
+                                )
+                            }
+                        }
+                        stopsError != null -> {
+                            Text(
+                                text = stopsError,
+                                fontSize = 12.sp,
+                                color = colors.errorRed
+                            )
+                        }
+                        stops.size >= 2 -> {
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                val selectableStops = stops.dropLast(1)
+                                selectableStops.forEach { stop ->
+                                    val isSel = selectedStartStop != null &&
+                                        selectedStartStop.seq == stop.seq &&
+                                        selectedStartStop.name == stop.name
+                                    val timeLabel = stop.departureTime.ifBlank { stop.arrivalTime }
+                                    Surface(
+                                        onClick = { onSelectStartStop(stop) },
+                                        color = if (isSel) colors.accent else colors.card,
+                                        shape = RoundedCornerShape(10.dp),
+                                        border = BorderStroke(
+                                            1.dp,
+                                            if (isSel) colors.accent else colors.hairline
+                                        )
+                                    ) {
+                                        Text(
+                                            text = if (timeLabel.isNotBlank()) "${stop.name} $timeLabel" else stop.name,
+                                            fontSize = 11.sp,
+                                            fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
+                                            color = if (isSel) Color.White else colors.textPrimary,
+                                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
+                                        )
+                                    }
+                                }
+                                Surface(
+                                    color = colors.cardTonal,
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Text(
+                                        text = "Cel: ${stops.last().name}",
+                                        fontSize = 11.sp,
+                                        color = colors.textSecondary,
+                                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }

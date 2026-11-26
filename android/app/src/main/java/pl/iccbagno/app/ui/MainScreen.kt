@@ -150,6 +150,8 @@ fun MainScreen(viewModel: MainViewModel) {
                 onSeatFiltersChange = handleSeatFilterChange,
                 onSearchTrains = viewModel::searchTrains,
                 onSelectTrain = viewModel::startTrainScan,
+                onExpandTrainStops = viewModel::loadTrainRouteStops,
+                onSelectStartStop = viewModel::toggleSelectedStartStop,
                 onOpenSettings = { showSettings = true },
                 onOpenSupport = { openUrlSafe(context, SUPPORT_COFFEE_URL) },
                 onOpenCurrentScan = viewModel::openScanScreen,

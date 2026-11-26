@@ -191,4 +191,96 @@ class SeatOptimizerTest {
         assertEquals("33", sElderly[0].steps[0].seatNo)
         assertEquals(listOf(GrmParser.TAG_ELDERLY), sElderly[0].steps[0].seatTags)
     }
+
+    @Test
+    fun shortRoutePartialAvailabilityNeverReturnsEmptyStrategies() {
+        val stations = listOf("Poznań Główny", "Swarzędz", "Września", "Słupca", "Konin")
+        val durations = listOf(9, 21, 12, 14)
+        val avail = mapOf(
+            "12_13" to listOf(1, 0, 0, 0),
+            "14_32" to listOf(0, 1, 1, 0)
+        )
+        val meta = mapOf(
+            "12_13" to SeatMeta("12_13", 12, "13", 1),
+            "14_32" to SeatMeta("14_32", 14, "32", 3)
+        )
+        val strategies = SeatOptimizer.solveTopStrategies(avail, meta, stations, durations)
+        assertTrue(strategies.isNotEmpty())
+        assertTrue(strategies.all { st -> st.steps.any { !it.isStanding } })
+        val best = strategies[0]
+        assertTrue(best.steps.any { it.seatUid == "14_32" })
+        assertEquals(23, best.totalStandingMin)
+    }
+
+    @Test
+    fun standingRouteDiversityPicksDistinctCarriages() {
+        val stations = listOf("Poznań Główny", "Swarzędz", "Września", "Słupca", "Konin")
+        val durations = listOf(9, 21, 12, 14)
+        val avail = mapOf(
+            "12_11" to listOf(1, 0, 0, 0),
+            "14_32" to listOf(0, 1, 1, 0),
+            "22_93" to listOf(1, 0, 0, 0)
+        )
+        val meta = mapOf(
+            "12_11" to SeatMeta("12_11", 12, "11", 1),
+            "14_32" to SeatMeta("14_32", 14, "32", 3),
+            "22_93" to SeatMeta("22_93", 22, "93", 9)
+        )
+        val strategies = SeatOptimizer.solveTopStrategies(avail, meta, stations, durations, topK = 3)
+        assertEquals(3, strategies.size)
+        assertEquals(listOf(14, 12, 22), strategies.map { it.carriagesUsed[0] })
+    }
+
+    @Test
+    fun minimalTransfersDoesNotAddMoreTransfersThanBalancedOnStandingRoute() {
+        val stations = listOf("A", "B", "C", "D", "E", "F")
+        val durations = listOf(35, 30, 40, 45, 50)
+        val avail = mapOf(
+            "10_11" to listOf(0, 1, 1, 0, 0),
+            "10_12" to listOf(0, 0, 0, 1, 1),
+            "11_21" to listOf(0, 0, 1, 1, 1)
+        )
+        val meta = mapOf(
+            "10_11" to SeatMeta("10_11", 10, "11", 1),
+            "10_12" to SeatMeta("10_12", 10, "12", 2),
+            "11_21" to SeatMeta("11_21", 11, "21", 2)
+        )
+        val bal = SeatOptimizer.solveTopStrategies(
+            avail, meta, stations, durations,
+            config = OptimizerConfig(profile = OptimizationProfile.BALANCED)
+        )
+        val minTr = SeatOptimizer.solveTopStrategies(
+            avail, meta, stations, durations,
+            config = OptimizerConfig(profile = OptimizationProfile.MINIMAL_TRANSFERS)
+        )
+        assertTrue(bal.isNotEmpty() && minTr.isNotEmpty())
+        assertTrue(minTr[0].transfersCount <= bal[0].transfersCount)
+    }
+
+    @Test
+    fun standingStepIncludesBookingUrl() {
+        val stations = listOf("Poznań Główny", "Swarzędz", "Słupca", "Konin")
+        val durations = listOf(9, 33, 14)
+        val avail = mapOf("14_32" to listOf(0, 1, 0))
+        val meta = mapOf("14_32" to SeatMeta("14_32", 14, "32", 3))
+        val strategies = SeatOptimizer.solveTopStrategies(
+            availabilityMatrix = avail,
+            seatsMeta = meta,
+            stationNames = stations,
+            segmentDurations = durations,
+            stationEvas = mapOf(
+                "Poznań Główny" to "5100081",
+                "Swarzędz" to "5103667",
+                "Słupca" to "5100359",
+                "Konin" to "5100026"
+            ),
+            departureTimes = listOf("17:44", "17:53", "18:26"),
+            segmentDates = listOf("2026-11-27", "2026-11-27", "2026-11-27"),
+            defaultTravelDate = "2026-11-27"
+        )
+        assertTrue(strategies.isNotEmpty())
+        val firstStanding = strategies[0].steps.first { it.isStanding }
+        assertTrue(firstStanding.bookingUrl?.contains("swyj=5100081") == true)
+        assertTrue(firstStanding.bookingUrl?.contains("sprzy=5103667") == true)
+    }
 }

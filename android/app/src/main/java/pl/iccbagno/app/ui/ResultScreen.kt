@@ -468,6 +468,30 @@ fun ResultScreen(
                                 fontSize = 14.sp,
                                 color = colors.textSecondary
                             )
+                            val isEipEmpty = Regex("^EIP\\b", RegexOption.IGNORE_CASE)
+                                .containsMatchIn(scan.trainNumber.trim())
+                            if (scan.strategies.isEmpty() && !isEipEmpty && !scan.fullRouteBookingUrl.isNullOrBlank()) {
+                                OutlinedButton(
+                                    onClick = { onOpenBooking(scan.fullRouteBookingUrl) },
+                                    shape = RoundedCornerShape(12.dp),
+                                    border = BorderStroke(1.dp, colors.corridorAmber.copy(alpha = 0.7f)),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(
+                                        text = "Sprawdź bilet bez gwarancji w e-IC",
+                                        color = colors.corridorAmber,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 13.sp
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                                        contentDescription = null,
+                                        tint = colors.corridorAmber,
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                }
+                            }
                             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 Button(
                                     onClick = onRetryScan,
@@ -823,10 +847,39 @@ fun ResultScreen(
                 }
 
                 item(key = "timeline_steps") {
-                    JourneyTimeline(
-                        strategy = selectedStrategy,
-                        onOpenBooking = onOpenBooking
-                    )
+                    val isEipTrain = Regex("^EIP\\b", RegexOption.IGNORE_CASE)
+                        .containsMatchIn(scan.trainNumber.trim())
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        JourneyTimeline(
+                            strategy = selectedStrategy,
+                            isEipTrain = isEipTrain,
+                            onOpenBooking = onOpenBooking
+                        )
+                        if (selectedStrategy.totalStandingMin > 0 && !isEipTrain && !scan.fullRouteBookingUrl.isNullOrBlank()) {
+                            OutlinedButton(
+                                onClick = { onOpenBooking(scan.fullRouteBookingUrl) },
+                                shape = RoundedCornerShape(14.dp),
+                                border = BorderStroke(1.dp, colors.corridorAmber.copy(alpha = 0.65f)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(44.dp)
+                            ) {
+                                Text(
+                                    text = "Alternatywa: 1 bilet bez gwarancji (cała trasa)",
+                                    color = colors.corridorAmber,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 13.sp
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                                    contentDescription = null,
+                                    tint = colors.corridorAmber,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -849,6 +902,7 @@ private fun MetricPill(label: String, fg: Color, bg: Color) {
 @Composable
 private fun JourneyTimeline(
     strategy: OptimizationStrategy,
+    isEipTrain: Boolean,
     onOpenBooking: (String) -> Unit
 ) {
     val colors = LocalRailColors.current
@@ -891,6 +945,7 @@ private fun JourneyTimeline(
                 TimelineStepCard(
                     step = step,
                     stepNum = idx + 1,
+                    isEipTrain = isEipTrain,
                     onOpenBooking = onOpenBooking,
                     modifier = Modifier
                         .weight(1f)
@@ -906,6 +961,7 @@ private fun JourneyTimeline(
 private fun TimelineStepCard(
     step: PathStep,
     stepNum: Int,
+    isEipTrain: Boolean,
     onOpenBooking: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -1031,6 +1087,29 @@ private fun TimelineStepCard(
                         imageVector = Icons.AutoMirrored.Filled.OpenInNew,
                         contentDescription = null,
                         modifier = Modifier.size(15.dp)
+                    )
+                }
+            } else if (step.isStanding && !isEipTrain && !step.bookingUrl.isNullOrBlank()) {
+                OutlinedButton(
+                    onClick = { onOpenBooking(step.bookingUrl) },
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, colors.corridorAmber.copy(alpha = 0.7f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(40.dp)
+                ) {
+                    Text(
+                        text = "Kup bilet bez gwarancji (e-IC)",
+                        color = colors.corridorAmber,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 12.sp
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                        contentDescription = null,
+                        tint = colors.corridorAmber,
+                        modifier = Modifier.size(14.dp)
                     )
                 }
             }

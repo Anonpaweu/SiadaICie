@@ -27,7 +27,7 @@ class ScheduleClient(private val stationsRepo: StationsRepository) {
     private val routeCache = ConcurrentHashMap<String, List<StationStop>>()
 
     companion object {
-        val FULL_DAY_WINDOWS = listOf("00:00", "04:30", "09:00", "13:30", "18:00", "21:30")
+        val FULL_DAY_WINDOWS = listOf("00:00", "04:30", "07:00", "09:30", "12:00", "14:00", "15:45", "17:30", "19:30", "21:30")
         private const val UA =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
 

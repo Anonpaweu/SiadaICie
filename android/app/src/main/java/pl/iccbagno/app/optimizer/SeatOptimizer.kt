@@ -143,7 +143,7 @@ object SeatOptimizer {
             return 0.0
         }
         if (isStandingB || seatA.seatUid == "STANDING" || seatB.seatUid == "STANDING") {
-            return baseTransfer + 100.0
+            return config.pBaseTransfer + 100.0
         }
         if (seatA.seatUid == seatB.seatUid) {
             return 0.0
@@ -282,7 +282,8 @@ object SeatOptimizer {
         segmentDurations: List<Int>,
         config: OptimizerConfig,
         excludedPrimarySeats: Set<String> = emptySet(),
-        excludedCarriages: Set<Int> = emptySet()
+        excludedCarriages: Set<Int> = emptySet(),
+        requireAtLeastOneSeat: Boolean = false
     ): Pair<Double, List<AvailabilityBlock>>? {
         val numSegments = segmentDurations.size
         if (numSegments == 0) return null
@@ -303,37 +304,62 @@ object SeatOptimizer {
         }
 
         val dp = HashMap<String, Pair<Double, String?>>(activeBlocks.size)
+        val dpSeated = HashMap<String, Pair<Double, String?>>(activeBlocks.size)
 
         for (sIdx in (numSegments - 1) downTo 0) {
             for (b in blocksByStart[sIdx]) {
                 val bScore = scoreSingleBlock(b, totalTripMin, numSegments, config)
                 if (b.endSeg == numSegments) {
                     dp[b.blockId] = bScore to null
+                    if (!b.isStanding) {
+                        dpSeated[b.blockId] = bScore to null
+                    }
                     continue
                 }
 
                 var bestNextVal = -1e12
                 var bestNextId: String? = null
+                var bestSeatedNextVal = -1e12
+                var bestSeatedNextId: String? = null
                 for (nextB in blocksByStart[b.endSeg]) {
                     if (!b.isStanding && b.seat.seatUid == nextB.seat.seatUid) continue
-                    val nextDp = dp[nextB.blockId] ?: continue
-                    val penalty = calculateTransferPenalty(b.seat, nextB.seat, nextB.isStanding, config)
-                    val candidateVal = bScore - penalty + nextDp.first
-                    if (candidateVal > bestNextVal) {
-                        bestNextVal = candidateVal
-                        bestNextId = nextB.blockId
+                    var penalty = calculateTransferPenalty(b.seat, nextB.seat, nextB.isStanding, config)
+                    if (requireAtLeastOneSeat && (b.isStanding != nextB.isStanding)) {
+                        penalty = config.pBaseTransfer * 0.35 + 100.0
+                    }
+
+                    val nextDp = dp[nextB.blockId]
+                    if (nextDp != null) {
+                        val candidateVal = bScore - penalty + nextDp.first
+                        if (candidateVal > bestNextVal) {
+                            bestNextVal = candidateVal
+                            bestNextId = nextB.blockId
+                        }
+                    }
+
+                    val seatedNextVal = if (!b.isStanding) dp[nextB.blockId]?.first else dpSeated[nextB.blockId]?.first
+                    if (seatedNextVal != null) {
+                        val candidateSeated = bScore - penalty + seatedNextVal
+                        if (candidateSeated > bestSeatedNextVal) {
+                            bestSeatedNextVal = candidateSeated
+                            bestSeatedNextId = nextB.blockId
+                        }
                     }
                 }
                 if (bestNextId != null) {
                     dp[b.blockId] = bestNextVal to bestNextId
                 }
+                if (bestSeatedNextId != null) {
+                    dpSeated[b.blockId] = bestSeatedNextVal to bestSeatedNextId
+                }
             }
         }
 
+        val startMap = if (requireAtLeastOneSeat) dpSeated else dp
         var bestTotalScore = -1e12
         var bestStartId: String? = null
         for (b in blocksByStart[0]) {
-            val res = dp[b.blockId] ?: continue
+            val res = startMap[b.blockId] ?: continue
             if (res.first > bestTotalScore) {
                 bestTotalScore = res.first
                 bestStartId = b.blockId
@@ -343,10 +369,13 @@ object SeatOptimizer {
 
         val path = ArrayList<AvailabilityBlock>()
         var currId: String? = bestStartId
+        var seenSeat = false
         while (currId != null) {
             val block = blockMap[currId] ?: break
             path.add(block)
-            currId = dp[currId]?.second
+            if (!block.isStanding) seenSeat = true
+            val nextPair = if (requireAtLeastOneSeat && !seenSeat) dpSeated[currId] else dp[currId]
+            currId = nextPair?.second
         }
         return bestTotalScore to path
     }
@@ -428,6 +457,7 @@ object SeatOptimizer {
         val excludedSeats = HashSet<String>()
         val excludedCarriages = HashSet<Int>()
         val seenSignatures = HashSet<List<Triple<String, Int, Int>>>()
+        var prevHadStanding = false
 
         for (rank in 1..topK) {
             var res: Pair<Double, List<AvailabilityBlock>>? = null
@@ -441,8 +471,13 @@ object SeatOptimizer {
                 )
                 if (prunedDiv.isNotEmpty()) {
                     val blocksDiv = generateCandidateBlocks(prunedDiv, seatsMeta, segmentDurations)
-                    val candidate = findOptimalPath(blocksDiv, segmentDurations, config)
-                    if (candidate != null && candidate.second.none { it.isStanding }) {
+                    val candidate = findOptimalPath(
+                        blocksDiv,
+                        segmentDurations,
+                        config,
+                        requireAtLeastOneSeat = prevHadStanding
+                    )
+                    if (candidate != null && (prevHadStanding || candidate.second.none { it.isStanding })) {
                         res = candidate
                     }
                 }
@@ -456,8 +491,24 @@ object SeatOptimizer {
                     emptySet(),
                     config.seatFilters
                 )
-                val blocks = generateCandidateBlocks(pruned, seatsMeta, segmentDurations)
-                res = findOptimalPath(blocks, segmentDurations, config)
+                if (pruned.isNotEmpty()) {
+                    val blocks = generateCandidateBlocks(pruned, seatsMeta, segmentDurations)
+                    res = findOptimalPath(
+                        blocks,
+                        segmentDurations,
+                        config,
+                        requireAtLeastOneSeat = prevHadStanding
+                    )
+                    if (res != null && res.second.all { it.isStanding } && !prevHadStanding) {
+                        val fallbackSeated = findOptimalPath(
+                            blocks,
+                            segmentDurations,
+                            config,
+                            requireAtLeastOneSeat = true
+                        )
+                        if (fallbackSeated != null) res = fallbackSeated
+                    }
+                }
             }
             if (res == null) break
 
@@ -523,7 +574,7 @@ object SeatOptimizer {
 
                 val fromName = stationNames[b.startSeg]
                 val toName = stationNames[b.endSeg]
-                val bookingUrl = if (!b.isStanding && defaultTravelDate.isNotBlank()) {
+                val bookingUrl = if (defaultTravelDate.isNotBlank()) {
                     val fEva = stationEvas[fromName].orEmpty()
                     val tEva = stationEvas[toName].orEmpty()
                     if (fEva.isNotEmpty() && tEva.isNotEmpty()) {
@@ -562,6 +613,9 @@ object SeatOptimizer {
                 }
             } else {
                 break
+            }
+            if (standingMin > 0) {
+                prevHadStanding = true
             }
 
             val transfersCount = max(0, nonStandingBlocks.size - 1)

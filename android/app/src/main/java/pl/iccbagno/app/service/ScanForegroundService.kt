@@ -53,6 +53,7 @@ data class ScanProgressState(
     val toStation: String = "",
     val travelDate: String = "",
     val fastPathUsed: Boolean = false,
+    val fullRouteBookingUrl: String? = null,
     val loadedFromHistoryAtMs: Long? = null,
     val debugWebView: android.webkit.WebView? = null
 )
@@ -152,6 +153,7 @@ class ScanForegroundService : Service() {
             val strategies = computeStrategiesForMap(map, profile, seatFilters)
             _state.value = current.copy(
                 strategies = strategies,
+                fullRouteBookingUrl = current.fullRouteBookingUrl ?: buildFullRouteBookingUrl(map),
                 error = if (strategies.isEmpty()) buildFilteredEmptyMessage(map, current.ticketClass, seatFilters) else null
             )
         }
@@ -177,8 +179,18 @@ class ScanForegroundService : Service() {
                 toStation = item.toStation,
                 travelDate = item.travelDate,
                 fastPathUsed = item.availabilityMap.fastPathUsed,
+                fullRouteBookingUrl = buildFullRouteBookingUrl(item.availabilityMap),
                 loadedFromHistoryAtMs = item.savedAtEpochMs
             )
+        }
+
+        private fun buildFullRouteBookingUrl(map: FullTrainAvailabilityMap): String? {
+            val first = map.segments.firstOrNull() ?: return null
+            val last = map.segments.lastOrNull() ?: return null
+            if (first.fromEva.isBlank() || last.toEva.isBlank()) return null
+            val depT = first.departureTime.takeIf { it.isNotBlank() } ?: "08:00"
+            val segDate = first.segmentDate.ifBlank { map.travelDate }.takeIf { it.isNotBlank() } ?: return null
+            return GrmParser.buildEicSearchUrl(first.fromEva, last.toEva, segDate, depT, directOnly = true)
         }
 
         private fun buildFilteredEmptyMessage(
@@ -186,6 +198,7 @@ class ScanForegroundService : Service() {
             ticketClass: Int,
             seatFilters: SeatFilterPrefs
         ): String {
+            val isEip = Regex("^EIP\\b", RegexOption.IGNORE_CASE).containsMatchIn(map.trainNumber.trim())
             val anyRawSeats = map.segments.any { seg -> seg.carriages.values.any { it.isNotEmpty() } }
             val anyAllowedSeats = map.segments.any { seg ->
                 seg.carriages.any { (wNo, seats) ->
@@ -198,6 +211,8 @@ class ScanForegroundService : Service() {
             return when {
                 anyRawSeats && !anyAllowedSeats ->
                     "Wolne miejsca w Klasie $ticketClass są dostępne tylko w wyłączonych kategoriach specjalnych (np. bez roweru lub wymagające zaznaczenia w filtrach)."
+                isEip ->
+                    "Pociąg EIP (Pendolino) w Klasie $ticketClass wymaga obowiązkowej rezerwacji miejsca i nie sprzedaje biletów bez gwarancji miejsca. Sprawdź inną klasę, filtry lub inny pociąg."
                 anyRawSeats ->
                     "Brak opłacalnych wariantów siedzących spełniających wybrane filtry w Klasie $ticketClass."
                 else -> "Brak wariantów siedzących w zapisanej analizie."
@@ -355,6 +370,8 @@ class ScanForegroundService : Service() {
                     seatFilters = seatFilters
                 )
 
+                val fullUrl = buildFullRouteBookingUrl(map)
+                val isEipTrain = Regex("^EIP\\b", RegexOption.IGNORE_CASE).containsMatchIn(trainNumber.trim())
                 val matrix = SeatOptimizer.availabilityMapToMatrix(map)
                 if (matrix.availabilityMatrix.isEmpty()) {
                     val scrapeErrorSegs = map.segments.filter { it.status == "SCRAPE_ERROR" }
@@ -364,11 +381,17 @@ class ScanForegroundService : Service() {
                             .firstOrNull { it.isNotBlank() }
                             ?: "Nie udało się odczytać schematu miejsc z systemu e-IC."
                         "Błąd pobierania schematu (${scrapeErrorSegs.size}/${map.segments.size} odcinków): $sampleReason"
+                    } else if (isEipTrain) {
+                        "Pociąg EIP (Pendolino) w Klasie $ticketClass wymaga obowiązkowej rezerwacji miejsca i nie sprzedaje biletów bez gwarancji miejsca. Sprawdź inną klasę lub inny pociąg."
                     } else {
                         "Brak wolnych miejsc w Klasie $ticketClass dla pociągu $trainNumber."
                     }
                     _state.value = _state.value.copy(
                         isRunning = false,
+                        progress = 100,
+                        statusMessage = errorText,
+                        availabilityMap = if (scrapeErrorSegs.isEmpty()) map else _state.value.availabilityMap,
+                        fullRouteBookingUrl = if (scrapeErrorSegs.isEmpty()) fullUrl else null,
                         error = errorText,
                         debugWebView = null
                     )
@@ -388,6 +411,8 @@ class ScanForegroundService : Service() {
                     val details = when {
                         freeSegments.isNotEmpty() && !anyAllowedRaw ->
                             "Znaleziono wolne miejsca w Klasie $ticketClass, ale wszystkie wymagają włączenia odpowiedniej kategorii w filtrach."
+                        isEipTrain ->
+                            "Pociąg EIP (Pendolino) w Klasie $ticketClass wymaga obowiązkowej rezerwacji miejsca i nie sprzedaje biletów bez gwarancji miejsca. Sprawdź inną klasę, filtry lub inny pociąg."
                         freeSegments.isNotEmpty() -> {
                             val listStr = freeSegments.take(3).joinToString("; ") { seg ->
                                 "${seg.fromStation} -> ${seg.toStation}"
@@ -406,6 +431,7 @@ class ScanForegroundService : Service() {
                         statusMessage = details,
                         availabilityMap = map,
                         strategies = emptyList(),
+                        fullRouteBookingUrl = fullUrl,
                         error = details,
                         debugWebView = null
                     )
@@ -431,6 +457,7 @@ class ScanForegroundService : Service() {
                     availabilityMap = map,
                     strategies = strategies,
                     fastPathUsed = map.fastPathUsed,
+                    fullRouteBookingUrl = fullUrl,
                     error = null,
                     debugWebView = null
                 )

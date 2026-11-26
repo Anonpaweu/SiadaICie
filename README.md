@@ -44,6 +44,9 @@ System kolejowy przy próbie zakupu biletu na **całą relację** mówi „nie m
   - **Fast-Path A -> B:** najpierw błyskawicznie sprawdza bezpośrednią dostępność na całej trasie — jeśli jest choć jedno wolne miejsce na 100% drogi, wynik wraca od razu.
   - **Adaptive Split Fast-Path:** na długich trasach (8+ odcinków), gdzie system blokuje schemat dla całej relacji, dzieli trasę na mniejsze odcinki zbiorcze zanim przejdzie do pełnego skanu stacja po stacji.
   - **Bezpośredni odczyt API GRM (`/grm/sklad/wbnet/` + `/grm/wagon/svg/wbnet/`):** przechwytuje sesję z e-IC i pobiera czysty XML schematów wagonów bezpośrednio przez API bez powolnego przeklikiwania karuzeli DOM.
+- **Obsługa pociągów bez schematu wagonów (np. słynna, „wiecznie przepełniona” Orzeszkowa):**
+  - Część popularnych składów PKP Intercity w ogóle nie ma w e-IC graficznej mapki wyboru miejsc — normalnie trzeba wtedy strzelać w ciemno po kolejnych odcinkach w wyszukiwarce.
+  - SiadaICie automatycznie rozpoznaje taki pociąg i bez przechodzenia do płatności ani blokowania biletów wyszukuje najdłuższe odcinki z gwarantowanym miejscem siedzącym (przydzielanym automatycznie przez e-IC) oraz jasno wskazuje, na którym fragmencie trasy pojawia się wąskie gardło.
 - **Filtry miejsc specjalnych i hierarchia priorytetów:**
   - Domyślna hierarchia wygody: **zwykłe miejsca / Strefa ciszy** (najwyższy priorytet) > **miejsce z rowerem** (domyślnie włączone) > opcjonalne filtry (**kobieta w ciąży**, **osoba z dzieckiem**, **senior**, **niepełnosprawność bez wózka**, **osoba na wózku**).
   - Kolorowe plakietki z typem miejsca (np. *Rower*, *Strefa ciszy*, *Senior*, *Okno*) na kartach strategii i w tabeli Gantta.

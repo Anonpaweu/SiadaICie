@@ -1721,23 +1721,26 @@
           label: 'e-IC: możliwy bilet bez gwarancji miejsca',
           bg: 'var(--emerald-bg)',
           color: 'var(--emerald)',
-          btnLabel: 'Otwórz w e-IC (bez gwarancji)',
+          btnLabel: 'Kup bilet bez gwarancji (e-IC)',
+          showLink: true,
         };
       }
       if (status === 'OVERBOOKED') {
         return {
-          label: 'e-IC: pociąg przepełniony / klasa wyprzedana (brak nawet biletów stojących)',
+          label: 'e-IC: brak biletów w tej klasie (nawet stojących) — sprawdź 1. klasę lub inny pociąg',
           bg: 'color-mix(in srgb, var(--error, #dc2626) 14%, transparent)',
           color: 'var(--error, #dc2626)',
-          btnLabel: 'Sprawdź w e-IC',
+          btnLabel: '',
+          showLink: false,
         };
       }
       if (status === 'SPECIAL_ONLY') {
         return {
-          label: 'e-IC: tylko miejsca specjalne (sprawdź po zalogowaniu)',
+          label: 'e-IC: brak miejsc ogólnodostępnych (tylko miejsca specjalne lub 1. klasa)',
           bg: 'var(--amber-bg)',
           color: 'var(--amber)',
-          btnLabel: 'Sprawdź w e-IC',
+          btnLabel: 'Sprawdź specjalne / 1. klasę w e-IC',
+          showLink: true,
         };
       }
       return {
@@ -1745,6 +1748,7 @@
         bg: 'var(--tonal)',
         color: 'var(--muted)',
         btnLabel: 'Otwórz w e-IC (bez gwarancji)',
+        showLink: true,
       };
     }
 
@@ -1841,11 +1845,12 @@
         ) ? step.booking_url : '';
 
         const standingInfo = isStanding ? getStandingBadgeInfo(step.standing_status) : null;
+        const isOverbookedStep = Boolean(isStanding && step && step.standing_status === 'OVERBOOKED');
         const btnText = isStanding ? standingInfo.btnLabel : 'Otwórz odcinek w e-IC';
         const btnColor = isStanding ? standingInfo.color : 'var(--accent)';
         const btnBg = isStanding ? standingInfo.bg : 'var(--accent-bg)';
 
-        const linkHtml = bookingUrl
+        const linkHtml = (bookingUrl && (!isStanding || standingInfo.showLink))
           ? `<a href="${escapeHtml(bookingUrl)}" target="_blank" rel="noopener noreferrer" class="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-semibold text-xs transition-opacity hover:opacity-85" style="background-color: ${btnBg}; color: ${btnColor}; border: 1px solid color-mix(in srgb, ${btnColor} 35%, transparent);">
               <span>${escapeHtml(btnText)}</span>
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1863,9 +1868,11 @@
           ? `<div class="mt-1.5"><span class="inline-block px-2 py-0.5 rounded-md text-[10px] font-semibold" style="background-color: ${standingInfo.bg}; color: ${standingInfo.color}; border: 1px solid color-mix(in srgb, ${standingInfo.color} 35%, transparent);">${escapeHtml(standingInfo.label)}</span></div>`
           : '';
 
-        const dotStyle = isStanding
-          ? 'background-color: var(--amber-bg); color: var(--amber);'
-          : 'background-color: var(--emerald-bg); color: var(--emerald);';
+        const dotStyle = isOverbookedStep
+          ? 'background-color: var(--error-bg); color: var(--error);'
+          : (isStanding
+            ? 'background-color: var(--amber-bg); color: var(--amber);'
+            : 'background-color: var(--emerald-bg); color: var(--emerald);');
 
         item.innerHTML = `
           <div class="flex items-start gap-3 flex-1">
@@ -1891,7 +1898,7 @@
         )
       );
 
-      if (hasStandingLeg && fullRouteUrl && hasStations && !isEipTrain) {
+      if (hasStandingLeg && fullRouteUrl && hasStations && !isEipTrain && data.full_route_standing_status !== 'OVERBOOKED') {
         const firstSt = data.stations[0];
         const lastSt = data.stations[data.stations.length - 1];
         const fullInfo = getStandingBadgeInfo(data.full_route_standing_status);
@@ -1977,13 +1984,17 @@
             : '';
 
           if (step.is_standing) {
+            const isOverbooked = step.standing_status === 'OVERBOOKED';
+            const stBg = isOverbooked ? 'var(--error-bg)' : 'var(--amber-bg)';
+            const stCol = isOverbooked ? 'var(--error)' : 'var(--amber)';
+            const stTag = isOverbooked ? 'BRAK BILETÓW W TEJ KLASIE' : 'KORYTARZ';
             stepsHtml += `
-              <div class="text-xs flex items-center gap-2 p-2.5 rounded-xl my-1" style="background-color: var(--amber-bg); color: var(--amber);">
+              <div class="text-xs flex items-center gap-2 p-2.5 rounded-xl my-1" style="background-color: ${stBg}; color: ${stCol};">
                 <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
                 </svg>
                 <div>
-                  <strong>${escapeHtml(step.from_station_name)} &rarr; ${escapeHtml(step.to_station_name)}</strong>: KORYTARZ (${escapeHtml(step.duration_min)} min)
+                  <strong>${escapeHtml(step.from_station_name)} &rarr; ${escapeHtml(step.to_station_name)}</strong>: ${stTag} (${escapeHtml(step.duration_min)} min)
                 </div>
               </div>`;
           } else {

@@ -101,7 +101,7 @@ SiadaICie/
 │   ├── tests/                   # Zestaw testów jednostkowych i integracyjnych (pytest)
 │   └── requirements.txt         # Zależności Pythona
 ├── android/                     # Natywna aplikacja Android (Kotlin + Jetpack Compose, gałąź android-dev)
-│   ├── app/src/main/java/pl/iccbagno/app/
+│   ├── app/src/main/java/pl/siadaicie/app/
 │   │   ├── data/                # Baza stacji offline (stations.db) + historia 3 skanów (1h TTL)
 │   │   ├── optimizer/           # Solwer DAG w Kotlinie z hierarchią priorytetów miejsc
 │   │   ├── scraper/             # Skaner WebView + bezpośrednie zapytania GRM API

@@ -1,0 +1,1397 @@
+package pl.siadaicie.app.ui
+
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.LocalCafe
+import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
+import androidx.compose.material.icons.filled.SwapVert
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import pl.siadaicie.app.R
+import pl.siadaicie.app.data.ScanHistoryItem
+import pl.siadaicie.app.data.ScanHistorySerializer
+import pl.siadaicie.app.domain.SeatFilterPrefs
+import pl.siadaicie.app.domain.StationInfo
+import pl.siadaicie.app.domain.StationStop
+import pl.siadaicie.app.domain.TrainConnection
+import pl.siadaicie.app.optimizer.SeatOptimizer
+import pl.siadaicie.app.service.ScanProgressState
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import java.util.Locale
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
+fun SearchScreen(
+    ui: SearchUiState,
+    scan: ScanProgressState,
+    history: List<ScanHistoryItem>,
+    onFromChange: (String) -> Unit,
+    onToChange: (String) -> Unit,
+    onSelectFrom: (StationInfo) -> Unit,
+    onSelectTo: (StationInfo) -> Unit,
+    onSwap: () -> Unit,
+    onOpenDate: () -> Unit,
+    onOpenTime: () -> Unit,
+    onResetTime: () -> Unit,
+    onSelectClass: (Int) -> Unit,
+    onDirectOnlyChange: (Boolean) -> Unit,
+    onSeatFiltersChange: (SeatFilterPrefs) -> Unit,
+    onSearchTrains: () -> Unit,
+    onSelectTrain: (TrainConnection) -> Unit,
+    onExpandTrainStops: (TrainConnection) -> Unit,
+    onSelectStartStop: (TrainConnection, StationStop) -> Unit,
+    onOpenSettings: () -> Unit,
+    onOpenSupport: () -> Unit,
+    onOpenCurrentScan: () -> Unit,
+    onOpenHistoryItem: (ScanHistoryItem) -> Unit,
+    onRescanHistoryItem: (ScanHistoryItem) -> Unit,
+    onRefreshHistory: () -> Unit,
+    isFavoritesOpen: Boolean,
+    onToggleFavorites: () -> Unit,
+    onClearHistory: () -> Unit
+) {
+    val colors = LocalRailColors.current
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    var showFilters by remember { mutableStateOf(false) }
+    var showHistoryInfoDialog by remember { mutableStateOf(false) }
+    var showMidJourneyInfoDialog by remember { mutableStateOf(false) }
+    var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+
+    LaunchedEffect(history.size) {
+        nowMs = System.currentTimeMillis()
+        while (true) {
+            delay(30_000L)
+            nowMs = System.currentTimeMillis()
+            onRefreshHistory()
+        }
+    }
+
+    val visibleTrains = ui.trains.filter { train ->
+        train.departure.trim().padStart(5, '0') >= ui.minDepartureTime
+    }
+
+    Scaffold(
+        containerColor = colors.canvas,
+        topBar = {
+            TopAppBar(
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = colors.canvas,
+                    titleContentColor = colors.textPrimary
+                ),
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Image(
+                            painter = painterResource(id = R.drawable.ic_brand_logo),
+                            contentDescription = "SiadaICie",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .size(46.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column {
+                            Text(
+                                text = buildAnnotatedString {
+                                    withStyle(SpanStyle(color = colors.textPrimary)) { append("SIADA") }
+                                    withStyle(SpanStyle(color = colors.accent)) { append("IC") }
+                                    withStyle(SpanStyle(color = colors.textPrimary)) { append("IE") }
+                                },
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 19.sp,
+                                letterSpacing = 0.5.sp
+                            )
+                            Text(
+                                text = "Wolne miejsca PKP Intercity",
+                                fontSize = 11.sp,
+                                color = colors.textSecondary
+                            )
+                        }
+                    }
+                },
+                actions = {
+                    Surface(
+                        onClick = onOpenSupport,
+                        shape = RoundedCornerShape(11.dp),
+                        color = colors.accentContainer,
+                        border = BorderStroke(1.dp, colors.accent.copy(alpha = 0.35f)),
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.LocalCafe,
+                                contentDescription = "Buy me a coffee",
+                                tint = colors.accent,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.width(4.dp))
+                    IconButton(onClick = onOpenSettings) {
+                        Icon(
+                            imageVector = Icons.Default.Tune,
+                            contentDescription = "Ustawienia",
+                            tint = colors.textPrimary
+                        )
+                    }
+                }
+            )
+        }
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(top = padding.calculateTopPadding())
+                .imePadding(),
+            contentPadding = PaddingValues(
+                start = 16.dp,
+                end = 16.dp,
+                top = 8.dp,
+                bottom = padding.calculateBottomPadding() + 12.dp
+            ),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            if (scan.isRunning || scan.strategies.isNotEmpty()) {
+                item(key = "active_banner") {
+                    Surface(
+                        onClick = onOpenCurrentScan,
+                        color = if (scan.isRunning) colors.accentContainer else colors.seatEmeraldContainer,
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = if (scan.isRunning) {
+                                        "Skanowanie ${scan.trainNumber} (${scan.progress}%)"
+                                    } else {
+                                        "Gotowe wyniki dla ${scan.trainNumber}"
+                                    },
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 13.sp,
+                                    color = if (scan.isRunning) colors.accent else colors.seatEmerald
+                                )
+                                Text(
+                                    text = if (scan.isRunning) scan.statusMessage else "Dotknij, aby otworzyć szczegóły wariantów",
+                                    fontSize = 11.sp,
+                                    color = colors.textSecondary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                contentDescription = null,
+                                tint = if (scan.isRunning) colors.accent else colors.seatEmerald,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Unified Route Input Card
+            item(key = "route_card") {
+                Surface(
+                    color = colors.card,
+                    shape = RoundedCornerShape(24.dp),
+                    shadowElevation = if (colors.isDark) 0.dp else 2.dp,
+                    border = if (colors.isDark) BorderStroke(1.dp, colors.hairline) else null,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            // Vertical transit dots graphic
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center,
+                                modifier = Modifier.padding(end = 12.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(10.dp)
+                                        .border(2.dp, colors.brandNavy, CircleShape)
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .width(2.dp)
+                                        .height(42.dp)
+                                        .background(colors.hairline)
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .size(10.dp)
+                                        .background(colors.accent, CircleShape)
+                                )
+                            }
+
+                            // Origin & Destination borderless inputs
+                            Column(modifier = Modifier.weight(1f)) {
+                                StationFieldRow(
+                                    label = "STACJA POCZĄTKOWA",
+                                    value = ui.fromQuery,
+                                    placeholder = "Skąd jedziesz?",
+                                    onValueChange = onFromChange
+                                )
+
+                                AnimatedVisibility(visible = ui.fromSuggestions.isNotEmpty()) {
+                                    SuggestionsList(ui.fromSuggestions) { st ->
+                                        onSelectFrom(st)
+                                        focusManager.clearFocus()
+                                        keyboardController?.hide()
+                                    }
+                                }
+
+                                HorizontalDivider(
+                                    color = colors.hairline,
+                                    modifier = Modifier.padding(vertical = 8.dp)
+                                )
+
+                                StationFieldRow(
+                                    label = "STACJA DOCELOWA",
+                                    value = ui.toQuery,
+                                    placeholder = "Dokąd jedziesz?",
+                                    onValueChange = onToChange
+                                )
+
+                                AnimatedVisibility(visible = ui.toSuggestions.isNotEmpty()) {
+                                    SuggestionsList(ui.toSuggestions) { st ->
+                                        onSelectTo(st)
+                                        focusManager.clearFocus()
+                                        keyboardController?.hide()
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.width(8.dp))
+
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Surface(
+                                    onClick = onSwap,
+                                    shape = CircleShape,
+                                    color = colors.cardTonal,
+                                    modifier = Modifier.size(40.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.SwapVert,
+                                            contentDescription = "Zamień stacje",
+                                            tint = colors.brandNavy,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                }
+
+                                val hasFavorites = ui.favorites.isNotEmpty()
+                                Surface(
+                                    onClick = {
+                                        focusManager.clearFocus()
+                                        keyboardController?.hide()
+                                        onToggleFavorites()
+                                    },
+                                    shape = CircleShape,
+                                    color = if (isFavoritesOpen || hasFavorites) colors.accentContainer else colors.cardTonal,
+                                    modifier = Modifier.size(40.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = if (isFavoritesOpen || hasFavorites) Icons.Default.Star else Icons.Default.StarBorder,
+                                            contentDescription = "Ulubione połączenia",
+                                            tint = if (isFavoritesOpen || hasFavorites) colors.accent else colors.textSecondary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // Date, time filter & class controls
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Surface(
+                                onClick = onOpenDate,
+                                shape = RoundedCornerShape(12.dp),
+                                color = colors.cardTonal
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.CalendarMonth,
+                                        contentDescription = null,
+                                        tint = colors.brandNavy,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = formatDatePl(ui.travelDate),
+                                        color = colors.textPrimary,
+                                        fontWeight = FontWeight.Medium,
+                                        fontSize = 13.sp
+                                    )
+                                }
+                            }
+
+                            val isTimeFiltered = ui.minDepartureTime != "00:00"
+                            Surface(
+                                onClick = onOpenTime,
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (isTimeFiltered) colors.accentContainer else colors.cardTonal
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(
+                                        start = 12.dp,
+                                        end = if (isTimeFiltered) 6.dp else 12.dp,
+                                        top = 9.dp,
+                                        bottom = 9.dp
+                                    ),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Schedule,
+                                        contentDescription = null,
+                                        tint = if (isTimeFiltered) colors.accent else colors.brandNavy,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = if (isTimeFiltered) "Od ${ui.minDepartureTime}" else "Od 00:00",
+                                        color = if (isTimeFiltered) colors.accent else colors.textPrimary,
+                                        fontWeight = FontWeight.Medium,
+                                        fontSize = 13.sp
+                                    )
+                                    if (isTimeFiltered) {
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Box(
+                                            modifier = Modifier
+                                                .size(20.dp)
+                                                .clip(CircleShape)
+                                                .clickable { onResetTime() },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Close,
+                                                contentDescription = "Resetuj godzinę",
+                                                tint = colors.accent,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            SingleChoiceSegmentedButtonRow(
+                                modifier = Modifier.height(38.dp)
+                            ) {
+                                listOf(2 to "Kl. 2", 1 to "Kl. 1").forEachIndexed { idx, (cls, label) ->
+                                    SegmentedButton(
+                                        selected = ui.ticketClass == cls,
+                                        onClick = { onSelectClass(cls) },
+                                        icon = {},
+                                        shape = SegmentedButtonDefaults.itemShape(index = idx, count = 2),
+                                        colors = SegmentedButtonDefaults.colors(
+                                            activeContainerColor = colors.brandNavy,
+                                            activeContentColor = MaterialTheme.colorScheme.onPrimary,
+                                            inactiveContainerColor = colors.cardTonal,
+                                            inactiveContentColor = colors.textSecondary,
+                                            activeBorderColor = Color.Transparent,
+                                            inactiveBorderColor = Color.Transparent
+                                        ),
+                                        label = {
+                                            Text(
+                                                text = label,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                        }
+                                    )
+                                }
+                            }
+                        }
+
+                        Button(
+                            onClick = {
+                                focusManager.clearFocus()
+                                keyboardController?.hide()
+                                onSearchTrains()
+                            },
+                            enabled = !ui.isLoadingTrains,
+                            shape = RoundedCornerShape(16.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = colors.accent,
+                                contentColor = Color.White
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(50.dp)
+                        ) {
+                            if (ui.isLoadingTrains) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    color = Color.White,
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text("Szukanie połączeń...", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.Search,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(19.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Szukaj pociągów", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Collapsible Filters Bar directly below Search button
+            item(key = "filters_bar") {
+                Surface(
+                    color = colors.card,
+                    shape = RoundedCornerShape(18.dp),
+                    border = BorderStroke(1.dp, colors.hairline),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { showFilters = !showFilters }
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.FilterList,
+                                    contentDescription = null,
+                                    tint = colors.brandNavy,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text(
+                                    text = "Filtry",
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 14.sp,
+                                    color = colors.textPrimary
+                                )
+                                val directBadge = if (ui.directOnly) "Bezpośrednie" else "Z przesiadkami"
+                                Text(
+                                    text = "$directBadge • ${ui.seatFilters.activeSpecialCount()}/6",
+                                    fontSize = 12.sp,
+                                    color = colors.textSecondary
+                                )
+                            }
+                            Icon(
+                                imageVector = if (showFilters) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                contentDescription = if (showFilters) "Zwiń filtry" else "Rozwiń filtry",
+                                tint = colors.textSecondary
+                            )
+                        }
+
+                        AnimatedVisibility(visible = showFilters) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 16.dp, end = 16.dp, bottom = 14.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                HorizontalDivider(color = colors.hairline)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                                        Text(
+                                            text = "Tylko pociągi bezpośrednie",
+                                            color = colors.textPrimary,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                        Text(
+                                            text = "Ukrywa z listy rozkładu połączenia z przesiadkami",
+                                            color = colors.textSecondary,
+                                            fontSize = 11.sp
+                                        )
+                                    }
+                                    Switch(
+                                        checked = ui.directOnly,
+                                        onCheckedChange = onDirectOnlyChange
+                                    )
+                                }
+
+                                HorizontalDivider(color = colors.hairline)
+
+                                SeatFilterChipsSection(
+                                    filters = ui.seatFilters,
+                                    onFiltersChange = onSeatFiltersChange
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (ui.trainsError != null) {
+                item(key = "trains_error") {
+                    Surface(
+                        color = colors.errorContainer,
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = ui.trainsError,
+                            color = colors.errorRed,
+                            fontSize = 13.sp,
+                            modifier = Modifier.padding(14.dp)
+                        )
+                    }
+                }
+            }
+
+            if (ui.trains.isNotEmpty()) {
+                item(key = "trains_header") {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp, start = 4.dp, end = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (ui.minDepartureTime != "00:00") {
+                                "Połączenia (${visibleTrains.size} z ${ui.trains.size})"
+                            } else {
+                                "Połączenia (${ui.trains.size})"
+                            },
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            color = colors.textPrimary
+                        )
+                        if (ui.minDepartureTime != "00:00") {
+                            Text(
+                                text = "od ${ui.minDepartureTime}",
+                                fontSize = 12.sp,
+                                color = colors.textSecondary
+                            )
+                        }
+                    }
+                }
+
+                if (visibleTrains.isEmpty()) {
+                    item(key = "empty_filtered") {
+                        Surface(
+                            color = colors.card,
+                            shape = RoundedCornerShape(18.dp),
+                            border = BorderStroke(1.dp, colors.hairline),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = "Brak pociągów po godzinie ${ui.minDepartureTime}.",
+                                    color = colors.textSecondary,
+                                    fontSize = 14.sp
+                                )
+                                TextButton(onClick = onResetTime) {
+                                    Text("Pokaż cały dzień (od 00:00)", color = colors.accent)
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    items(
+                        items = visibleTrains,
+                        key = { "${it.trainNumber}_${it.departure}" }
+                    ) { train ->
+                        val tKey = "${train.trainNumber}_${train.departure}"
+                        BoardingPassTrainCard(
+                            train = train,
+                            enabled = !scan.isRunning,
+                            stops = ui.trainRoutesByKey[tKey].orEmpty(),
+                            isLoadingStops = tKey in ui.loadingRouteKeys,
+                            stopsError = ui.routeErrorsByKey[tKey],
+                            selectedStartStop = ui.selectedStartStopByKey[tKey],
+                            onExpandStops = { onExpandTrainStops(train) },
+                            onSelectStartStop = { stop -> onSelectStartStop(train, stop) },
+                            onShowStartStopInfo = { showMidJourneyInfoDialog = true },
+                            onClick = { onSelectTrain(train) }
+                        )
+                    }
+                }
+            }
+
+            if (history.isNotEmpty()) {
+                item(key = "history_header") {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 6.dp, start = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.History,
+                                contentDescription = null,
+                                tint = colors.textSecondary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Ostatnie analizy (${history.size}/3)",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                color = colors.textPrimary
+                            )
+                            IconButton(
+                                onClick = { showHistoryInfoDialog = true },
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Info,
+                                    contentDescription = "Informacja o ważności wyników",
+                                    tint = colors.textSecondary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                        TextButton(onClick = onClearHistory) {
+                            Text("Wyczyść historię", fontSize = 12.sp, color = colors.textSecondary)
+                        }
+                    }
+                }
+
+                items(
+                    items = history,
+                    key = { "hist_${it.id}" }
+                ) { item ->
+                    HistorySummaryCard(
+                        item = item,
+                        nowMs = nowMs,
+                        canRescan = !scan.isRunning,
+                        onClick = { onOpenHistoryItem(item) },
+                        onRescan = { onRescanHistoryItem(item) }
+                    )
+                }
+            }
+        }
+    }
+
+    if (showHistoryInfoDialog) {
+        AlertDialog(
+            onDismissRequest = { showHistoryInfoDialog = false },
+            containerColor = colors.card,
+            title = {
+                Text(
+                    text = "Ważność ostatnich analiz",
+                    color = colors.textPrimary,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    text = "Ostatnie wolne miejsca w pociągu potrafią bardzo szybko się wyprzedawać lub zmieniać, więc nie można zakładać, że będą wolne przez cały czas. Zapisane wyniki wygasają automatycznie po 1 godzinie — w każdej chwili możesz je odświeżyć przyciskiem ponownego skanu.",
+                    color = colors.textSecondary,
+                    fontSize = 13.sp,
+                    lineHeight = 19.sp
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showHistoryInfoDialog = false }) {
+                    Text("Rozumiem", color = colors.accent)
+                }
+            }
+        )
+    }
+
+    if (showMidJourneyInfoDialog) {
+        AlertDialog(
+            onDismissRequest = { showMidJourneyInfoDialog = false },
+            containerColor = colors.card,
+            title = {
+                Text(
+                    text = "Skanowanie od wybranej stacji",
+                    color = colors.textPrimary,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    text = "Jedziesz już tym pociągiem bez gwarancji miejsca? Rozwiń trasę, zaznacz najbliższą stację przed sobą i kliknij Skanuj. Aplikacja sprawdzi aktualne wolne miejsca na resztę podróży z pominięciem stacji już miniętych. Bez wybrania przystanku skan obejmie całą trasę.",
+                    color = colors.textSecondary,
+                    fontSize = 13.sp,
+                    lineHeight = 19.sp
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showMidJourneyInfoDialog = false }) {
+                    Text("Rozumiem", color = colors.accent)
+                }
+            }
+        )
+    }
+}
+
+internal fun formatHistoryRemainingPl(savedAtEpochMs: Long, nowMs: Long): String {
+    val remainingMs = (ScanHistorySerializer.MAX_AGE_MS - (nowMs - savedAtEpochMs)).coerceAtLeast(0L)
+    val remainingMin = remainingMs / 60_000L
+    return if (remainingMin < 1L) "wygasa za <1 min" else "wygasa za $remainingMin min"
+}
+
+@Composable
+private fun HistorySummaryCard(
+    item: ScanHistoryItem,
+    nowMs: Long,
+    canRescan: Boolean,
+    onClick: () -> Unit,
+    onRescan: () -> Unit
+) {
+    val colors = LocalRailColors.current
+    val isGolden = item.transfersCount == 0 && item.totalStandingMin == 0
+    val expiryLabel = formatHistoryRemainingPl(item.savedAtEpochMs, nowMs)
+    Surface(
+        onClick = onClick,
+        color = colors.card,
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, colors.hairline),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 14.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(
+                    text = "${item.fromStation} -> ${item.toStation}",
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.sp,
+                    color = colors.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = "${item.trainNumber} • ${formatDatePl(item.travelDate)} • Kl. ${item.ticketClass} • $expiryLabel",
+                    fontSize = 11.sp,
+                    color = colors.textSecondary
+                )
+                Text(
+                    text = item.topStrategyTitle,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = if (isGolden) colors.seatEmerald else colors.accent,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            IconButton(
+                onClick = onRescan,
+                enabled = canRescan,
+                modifier = Modifier.size(36.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = "Skanuj ponownie",
+                    tint = colors.accent,
+                    modifier = Modifier.size(19.dp)
+                )
+            }
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                contentDescription = null,
+                tint = colors.textSecondary,
+                modifier = Modifier
+                    .padding(end = 6.dp)
+                    .size(18.dp)
+            )
+        }
+    }
+}
+
+@Composable
+internal fun StationFieldRow(
+    label: String,
+    value: String,
+    placeholder: String,
+    onValueChange: (String) -> Unit
+) {
+    val colors = LocalRailColors.current
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = label,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.6.sp,
+            color = colors.textSecondary
+        )
+        Spacer(modifier = Modifier.height(2.dp))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Box(modifier = Modifier.weight(1f)) {
+                if (value.isEmpty()) {
+                    Text(
+                        text = placeholder,
+                        color = colors.textSecondary.copy(alpha = 0.7f),
+                        fontSize = 16.sp
+                    )
+                }
+                BasicTextField(
+                    value = value,
+                    onValueChange = onValueChange,
+                    singleLine = true,
+                    cursorBrush = SolidColor(colors.accent),
+                    textStyle = TextStyle(
+                        color = colors.textPrimary,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Medium
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+            if (value.isNotEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .clickable { onValueChange("") },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Wyczyść",
+                        tint = colors.textSecondary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun SuggestionsList(items: List<StationInfo>, onSelect: (StationInfo) -> Unit) {
+    val colors = LocalRailColors.current
+    Surface(
+        color = colors.cardTonal,
+        shape = RoundedCornerShape(14.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 6.dp)
+            .heightIn(max = 180.dp)
+    ) {
+        Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+            items.forEachIndexed { idx, st ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onSelect(st) }
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.LocationOn,
+                        contentDescription = null,
+                        tint = colors.brandNavy,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = st.name,
+                        color = colors.textPrimary,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (st.isMainHub) {
+                        Text(
+                            text = "Główny",
+                            fontSize = 10.sp,
+                            color = colors.textSecondary
+                        )
+                    }
+                }
+                if (idx < items.lastIndex) {
+                    HorizontalDivider(color = colors.hairline.copy(alpha = 0.6f))
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun BoardingPassTrainCard(
+    train: TrainConnection,
+    enabled: Boolean,
+    stops: List<StationStop>,
+    isLoadingStops: Boolean,
+    stopsError: String?,
+    selectedStartStop: StationStop?,
+    onExpandStops: () -> Unit,
+    onSelectStartStop: (StationStop) -> Unit,
+    onShowStartStopInfo: () -> Unit,
+    onClick: () -> Unit
+) {
+    val colors = LocalRailColors.current
+    var expanded by remember(train.trainNumber, train.departure) { mutableStateOf(false) }
+    val brand = train.trainNumber.trim().split(Regex("\\s+")).firstOrNull()?.uppercase().orEmpty()
+    val (badgeBg, badgeFg) = when (brand) {
+        "EIP" -> Color(0xFFFEF3C7) to Color(0xFF92400E)
+        "EIC" -> Color(0xFFE0E7FF) to Color(0xFF3730A3)
+        "TLK" -> Color(0xFFCCFBF1) to Color(0xFF115E59)
+        else -> colors.cardTonal to colors.brandNavy
+    }
+
+    Surface(
+        color = colors.card,
+        shape = RoundedCornerShape(18.dp),
+        shadowElevation = if (colors.isDark) 0.dp else 1.5.dp,
+        border = if (colors.isDark) BorderStroke(1.dp, colors.hairline) else null,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = enabled) { onClick() }
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Surface(color = badgeBg, shape = RoundedCornerShape(6.dp)) {
+                            Text(
+                                text = brand.ifEmpty { "IC" },
+                                color = badgeFg,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                            )
+                        }
+                        Text(
+                            text = train.trainNumber,
+                            color = colors.textPrimary,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 14.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
+                    Text(
+                        text = if (train.changes == 0) "Bezpośredni" else SeatOptimizer.formatTransfersPl(train.changes),
+                        color = if (train.changes == 0) colors.seatEmerald else colors.textSecondary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = train.departure.ifBlank { "--:--" },
+                        style = TextStyle(
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFeatureSettings = "tnum",
+                            color = colors.textPrimary
+                        )
+                    )
+
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(horizontal = 12.dp)
+                    ) {
+                        if (train.duration.isNotBlank()) {
+                            Text(
+                                text = formatDurationCompact(train.duration),
+                                fontSize = 11.sp,
+                                color = colors.textSecondary,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Spacer(modifier = Modifier.height(3.dp))
+                        }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(1.5.dp)
+                                .background(colors.hairline)
+                        )
+                    }
+
+                    Text(
+                        text = train.arrival.ifBlank { "--:--" },
+                        style = TextStyle(
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFeatureSettings = "tnum",
+                            color = colors.textPrimary
+                        )
+                    )
+
+                    Spacer(modifier = Modifier.width(12.dp))
+
+                    Surface(
+                        color = colors.accentContainer,
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Skanuj",
+                                color = colors.accent,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 12.sp
+                            )
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                contentDescription = null,
+                                tint = colors.accent,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            HorizontalDivider(color = colors.hairline.copy(alpha = 0.6f))
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = enabled) {
+                        val next = !expanded
+                        expanded = next
+                        if (next) onExpandStops()
+                    }
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (selectedStartStop != null) {
+                        "Skanuj od: ${selectedStartStop.name} (zmień)"
+                    } else {
+                        "Pokaż trasę i wybierz stację startową"
+                    },
+                    fontSize = 11.sp,
+                    fontWeight = if (selectedStartStop != null) FontWeight.SemiBold else FontWeight.Medium,
+                    color = if (selectedStartStop != null) colors.accent else colors.textSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                Icon(
+                    imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = if (expanded) "Zwiń trasę" else "Rozwiń trasę",
+                    tint = colors.textSecondary,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+
+            AnimatedVisibility(visible = expanded) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(colors.cardTonal.copy(alpha = 0.5f))
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Od której stacji skanować?",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = colors.textPrimary
+                        )
+                        IconButton(
+                            onClick = onShowStartStopInfo,
+                            modifier = Modifier.size(26.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Info,
+                                contentDescription = "Informacja o wyborze stacji",
+                                tint = colors.textSecondary,
+                                modifier = Modifier.size(15.dp)
+                            )
+                        }
+                    }
+
+                    when {
+                        isLoadingStops -> {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(14.dp),
+                                    color = colors.accent,
+                                    strokeWidth = 2.dp
+                                )
+                                Text(
+                                    text = "Pobieranie przystanków...",
+                                    fontSize = 12.sp,
+                                    color = colors.textSecondary
+                                )
+                            }
+                        }
+                        stopsError != null -> {
+                            Text(
+                                text = stopsError,
+                                fontSize = 12.sp,
+                                color = colors.errorRed
+                            )
+                        }
+                        stops.size >= 2 -> {
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                val selectableStops = stops.dropLast(1)
+                                selectableStops.forEach { stop ->
+                                    val isSel = selectedStartStop != null &&
+                                        selectedStartStop.seq == stop.seq &&
+                                        selectedStartStop.name == stop.name
+                                    val timeLabel = stop.departureTime.ifBlank { stop.arrivalTime }
+                                    Surface(
+                                        onClick = { onSelectStartStop(stop) },
+                                        color = if (isSel) colors.accent else colors.card,
+                                        shape = RoundedCornerShape(10.dp),
+                                        border = BorderStroke(
+                                            1.dp,
+                                            if (isSel) colors.accent else colors.hairline
+                                        )
+                                    ) {
+                                        Text(
+                                            text = if (timeLabel.isNotBlank()) "${stop.name} $timeLabel" else stop.name,
+                                            fontSize = 11.sp,
+                                            fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
+                                            color = if (isSel) Color.White else colors.textPrimary,
+                                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
+                                        )
+                                    }
+                                }
+                                Surface(
+                                    color = colors.cardTonal,
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Text(
+                                        text = "Cel: ${stops.last().name}",
+                                        fontSize = 11.sp,
+                                        color = colors.textSecondary,
+                                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fun formatDatePl(isoDate: String): String {
+    return try {
+        val dt = LocalDate.parse(isoDate.trim(), DateTimeFormatter.ISO_LOCAL_DATE)
+        val formatter = DateTimeFormatter.ofPattern("d MMM, EEE", Locale("pl", "PL"))
+        dt.format(formatter)
+    } catch (_: Exception) {
+        isoDate
+    }
+}
+
+private fun formatDurationCompact(raw: String): String {
+    val parts = raw.trim().split(":")
+    if (parts.size == 2) {
+        val h = parts[0].toIntOrNull()
+        val m = parts[1].toIntOrNull()
+        if (h != null && m != null) {
+            return if (h > 0) "${h}h ${m}m" else "${m} min"
+        }
+    }
+    return raw
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun SeatFilterChipsSection(
+    filters: SeatFilterPrefs,
+    onFiltersChange: (SeatFilterPrefs) -> Unit
+) {
+    val colors = LocalRailColors.current
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            text = "Dodatkowe typy miejsc (zwykłe i strefa ciszy zawsze priorytetowe)",
+            fontSize = 12.sp,
+            color = colors.textSecondary
+        )
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            val options = listOf(
+                Triple("Miejsce z rowerem", filters.allowBike) { on: Boolean -> filters.copy(allowBike = on) },
+                Triple("Kobieta w ciąży", filters.allowPregnant) { on: Boolean -> filters.copy(allowPregnant = on) },
+                Triple("Osoba z dzieckiem", filters.allowChild) { on: Boolean -> filters.copy(allowChild = on) },
+                Triple("Senior", filters.allowElderly) { on: Boolean -> filters.copy(allowElderly = on) },
+                Triple("Niepełnosprawność (bez wózka)", filters.allowPrmAssist) { on: Boolean -> filters.copy(allowPrmAssist = on) },
+                Triple("Osoba na wózku", filters.allowWheelchair) { on: Boolean -> filters.copy(allowWheelchair = on) }
+            )
+            options.forEach { (label, selected, updater) ->
+                FilterChip(
+                    selected = selected,
+                    onClick = { onFiltersChange(updater(!selected)) },
+                    label = { Text(label, fontSize = 12.sp) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = colors.brandNavy,
+                        selectedLabelColor = Color.White,
+                        containerColor = colors.cardTonal,
+                        labelColor = colors.textSecondary
+                    ),
+                    border = FilterChipDefaults.filterChipBorder(
+                        enabled = true,
+                        selected = selected,
+                        borderColor = colors.hairline
+                    )
+                )
+            }
+        }
+    }
+}

@@ -2,7 +2,7 @@
 -keepclassmembers class * {
     @android.webkit.JavascriptInterface <methods>;
 }
--keep class pl.iccbagno.app.scraper.EbiletWebViewScanner$GrmJsBridge {
+-keep class pl.siadaicie.app.scraper.EbiletWebViewScanner$GrmJsBridge {
     *;
 }
 -dontwarn org.jsoup.**

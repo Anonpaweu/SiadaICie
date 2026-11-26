@@ -14,11 +14,11 @@ if (keystorePropsFile.exists()) {
 }
 
 android {
-    namespace = "pl.iccbagno.app"
+    namespace = "pl.siadaicie.app"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "pl.iccbagno.app"
+        applicationId = "pl.siadaicie.app"
         minSdk = 29
         targetSdk = 35
         versionCode = 1

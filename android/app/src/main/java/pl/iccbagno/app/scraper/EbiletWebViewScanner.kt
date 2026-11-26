@@ -612,6 +612,101 @@ class EbiletWebViewScanner(
         }
     }
 
+    private suspend fun webViewFetchGet(wv: WebView, url: String, timeoutMs: Long = 10_000L): String? {
+        val raw = awaitDirectJs(wv, timeoutMs) { reqId, _ ->
+            """
+            (async function(reqId, targetUrl) {
+                const reply = (obj) => {
+                    try {
+                        if (window.AndroidGrmBridge && window.AndroidGrmBridge.onDirectGrmResult) {
+                            window.AndroidGrmBridge.onDirectGrmResult(reqId, JSON.stringify(obj));
+                        }
+                    } catch (e) {}
+                };
+                try {
+                    const ctrl = new AbortController();
+                    const timer = setTimeout(() => ctrl.abort(), 8000);
+                    const r = await fetch(targetUrl, {
+                        method: 'GET',
+                        credentials: 'include',
+                        signal: ctrl.signal
+                    });
+                    clearTimeout(timer);
+                    const txt = await r.text();
+                    reply({ ok: r.ok, status: r.status, text: txt });
+                } catch (e) {
+                    reply({ ok: false, status: 0, text: '', err: String(e) });
+                }
+            })(${JSONObject.quote(reqId)}, ${JSONObject.quote(url)});
+            """.trimIndent()
+        } ?: return null
+
+        return try {
+            val obj = JSONObject(raw)
+            if (obj.optBoolean("ok", false)) {
+                obj.optString("text", "")
+            } else {
+                Log.w(TAG, "webViewFetchGet HTTP ${obj.optInt("status", 0)} for $url: ${obj.optString("err", "")}")
+                null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private suspend fun webViewFetchPostJson(
+        wv: WebView,
+        url: String,
+        jsonBody: String,
+        timeoutMs: Long = 20_000L
+    ): String? {
+        val raw = awaitDirectJs(wv, timeoutMs) { reqId, _ ->
+            """
+            (async function(reqId, targetUrl, bodyStr) {
+                const reply = (obj) => {
+                    try {
+                        if (window.AndroidGrmBridge && window.AndroidGrmBridge.onDirectGrmResult) {
+                            window.AndroidGrmBridge.onDirectGrmResult(reqId, JSON.stringify(obj));
+                        }
+                    } catch (e) {}
+                };
+                try {
+                    const ctrl = new AbortController();
+                    const timer = setTimeout(() => ctrl.abort(), 18000);
+                    const r = await fetch(targetUrl, {
+                        method: 'POST',
+                        credentials: 'include',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/json, text/plain, */*',
+                            'app-version': '1.6.20'
+                        },
+                        body: bodyStr,
+                        signal: ctrl.signal
+                    });
+                    clearTimeout(timer);
+                    const txt = await r.text();
+                    reply({ ok: r.ok, status: r.status, text: txt });
+                } catch (e) {
+                    reply({ ok: false, status: 0, text: '', err: String(e) });
+                }
+            })(${JSONObject.quote(reqId)}, ${JSONObject.quote(url)}, ${JSONObject.quote(jsonBody)});
+            """.trimIndent()
+        } ?: return null
+
+        return try {
+            val obj = JSONObject(raw)
+            if (obj.optBoolean("ok", false)) {
+                obj.optString("text", "")
+            } else {
+                Log.w(TAG, "webViewFetchPostJson HTTP ${obj.optInt("status", 0)} for $url: ${obj.optString("err", "")}")
+                null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private suspend fun scanRelationViaDirectGrm(
         worker: WorkerWebView,
         template: GrmParser.GrmUrlTemplate,
@@ -1523,6 +1618,30 @@ class EbiletWebViewScanner(
                 delay(100)
             }
             Log.i(TAG, "Warmup finished in ${System.currentTimeMillis() - warmupStart}ms (bannerClicked=$warmupBannerClicked)")
+
+            // 0. Check if train has graphical seatmap via WebView Chromium network stack
+            val webViewTransport = object : NonGrmScanner.EicHttpTransport {
+                override suspend fun get(url: String): String? = webViewFetchGet(pool[0].webView, url)
+                override suspend fun postJson(url: String, jsonBody: String): String? =
+                    webViewFetchPostJson(pool[0].webView, url, jsonBody)
+            }
+            val grmAvailable = NonGrmScanner.checkGrmAvailable(trainNumber, travelDate, webViewTransport)
+            Log.i(TAG, "GRM available check for $trainNumber ($travelDate): $grmAvailable")
+            if (!grmAvailable) {
+                onProgress(
+                    13,
+                    "Wykryto pociąg bez graficznego schematu miejsc — uruchamiam tryb odcinkowy (bez blokowania miejsc)..."
+                )
+                return@coroutineScope NonGrmScanner.scanNonGrmTrainFromStops(
+                    stops = stops,
+                    travelDate = travelDate,
+                    trainNumber = trainNumber,
+                    depTime = departureTime,
+                    ticketClass = ticketClass,
+                    transport = webViewTransport,
+                    onProgress = onProgress
+                )
+            }
 
             // 1. Direct Fast-Path A -> B
             var fpWagonsUnavailable = false

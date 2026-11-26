@@ -33,6 +33,26 @@ class NonGrmScannerTest {
     }
 
     @Test
+    fun `checkGrmAvailable detects false and fails open on true or null`() = runBlocking {
+        val falseTransport = object : NonGrmScanner.EicHttpTransport {
+            override suspend fun get(url: String): String = """{"available":false}"""
+            override suspend fun postJson(url: String, jsonBody: String): String? = null
+        }
+        val trueTransport = object : NonGrmScanner.EicHttpTransport {
+            override suspend fun get(url: String): String = """{"available":true}"""
+            override suspend fun postJson(url: String, jsonBody: String): String? = null
+        }
+        val nullTransport = object : NonGrmScanner.EicHttpTransport {
+            override suspend fun get(url: String): String? = null
+            override suspend fun postJson(url: String, jsonBody: String): String? = null
+        }
+
+        assertFalse(NonGrmScanner.checkGrmAvailable("IC 6138", "2026-11-27", falseTransport))
+        assertTrue(NonGrmScanner.checkGrmAvailable("IC 6138", "2026-11-27", trueTransport))
+        assertTrue(NonGrmScanner.checkGrmAvailable("IC 6138", "2026-11-27", nullTransport))
+    }
+
+    @Test
     fun `parseSprawdzCenyEntry classifies available, special 47, standing 48 and overbooked`() {
         val avail = JSONArray().apply {
             put(JSONObject().apply {

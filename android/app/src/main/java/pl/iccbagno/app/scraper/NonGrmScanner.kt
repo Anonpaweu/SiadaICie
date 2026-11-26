@@ -1,6 +1,5 @@
 package pl.iccbagno.app.scraper
 
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -9,11 +8,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
-import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import pl.iccbagno.app.domain.FullTrainAvailabilityMap
@@ -21,27 +15,20 @@ import pl.iccbagno.app.domain.RouteHelpers
 import pl.iccbagno.app.domain.SegmentAvailabilityMap
 import pl.iccbagno.app.domain.StationStop
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.TimeUnit
 import kotlin.math.round
 
 /**
  * Non-GRM Scanner ("Tryb bez schematu wagonu") for PKP Intercity trains without graphical seatmaps.
  *
- * Uses e-IC public read-only endpoints without locking or reserving seats:
+ * Uses e-IC public read-only endpoints routed through WebView Chromium `fetch()` (so Akamai TLS/cookies match):
  * 1. GET https://api-gateway.intercity.pl/grm/grm/available/{train_num}/{YYYYMMDD}
  * 2. POST https://api-gateway.intercity.pl/server/public/endpoint/Pociagi (wyszukajPolaczenia)
  * 3. POST https://api-gateway.intercity.pl/server/public/endpoint/Sprzedaz (sprawdzCenyLite)
  */
 object NonGrmScanner {
 
-    private const val GRM_AVAILABLE_UA = "Mozilla/5.0"
-    private const val EIC_BROWSER_UA =
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-    private const val EIC_ORIGIN = "https://ebilet.intercity.pl"
-    private const val EIC_REFERER = "https://ebilet.intercity.pl/"
     private const val POCIAGI_URL = "https://api-gateway.intercity.pl/server/public/endpoint/Pociagi"
     private const val SPRZEDAZ_URL = "https://api-gateway.intercity.pl/server/public/endpoint/Sprzedaz"
-    private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 
     private val CAT_REGEX = Regex("^(EIP|EIC|IC|TLK)\\b", RegexOption.IGNORE_CASE)
     private val DIGITS_REGEX = Regex("\\b(\\d{1,5})\\b")
@@ -50,12 +37,9 @@ object NonGrmScanner {
     // Cache mapping 7-digit HAFAS EVA code -> e-IC internal numeric station ID (e.g. "5100069" -> 248)
     private val eicShortIdCache = ConcurrentHashMap<String, Int>()
 
-    private val defaultHttpClient: OkHttpClient by lazy {
-        OkHttpClient.Builder()
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(20, TimeUnit.SECONDS)
-            .followRedirects(true)
-            .build()
+    interface EicHttpTransport {
+        suspend fun get(url: String): String?
+        suspend fun postJson(url: String, jsonBody: String): String?
     }
 
     data class SprawdzCenyResult(
@@ -96,42 +80,31 @@ object NonGrmScanner {
     }
 
     /**
-     * Checks GET /grm/grm/available/{train_num}/{YYYYMMDD}.
-     * Returns false ONLY when HTTP 200 explicitly returns {"available": false}.
-     * On errors/timeouts returns true so the standard WebView scanner pipeline runs.
+     * Checks GET /grm/grm/available/{train_num}/{YYYYMMDD} via `transport`.
+     * Returns false ONLY when JSON explicitly contains {"available": false}.
+     * On errors/timeouts returns true so the standard WebView GRM scanner pipeline runs.
      */
     suspend fun checkGrmAvailable(
         trainNumber: String,
         travelDate: String,
-        client: OkHttpClient = defaultHttpClient
-    ): Boolean = withContext(Dispatchers.IO) {
+        transport: EicHttpTransport
+    ): Boolean {
         val (num, _) = extractTrainDigitsAndCategory(trainNumber)
-        if (num.isEmpty() || travelDate.isBlank()) return@withContext true
+        if (num.isEmpty() || travelDate.isBlank()) return true
         val cleanIso = GrmParser.normalizeIsoDate(travelDate)
         val yyyymmdd = cleanIso.replace("-", "")
-        if (yyyymmdd.length != 8 || !yyyymmdd.all { it.isDigit() }) return@withContext true
+        if (yyyymmdd.length != 8 || !yyyymmdd.all { it.isDigit() }) return true
 
         val url = "https://api-gateway.intercity.pl/grm/grm/available/$num/$yyyymmdd"
         try {
-            val req = Request.Builder()
-                .url(url)
-                .header("User-Agent", GRM_AVAILABLE_UA)
-                .header("Origin", EIC_ORIGIN)
-                .header("Referer", EIC_REFERER)
-                .get()
-                .build()
-            client.newCall(req).execute().use { resp ->
-                if (resp.isSuccessful) {
-                    val body = resp.body?.string().orEmpty()
-                    val obj = JSONObject(body)
-                    if (obj.has("available") && !obj.optBoolean("available", true)) {
-                        return@withContext false
-                    }
-                }
+            val body = transport.get(url) ?: return true
+            val obj = JSONObject(body)
+            if (obj.has("available") && !obj.optBoolean("available", true)) {
+                return false
             }
         } catch (_: Exception) {
         }
-        true
+        return true
     }
 
     fun parseSprawdzCenyEntry(cenyList: JSONArray?, ticketClass: Int): SprawdzCenyResult {
@@ -190,8 +163,8 @@ object NonGrmScanner {
         )
     }
 
-    private fun queryWyszukajPolaczeniaSync(
-        client: OkHttpClient,
+    private suspend fun queryWyszukajPolaczenia(
+        transport: EicHttpTransport,
         fromEva: String,
         toEva: String,
         travelDate: String,
@@ -225,33 +198,20 @@ object NonGrmScanner {
             put("urzadzenieNr", 956)
         }
 
-        val req = Request.Builder()
-            .url(POCIAGI_URL)
-            .header("User-Agent", EIC_BROWSER_UA)
-            .header("Origin", EIC_ORIGIN)
-            .header("Referer", EIC_REFERER)
-            .header("Content-Type", "application/json")
-            .header("Accept", "application/json, text/plain, */*")
-            .header("app-version", "1.6.20")
-            .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
-            .build()
-
         return try {
-            client.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) return null
-                val data = JSONObject(resp.body?.string().orEmpty())
-                val polaczenia = data.optJSONArray("polaczenia") ?: return null
-                for (i in 0 until polaczenia.length()) {
-                    val conn = polaczenia.optJSONObject(i) ?: continue
-                    val pociagi = conn.optJSONArray("pociagi") ?: continue
-                    if (pociagi.length() != 1) continue
-                    val tr = pociagi.optJSONObject(0) ?: continue
-                    if (tr.optString("nrPociagu", "").trim() == trainNumStr) {
-                        return tr
-                    }
+            val raw = transport.postJson(POCIAGI_URL, payload.toString()) ?: return null
+            val data = JSONObject(raw)
+            val polaczenia = data.optJSONArray("polaczenia") ?: return null
+            for (i in 0 until polaczenia.length()) {
+                val conn = polaczenia.optJSONObject(i) ?: continue
+                val pociagi = conn.optJSONArray("pociagi") ?: continue
+                if (pociagi.length() != 1) continue
+                val tr = pociagi.optJSONObject(0) ?: continue
+                if (tr.optString("nrPociagu", "").trim() == trainNumStr) {
+                    return tr
                 }
-                null
             }
+            null
         } catch (_: Exception) {
             null
         }
@@ -261,8 +221,8 @@ object NonGrmScanner {
         stops: List<StationStop>,
         trainNumber: String,
         travelDate: String,
-        client: OkHttpClient = defaultHttpClient
-    ): Triple<Map<String, Int>, String, Map<String, String>> = withContext(Dispatchers.IO) {
+        transport: EicHttpTransport
+    ): Triple<Map<String, Int>, String, Map<String, String>> {
         val (trainNumStr, defaultCat) = extractTrainDigitsAndCategory(trainNumber)
         var category = defaultCat
         val shortCodes = ConcurrentHashMap<String, Int>()
@@ -280,7 +240,7 @@ object NonGrmScanner {
         val firstEva = stops.first().evaCode
         val lastEva = stops.last().evaCode
 
-        val rootTr = queryWyszukajPolaczeniaSync(client, firstEva, lastEva, travelDate, endDate, trainNumStr)
+        val rootTr = queryWyszukajPolaczenia(transport, firstEva, lastEva, travelDate, endDate, trainNumStr)
         if (rootTr != null) {
             val cat = rootTr.optString("kategoriaPociagu", "").trim()
             if (cat.isNotEmpty()) category = cat.uppercase()
@@ -308,7 +268,7 @@ object NonGrmScanner {
                     async {
                         sem.withPermit {
                             currentCoroutineContext().ensureActive()
-                            val tr = queryWyszukajPolaczeniaSync(client, firstEva, st.evaCode, travelDate, endDate, trainNumStr)
+                            val tr = queryWyszukajPolaczenia(transport, firstEva, st.evaCode, travelDate, endDate, trainNumStr)
                             val sid = tr?.optInt("stacjaPrzyjazdu", 0) ?: 0
                             if (sid > 0) {
                                 shortCodes[st.evaCode] = sid
@@ -329,7 +289,7 @@ object NonGrmScanner {
                         sem.withPermit {
                             currentCoroutineContext().ensureActive()
                             val segDate = RouteHelpers.computeSegmentDate(travelDate, st.dayOffset)
-                            val tr = queryWyszukajPolaczeniaSync(client, st.evaCode, lastEva, segDate, endDate, trainNumStr)
+                            val tr = queryWyszukajPolaczenia(transport, st.evaCode, lastEva, segDate, endDate, trainNumStr)
                             val sid = tr?.optInt("stacjaWyjazdu", 0) ?: 0
                             if (sid > 0) {
                                 shortCodes[st.evaCode] = sid
@@ -343,7 +303,7 @@ object NonGrmScanner {
             }
         }
 
-        Triple(shortCodes.toMap(), category, exactDeps.toMap())
+        return Triple(shortCodes.toMap(), category, exactDeps.toMap())
     }
 
     private fun formatDepDateTime(stop: StationStop, travelDate: String, exactDeps: Map<String, String>): String {
@@ -355,12 +315,12 @@ object NonGrmScanner {
     }
 
     private suspend fun checkSprawdzCenyPair(
-        client: OkHttpClient,
+        transport: EicHttpTransport,
         query: PairQuery,
         trainNumInt: Int,
         category: String,
         ticketClass: Int
-    ): SprawdzCenyResult? = withContext(Dispatchers.IO) {
+    ): SprawdzCenyResult? {
         val polArr = JSONArray().apply {
             put(
                 JSONObject().apply {
@@ -406,41 +366,28 @@ object NonGrmScanner {
             put("urzadzenieNr", 956)
         }
 
-        val req = Request.Builder()
-            .url(SPRZEDAZ_URL)
-            .header("User-Agent", EIC_BROWSER_UA)
-            .header("Origin", EIC_ORIGIN)
-            .header("Referer", EIC_REFERER)
-            .header("Content-Type", "application/json")
-            .header("Accept", "application/json, text/plain, */*")
-            .header("app-version", "1.6.20")
-            .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
-            .build()
-
+        val bodyStr = payload.toString()
         for (attempt in 0..1) {
             currentCoroutineContext().ensureActive()
             try {
-                client.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) {
-                        if (attempt == 1) return@withContext null
-                    } else {
-                        val data = JSONObject(resp.body?.string().orEmpty())
-                        val cenyPolaczen = data.optJSONArray("cenyPolaczen") ?: return@withContext null
-                        for (i in 0 until cenyPolaczen.length()) {
-                            val item = cenyPolaczen.optJSONObject(i) ?: continue
-                            if (item.optInt("idPolaczenia", -1) == query.pairId) {
-                                return@withContext parseSprawdzCenyEntry(item.optJSONArray("ceny"), ticketClass)
-                            }
+                val raw = transport.postJson(SPRZEDAZ_URL, bodyStr)
+                if (raw != null) {
+                    val data = JSONObject(raw)
+                    val cenyPolaczen = data.optJSONArray("cenyPolaczen") ?: return null
+                    for (i in 0 until cenyPolaczen.length()) {
+                        val item = cenyPolaczen.optJSONObject(i) ?: continue
+                        if (item.optInt("idPolaczenia", -1) == query.pairId) {
+                            return parseSprawdzCenyEntry(item.optJSONArray("ceny"), ticketClass)
                         }
-                        return@withContext null
                     }
+                    return null
                 }
             } catch (_: Exception) {
-                if (attempt == 1) return@withContext null
+                if (attempt == 1) return null
             }
-            delay(400L)
+            if (attempt == 0) delay(400L)
         }
-        null
+        return null
     }
 
     private fun mergeStandingLegs(legs: List<NonGrmLeg>): List<NonGrmLeg> {
@@ -625,24 +572,15 @@ object NonGrmScanner {
         )
     }
 
-    suspend fun scanNonGrmTrain(
-        scheduleClient: ScheduleClient,
-        fromStation: String,
-        toStation: String,
+    suspend fun scanNonGrmTrainFromStops(
+        stops: List<StationStop>,
         travelDate: String,
         trainNumber: String,
         depTime: String?,
         ticketClass: Int,
+        transport: EicHttpTransport,
         onProgress: (Int, String) -> Unit
     ): FullTrainAvailabilityMap {
-        onProgress(15, "Pociąg bez schematu miejsc — pobieranie trasy...")
-        val stops = scheduleClient.resolveRealRoute(
-            fromStation = fromStation,
-            toStation = toStation,
-            travelDate = travelDate,
-            trainNumber = trainNumber,
-            depTime = depTime
-        )
         if (stops.size < 2) {
             throw IllegalStateException("Nie udało się ustalić listy przystanków dla $trainNumber.")
         }
@@ -651,7 +589,7 @@ object NonGrmScanner {
         val trainNumInt = trainNumStr.toIntOrNull() ?: 0
 
         onProgress(28, "Pobieranie identyfikatorów stacji e-IC (bez blokowania miejsc)...")
-        val (shortCodes, category, exactDeps) = resolveEicShortCodes(stops, trainNumber, travelDate)
+        val (shortCodes, category, exactDeps) = resolveEicShortCodes(stops, trainNumber, travelDate, transport)
 
         val plan = planNonGrmLegs(
             stops = stops,
@@ -659,7 +597,7 @@ object NonGrmScanner {
             exactDeps = exactDeps,
             travelDate = travelDate,
             checkPairFn = { query ->
-                checkSprawdzCenyPair(defaultHttpClient, query, trainNumInt, category, ticketClass)
+                checkSprawdzCenyPair(transport, query, trainNumInt, category, ticketClass)
             },
             onProgress = onProgress
         )

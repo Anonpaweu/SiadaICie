@@ -1770,10 +1770,10 @@
       }
       if (status === 'SPECIAL_ONLY') {
         return {
-          label: 'Korytarz — dostępne tylko miejsca specjalne (włącz odpowiedni filtr powyżej lub kup bez gwarancji)',
+          label: 'Tylko miejsca specjalne (brak zwykłych i stojących) — dostępne wyłącznie dla uprawnionych lub w 1. klasie',
           bg: 'var(--amber-bg)',
           color: 'var(--amber)',
-          btnLabel: 'Kup bez gwarancji / sprawdź specjalne (e-IC)',
+          btnLabel: 'Sprawdź miejsca specjalne / 1. klasę (e-IC)',
           showLink: true,
         };
       }
@@ -1826,11 +1826,13 @@
             subtitleEl.innerText = 'Brak wolnych miejsc w tej klasie — w pociągach EIP (Pendolino) obowiązuje rezerwacja miejsc';
           } else if (data.full_route_standing_status === 'OVERBOOKED') {
             subtitleEl.innerText = 'PKP Intercity zablokowało sprzedaż w tej klasie — brak miejsc siedzących i stojących';
+          } else if (data.full_route_standing_status === 'SPECIAL_ONLY') {
+            subtitleEl.innerText = 'Na całej trasie e-IC nie sprzedaje zwykłych biletów ani biletów bez gwarancji — dostępne wyłącznie miejsca specjalne lub 1. klasa';
           } else {
             subtitleEl.innerText = 'Brak pełnego wariantu siedzącego — sprawdź dostępność biletu bez gwarancji miejsca w e-IC';
           }
         } else if (standingStepsCount > 0) {
-          subtitleEl.innerText = 'Plan mieszany: część trasy z miejscem siedzącym, a część bez gwarancji miejsca (korytarz)';
+          subtitleEl.innerText = 'Plan mieszany: część trasy z miejscem siedzącym, a część bez wolnego zwykłego miejsca';
         } else {
           subtitleEl.innerText = 'Kolejne kroki gwarantujące miejsce siedzące na całej trasie';
         }
@@ -1842,10 +1844,12 @@
           : `Liczba biletów: ${ticketsCount}`;
       } else if (isEipTrain) {
         countBadge.innerText = 'Brak wolnych miejsc (EIP)';
+      } else if (data.full_route_standing_status === 'OVERBOOKED') {
+        countBadge.innerText = 'Brak biletów w tej klasie';
+      } else if (data.full_route_standing_status === 'SPECIAL_ONLY') {
+        countBadge.innerText = 'Tylko miejsca specjalne';
       } else {
-        countBadge.innerText = data.full_route_standing_status === 'OVERBOOKED'
-          ? 'Brak biletów w tej klasie'
-          : 'Bilet bez gwarancji miejsca';
+        countBadge.innerText = 'Bilet bez gwarancji miejsca';
       }
       list.innerHTML = '';
 
@@ -1862,6 +1866,15 @@
           notice.style.color = 'var(--error)';
           notice.style.border = '1px solid color-mix(in srgb, var(--error) 40%, transparent)';
           notice.innerText = 'PKP Intercity zablokowało sprzedaż w tej klasie (pociąg przepełniony / wyprzedany — nie można kupić nawet biletu bez gwarancji miejsca). Sprawdź inną klasę lub inny pociąg.';
+        } else if (data.full_route_standing_status === 'SPECIAL_ONLY') {
+          notice.className = 'rail-tonal rounded-2xl p-3.5 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3';
+          notice.style.backgroundColor = 'var(--amber-bg)';
+          notice.style.color = 'var(--amber)';
+          notice.style.border = '1px solid color-mix(in srgb, var(--amber) 40%, transparent)';
+          const linkBtn = fullRouteUrl
+            ? `<a href="${escapeHtml(fullRouteUrl)}" target="_blank" rel="noopener noreferrer" class="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-semibold text-xs transition-opacity hover:opacity-85" style="background-color: var(--amber-bg); color: var(--amber); border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent);"><span>Sprawdź miejsca specjalne / 1. klasę (e-IC)</span><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg></a>`
+            : '';
+          notice.innerHTML = `<div class="flex-1 leading-relaxed">Na całej trasie e-IC nie sprzedaje zwykłych biletów ani biletów bez gwarancji miejsca — dostępne są wyłącznie miejsca specjalne (dla uprawnionych, sprawdź filtry powyżej) lub 1. klasa.</div>${linkBtn}`;
         } else {
           notice.style.color = 'var(--amber)';
           notice.innerText = 'Brak pełnego wariantu siedzącego dla aktywnych filtrów — na części lub całości tej trasy brak wolnych miejsc siedzących (sprawdź filtry specjalne powyżej lub poniższy wariant bez gwarancji miejsca).';
@@ -1932,7 +1945,7 @@
         )
       );
 
-      if (hasStandingLeg && fullRouteUrl && hasStations && !isEipTrain && data.full_route_standing_status !== 'OVERBOOKED') {
+      if (hasStandingLeg && fullRouteUrl && hasStations && !isEipTrain && data.full_route_standing_status !== 'OVERBOOKED' && data.full_route_standing_status !== 'SPECIAL_ONLY') {
         const firstSt = data.stations[0];
         const lastSt = data.stations[data.stations.length - 1];
         const fullInfo = getStandingBadgeInfo(data.full_route_standing_status);
@@ -2019,9 +2032,12 @@
 
           if (step.is_standing) {
             const isOverbooked = step.standing_status === 'OVERBOOKED';
+            const isSpecialOnly = step.standing_status === 'SPECIAL_ONLY';
             const stBg = isOverbooked ? 'var(--error-bg)' : 'var(--amber-bg)';
             const stCol = isOverbooked ? 'var(--error)' : 'var(--amber)';
-            const stTag = isOverbooked ? 'BRAK BILETÓW W TEJ KLASIE' : 'KORYTARZ';
+            const stTag = isOverbooked
+              ? 'BRAK BILETÓW W TEJ KLASIE'
+              : (isSpecialOnly ? 'TYLKO MIEJSCA SPECJALNE' : 'KORYTARZ');
             stepsHtml += `
               <div class="text-xs flex items-center gap-2 p-2.5 rounded-xl my-1" style="background-color: ${stBg}; color: ${stCol};">
                 <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">

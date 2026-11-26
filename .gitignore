@@ -49,3 +49,4 @@ android/keystore.properties
 *.jks
 *.keystore
 android/.idea/
+android/.kotlin/

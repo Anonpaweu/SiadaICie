@@ -358,4 +358,56 @@ class SeatOptimizerTest {
             )
         )
     }
+
+    @Test
+    fun standingStepInfersSpecialOnlyWhenFilteredOutSpecialSeatsExist() {
+        val map = FullTrainAvailabilityMap(
+            trainNumber = "IC 1644",
+            travelDate = "2026-11-27",
+            segments = listOf(
+                SegmentAvailabilityMap(
+                    segmentIndex = 0,
+                    fromStation = "Koluszki",
+                    toStation = "Częstochowa Stradom",
+                    departureTime = "16:15",
+                    durationMin = 70,
+                    carriages = mapOf("5" to listOf("44"))
+                ),
+                SegmentAvailabilityMap(
+                    segmentIndex = 1,
+                    fromStation = "Częstochowa Stradom",
+                    toStation = "Opole Główne",
+                    departureTime = "17:25",
+                    durationMin = 55,
+                    carriages = mapOf("7" to listOf("15")),
+                    seatTags = mapOf("7_15" to listOf(GrmParser.TAG_ELDERLY))
+                )
+            )
+        )
+        val matrix = SeatOptimizer.availabilityMapToMatrix(map)
+
+        // Default prefs exclude ELDERLY -> second segment becomes standing with SPECIAL_ONLY
+        val resDefault = SeatOptimizer.solveTopStrategies(
+            matrix.availabilityMatrix,
+            matrix.seatsMeta,
+            matrix.stationNames,
+            matrix.segmentDurations,
+            config = OptimizerConfig(seatFilters = SeatFilterPrefs())
+        )
+        assertEquals(2, resDefault[0].steps.size)
+        assertTrue(resDefault[0].steps[1].isStanding)
+        assertEquals("SPECIAL_ONLY", resDefault[0].steps[1].standingStatus)
+
+        // Enabling allowElderly turns it into a seated step
+        val resElderly = SeatOptimizer.solveTopStrategies(
+            matrix.availabilityMatrix,
+            matrix.seatsMeta,
+            matrix.stationNames,
+            matrix.segmentDurations,
+            config = OptimizerConfig(seatFilters = SeatFilterPrefs(allowElderly = true))
+        )
+        assertEquals(2, resElderly[0].steps.size)
+        assertTrue(!resElderly[0].steps[1].isStanding)
+        assertEquals("15", resElderly[0].steps[1].seatNo)
+    }
 }

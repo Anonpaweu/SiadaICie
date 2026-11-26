@@ -32,13 +32,17 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.DirectionsBike
 import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.filled.AccessibilityNew
+import androidx.compose.material.icons.filled.Accessible
 import androidx.compose.material.icons.filled.AirlineSeatReclineNormal
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ChildFriendly
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.DirectionsBike
+import androidx.compose.material.icons.filled.Elderly
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -46,6 +50,7 @@ import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LocalCafe
+import androidx.compose.material.icons.filled.PregnantWoman
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -75,6 +80,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -711,7 +717,7 @@ fun ResultScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(
-                                imageVector = Icons.Default.DirectionsBike,
+                                imageVector = Icons.AutoMirrored.Filled.DirectionsBike,
                                 contentDescription = null,
                                 tint = colors.seatEmerald,
                                 modifier = Modifier.size(20.dp)
@@ -1208,7 +1214,7 @@ private fun TimelineStepCard(
                             isOverbookedStep ->
                                 "BRAK BILETÓW W TEJ KLASIE (nawet stojących)"
                             step.isStanding && step.standingStatus == "SPECIAL_ONLY" ->
-                                "Brak miejsc ogólnodostępnych (tylko specjalne)"
+                                "Korytarz — dostępne tylko miejsca specjalne"
                             step.isStanding ->
                                 "KORYTARZ - brak miejsca siedzącego"
                             step.seatNo.startsWith("AUTO") ->
@@ -1229,6 +1235,12 @@ private fun TimelineStepCard(
                     text = "Na tym odcinku system e-IC zablokował sprzedaż w wybranej klasie. Sprawdź 1. klasę lub inny pociąg.",
                     fontSize = 12.sp,
                     color = colors.errorRed
+                )
+            } else if (step.isStanding && step.standingStatus == "SPECIAL_ONLY") {
+                Text(
+                    text = "Na tym odcinku zostały tylko miejsca specjalne (np. senior, z dzieckiem, ciąża). Włącz odpowiedni filtr powyżej lub kup bilet bez gwarancji.",
+                    fontSize = 12.sp,
+                    color = colors.textSecondary
                 )
             }
 
@@ -1305,7 +1317,7 @@ private fun TimelineStepCard(
                 ) {
                     Text(
                         text = if (step.standingStatus == "SPECIAL_ONLY") {
-                            "Sprawdź specjalne / 1. klasę (e-IC)"
+                            "Kup bez gwarancji / sprawdź specjalne (e-IC)"
                         } else {
                             "Kup bilet bez gwarancji (e-IC)"
                         },
@@ -1359,6 +1371,16 @@ private fun abbreviateStationForGrid(name: String): String {
         .trim()
 }
 
+private fun specialSeatIcon(tags: List<String>): ImageVector? = when {
+    GrmParser.TAG_WHEELCHAIR in tags -> Icons.Default.Accessible
+    GrmParser.TAG_PRM_ASSIST in tags -> Icons.Default.AccessibilityNew
+    GrmParser.TAG_ELDERLY in tags -> Icons.Default.Elderly
+    GrmParser.TAG_PREGNANT in tags -> Icons.Default.PregnantWoman
+    GrmParser.TAG_CHILD in tags -> Icons.Default.ChildFriendly
+    GrmParser.TAG_BIKE in tags -> Icons.AutoMirrored.Filled.DirectionsBike
+    else -> null
+}
+
 @Composable
 private fun SeatAvailabilityGridDialog(
     map: FullTrainAvailabilityMap,
@@ -1366,7 +1388,7 @@ private fun SeatAvailabilityGridDialog(
     onDismiss: () -> Unit
 ) {
     val colors = LocalRailColors.current
-    val matrix = remember(map, seatFilters) { SeatOptimizer.availabilityMapToMatrix(map) }
+    val matrix = remember(map) { SeatOptimizer.availabilityMapToMatrix(map) }
     val allCarriages = remember(matrix) {
         matrix.seatsMeta.values
             .map { it.carriageNo }
@@ -1375,12 +1397,13 @@ private fun SeatAvailabilityGridDialog(
     }
     var selectedCarriage by remember(allCarriages) { mutableStateOf<Int?>(null) }
     var selectedSegIdx by remember(map) { mutableStateOf<Int?>(null) }
+    var selectedSeatInfo by remember(map) { mutableStateOf<String?>(null) }
 
-    val filteredSeats = remember(matrix, seatFilters, selectedCarriage) {
+    // Show ALL scanned seats (including special seats in orange with icons so user sees full train availability)
+    val filteredSeats = remember(matrix, selectedCarriage) {
         matrix.availabilityMatrix.entries
             .mapNotNull { (uid, vec) ->
                 val meta = matrix.seatsMeta[uid] ?: return@mapNotNull null
-                if (!GrmParser.isSeatAllowed(meta.seatTags, seatFilters)) return@mapNotNull null
                 if (selectedCarriage != null && meta.carriageNo != selectedCarriage) return@mapNotNull null
                 if (vec.none { it == 1 }) return@mapNotNull null
                 meta to vec
@@ -1390,7 +1413,7 @@ private fun SeatAvailabilityGridDialog(
     val segments = map.segments
     val anyScrapeError = remember(segments) { segments.any { it.status == "SCRAPE_ERROR" } }
     val hScroll = rememberScrollState()
-    val seatColWidth = 70.dp
+    val seatColWidth = 78.dp
     val cellColWidth = 28.dp
 
     Dialog(
@@ -1491,6 +1514,15 @@ private fun SeatAvailabilityGridDialog(
                             modifier = Modifier
                                 .size(12.dp)
                                 .clip(RoundedCornerShape(3.dp))
+                                .background(colors.corridorAmber)
+                        )
+                        Text("Specjalne", fontSize = 11.sp, color = colors.textSecondary)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Box(
+                            modifier = Modifier
+                                .size(12.dp)
+                                .clip(RoundedCornerShape(3.dp))
                                 .background(colors.cardTonal)
                                 .border(1.dp, colors.hairline, RoundedCornerShape(3.dp))
                         )
@@ -1511,7 +1543,7 @@ private fun SeatAvailabilityGridDialog(
                 }
 
                 val activeSeg = selectedSegIdx?.let { segments.getOrNull(it) }
-                if (activeSeg != null) {
+                if (activeSeg != null || selectedSeatInfo != null) {
                     Surface(
                         color = colors.cardTonal,
                         shape = RoundedCornerShape(10.dp),
@@ -1519,8 +1551,10 @@ private fun SeatAvailabilityGridDialog(
                             .fillMaxWidth()
                             .padding(horizontal = 14.dp, vertical = 3.dp)
                     ) {
+                        val stripText = selectedSeatInfo
+                            ?: "Odc. ${activeSeg!!.segmentIndex + 1}: ${activeSeg.fromStation} -> ${activeSeg.toStation} (${activeSeg.departureTime})"
                         Text(
-                            text = "Odc. ${activeSeg.segmentIndex + 1}: ${activeSeg.fromStation} -> ${activeSeg.toStation} (${activeSeg.departureTime})",
+                            text = stripText,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Medium,
                             color = colors.textPrimary,
@@ -1611,29 +1645,40 @@ private fun SeatAvailabilityGridDialog(
                         ) { rowIdx ->
                             val (meta, vec) = filteredSeats[rowIdx]
                             val hasRestricted = meta.seatTags.any { GrmParser.isRestrictedTag(it) }
+                            val seatIcon = specialSeatIcon(meta.seatTags)
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .clickable {
+                                        val tagsLabel = if (meta.seatTags.isNotEmpty()) {
+                                            meta.seatTags.joinToString(", ") { GrmParser.formatSeatTagPl(it) }
+                                        } else {
+                                            "Miejsce zwykłe"
+                                        }
+                                        val info = "Wagon ${meta.carriageNo} · m. ${meta.seatNo}: $tagsLabel"
+                                        selectedSeatInfo = if (selectedSeatInfo == info) null else info
+                                    }
                                     .padding(horizontal = 12.dp, vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Row(
                                     modifier = Modifier.width(seatColWidth),
-                                    verticalAlignment = Alignment.CenterVertically
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(3.dp)
                                 ) {
                                     Text(
                                         text = "W${meta.carriageNo} · ${meta.seatNo}",
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.SemiBold,
-                                        color = colors.textPrimary,
+                                        color = if (hasRestricted) colors.corridorAmber else colors.textPrimary,
                                         maxLines = 1
                                     )
-                                    if (hasRestricted) {
-                                        Text(
-                                            text = " *",
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = colors.corridorAmber
+                                    if (seatIcon != null) {
+                                        Icon(
+                                            imageVector = seatIcon,
+                                            contentDescription = null,
+                                            tint = colors.corridorAmber,
+                                            modifier = Modifier.size(14.dp)
                                         )
                                     }
                                 }
@@ -1641,17 +1686,20 @@ private fun SeatAvailabilityGridDialog(
                                     segments.forEachIndexed { segIdx, seg ->
                                         val isFree = vec.getOrElse(segIdx) { 0 } == 1
                                         val isErr = seg.status == "SCRAPE_ERROR"
+                                        val isSpecialFree = isFree && hasRestricted
                                         Box(
                                             modifier = Modifier.width(cellColWidth),
                                             contentAlignment = Alignment.Center
                                         ) {
                                             Box(
+                                                contentAlignment = Alignment.Center,
                                                 modifier = Modifier
                                                     .size(20.dp)
                                                     .clip(RoundedCornerShape(5.dp))
                                                     .background(
                                                         when {
                                                             isErr -> colors.errorContainer
+                                                            isSpecialFree -> colors.corridorAmber
                                                             isFree -> colors.seatEmerald
                                                             else -> colors.cardTonal
                                                         }
@@ -1660,12 +1708,22 @@ private fun SeatAvailabilityGridDialog(
                                                         width = 1.dp,
                                                         color = when {
                                                             isErr -> colors.errorRed.copy(alpha = 0.55f)
+                                                            isSpecialFree -> colors.corridorAmber
                                                             isFree -> colors.seatEmerald
                                                             else -> colors.hairline
                                                         },
                                                         shape = RoundedCornerShape(5.dp)
                                                     )
-                                            )
+                                            ) {
+                                                if (isSpecialFree && seatIcon != null) {
+                                                    Icon(
+                                                        imageVector = seatIcon,
+                                                        contentDescription = null,
+                                                        tint = Color.White,
+                                                        modifier = Modifier.size(13.dp)
+                                                    )
+                                                }
+                                            }
                                         }
                                     }
                                 }

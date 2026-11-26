@@ -121,6 +121,40 @@ object GrmParser {
         return "brak dostępnych wagonów" in low || "brak dostepnych wagonow" in low
     }
 
+    /**
+     * Classifies e-IC connection card text for a given ticketClass:
+     * - "AVAILABLE": standing ticket without guaranteed seat is available
+     * - "OVERBOOKED": chosen class is completely sold out / unavailable
+     * - "SPECIAL_ONLY": general seats sold out, only special seats remain
+     */
+    fun classifyStandingStatusFromCardText(cardText: String?, ticketClass: Int = TARGET_CLASS): String? {
+        val low = (cardText ?: "").replace(Regex("\\s+"), " ").trim().lowercase()
+        if (low.isEmpty()) return null
+        val classPrefix = "klasa $ticketClass:"
+        val snippet = if (classPrefix in low) {
+            low.substringAfter(classPrefix).take(260)
+        } else {
+            low
+        }
+        if ("bez gwarancji miejsca" in snippet || "bilet bez gwarancji" in snippet) {
+            return "AVAILABLE"
+        }
+        if (
+            "zostały wyprzedane" in snippet ||
+            "zostaly wyprzedane" in snippet ||
+            "wyprzedano miejsca" in snippet ||
+            "brak wolnych miejsc" in snippet ||
+            "klasa $ticketClass niedostępna" in low ||
+            "klasa $ticketClass niedostepna" in low
+        ) {
+            return "OVERBOOKED"
+        }
+        if ("miejsca specjalne" in snippet) {
+            return "SPECIAL_ONLY"
+        }
+        return null
+    }
+
     fun parseGrmWagonSvg(svgXml: String, ticketClass: Int = TARGET_CLASS): List<String> {
         return parseGrmWagonSvgWithMeta(svgXml, ticketClass, includeWheelchair = false).first
     }

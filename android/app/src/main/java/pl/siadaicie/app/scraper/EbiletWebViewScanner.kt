@@ -46,7 +46,10 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.resume
 
-open class GraphicReservationException(message: String) : Exception(message)
+open class GraphicReservationException(
+    message: String,
+    val standingStatus: String? = null
+) : Exception(message)
 
 class EbiletWebViewScanner(
     private val context: Context,
@@ -1214,6 +1217,22 @@ class EbiletWebViewScanner(
                     throw GraphicReservationException("SCRAPE_ERROR: Kafelek pociągu zniknął dla $fromStation -> $toStation.")
                 }
 
+                // Capture matched card text for standing/special-only classification before class selection
+                val matchedCardText = decodeJsString(
+                    evalJs(
+                        worker.webView,
+                        """
+                        (function(idx) {
+                            $FIND_CARDS_JS
+                            const cards = __iccFindCards();
+                            const c = cards[idx] || null;
+                            return c ? (c.innerText || '') : '';
+                        })($matchedIdx);
+                        """.trimIndent()
+                    )
+                )
+                val cardStandingStatus = GrmParser.classifyStandingStatusFromCardText(matchedCardText, ticketClass)
+
                 // Wait for class buttons to render after expanding (re-try expand up to 3 times if card stays closed)
                 var selectClassResult = ""
                 var lastExpandAt = System.currentTimeMillis()
@@ -1262,7 +1281,8 @@ class EbiletWebViewScanner(
                                         }
                                         if (btn) {
                                             const txt = (btn.innerText || '').toLowerCase();
-                                            if (txt.includes('brak miejsc') || txt.includes('niedostępne') || txt.includes('zablokowana') || txt.includes('wyprzedane')) {
+                                            const isSpecialClickable = txt.includes('miejsca specjalne') && !btn.disabled && btn.getAttribute('aria-disabled') !== 'true';
+                                            if (!isSpecialClickable && (txt.includes('brak miejsc') || txt.includes('niedostępne') || txt.includes('zablokowana') || txt.includes('wyprzedane'))) {
                                                 return 'SOLD_OUT';
                                             }
                                             btn.click();
@@ -1292,9 +1312,12 @@ class EbiletWebViewScanner(
                         Log.i(TAG, "[$fromStation -> $toStation] Retry expand #$reExpandAttempts: $retryExp")
                     }
                 }
-                Log.i(TAG, "[$fromStation -> $toStation] Class selection: $selectClassResult")
+                Log.i(TAG, "[$fromStation -> $toStation] Class selection: $selectClassResult (standing=$cardStandingStatus)")
                 if (selectClassResult == "SOLD_OUT") {
-                    throw GraphicReservationException("BRAK_MIEJSC_KLASA_$ticketClass: Wyczerpano pulę miejsc w Klasie $ticketClass na tym odcinku.")
+                    throw GraphicReservationException(
+                        "BRAK_MIEJSC_KLASA_$ticketClass: Wyczerpano pulę miejsc w Klasie $ticketClass na tym odcinku.",
+                        standingStatus = cardStandingStatus
+                    )
                 }
                 if (!selectClassResult.startsWith("CLICKED:")) {
                     throw GraphicReservationException("SCRAPE_ERROR: Nie udało się wybrać Klasy $ticketClass dla $fromStation -> $toStation ($selectClassResult)")
@@ -1871,6 +1894,7 @@ class EbiletWebViewScanner(
                 var errReason: String? = null
                 val stepTicks = AtomicInteger(0)
                 val safeTotal = rangeTotalCount.coerceAtLeast(1)
+                var standingStatus: String? = null
 
                 try {
                     val segScan = withTimeout(75_000L) {
@@ -1915,6 +1939,9 @@ class EbiletWebViewScanner(
                     errReason = e.message
                     carriages = emptyMap()
                     seatTags = emptyMap()
+                    if (status == "SOLD_OUT") {
+                        standingStatus = e.standingStatus
+                    }
                 } catch (e: Exception) {
                     status = "SCRAPE_ERROR"
                     errReason = e.message
@@ -1940,7 +1967,8 @@ class EbiletWebViewScanner(
                     carriages = carriages,
                     seatTags = seatTags,
                     status = status,
-                    errorReason = errReason
+                    errorReason = errReason,
+                    standingStatus = standingStatus
                 )
             }
 

@@ -609,9 +609,22 @@ object SeatOptimizer {
                     } else null
                 } else null
 
-                val stepStandingStatus = if (b.isStanding) {
+                var stepStandingStatus = if (b.isStanding) {
                     worstStandingStatus(segmentStandingStatuses, b.startSeg, b.endSeg)
                 } else null
+                if (b.isStanding && stepStandingStatus == null) {
+                    val allSegsHaveFilteredSpecialSeats = (b.startSeg until b.endSeg).all { segIdx ->
+                        availabilityMatrix.any { (uid, vec) ->
+                            vec.getOrNull(segIdx) == 1 &&
+                                seatsMeta[uid]?.let { m ->
+                                    !GrmParser.isSeatAllowed(m.seatTags, config.seatFilters)
+                                } == true
+                        }
+                    }
+                    if (allSegsHaveFilteredSpecialSeats) {
+                        stepStandingStatus = "SPECIAL_ONLY"
+                    }
+                }
 
                 steps.add(
                     PathStep(

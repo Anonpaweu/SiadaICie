@@ -158,4 +158,32 @@ class GrmParserTest {
         assertEquals(2, GrmParser.seatPriorityTier(tagsMap["36"].orEmpty()))
         assertEquals(3, GrmParser.seatPriorityTier(tagsMap["37"].orEmpty()))
     }
+
+    @Test
+    fun classifyStandingStatusFromCardText_detectsSpecialOnlyAvailableAndOverbooked() {
+        assertEquals(
+            "SPECIAL_ONLY",
+            GrmParser.classifyStandingStatusFromCardText(
+                "Informacja Klasa 2: Brak miejsc ogólnodostępnych. Dostępne miejsca specjalne",
+                2
+            )
+        )
+        assertEquals(
+            "AVAILABLE",
+            GrmParser.classifyStandingStatusFromCardText(
+                "Informacja Klasa 2: Można kupić bilet bez gwarancji miejsca siedzącego.",
+                2
+            )
+        )
+        assertEquals(
+            "OVERBOOKED",
+            GrmParser.classifyStandingStatusFromCardText(
+                "Błąd Klasa 2: Miejsca w wybranej klasie zostały wyprzedane. Klasa 2 Niedostępna",
+                2
+            )
+        )
+        assertNull(
+            GrmParser.classifyStandingStatusFromCardText("Połączenie Klasa 1 99 zł Klasa 2 59 zł KUP BILET", 2)
+        )
+    }
 }

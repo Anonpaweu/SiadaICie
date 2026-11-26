@@ -41,7 +41,7 @@ DEFAULT_HEADERS = {
     "Accept-Language": "pl-PL,pl;q=0.9,en-US;q=0.8,en;q=0.7",
 }
 
-FULL_DAY_WINDOWS = ["00:00", "04:30", "09:00", "13:30", "18:00", "21:30"]
+FULL_DAY_WINDOWS = ["00:00", "04:30", "07:00", "09:30", "12:00", "14:00", "15:45", "17:30", "19:30", "21:30"]
 
 
 @functools.lru_cache(maxsize=1)
@@ -385,8 +385,8 @@ def fetch_live_train_connections(
 ) -> List[Dict]:
     """
     Scrapes real PKP Intercity connections from official timetable portal (rozklad-pkp.pl).
-    When full_day=True, queries across multiple time windows (00:00, 04:30, 09:00, 13:30, 18:00, 21:30)
-    in parallel to retrieve all departures across the entire 24 hours of that day.
+    When full_day=True, queries across denser time windows covering daytime peaks
+    in parallel to retrieve departures across the entire 24 hours of that day without misses.
     When direct_only=False, queries both direct trains and transfer connections so all
     possibilities are available.
     Filters strictly to PKP Intercity operated trains (EIP, EIC, IC, TLK).
@@ -403,7 +403,7 @@ def fetch_live_train_connections(
 
     windows = FULL_DAY_WINDOWS if full_day else [travel_time]
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(windows) * 2) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(12, len(windows) * 2)) as executor:
         direct_futures = [
             executor.submit(_fetch_single_window_trains, from_name, from_eva, to_name, to_eva, date_formatted, w, True)
             for w in windows

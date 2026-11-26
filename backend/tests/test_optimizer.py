@@ -9,6 +9,7 @@ Tests for the SeatOptimizer (solver.py).
 5. Disconnected EZT units -> avoid crossing unit boundary 8->9
 """
 import pytest
+from backend.app.models.domain import OptimizationProfile
 from backend.app.optimizer.solver import (
     solve_top_strategies,
     SeatMeta,
@@ -329,3 +330,27 @@ class TestStandingMergingAndPluralization:
         assert len(strategies) == 3
         chosen_carriages = [s.carriages_used[0] for s in strategies]
         assert chosen_carriages == [14, 12, 22]
+
+    def test_minimal_transfers_does_not_add_more_transfers_than_balanced_on_standing_route(self):
+        station_names = ["A", "B", "C", "D", "E", "F"]
+        segment_durations = [35, 30, 40, 45, 50]
+        avail = {
+            "10_11": [0, 1, 1, 0, 0],
+            "10_12": [0, 0, 0, 1, 1],
+            "11_21": [0, 0, 1, 1, 1],
+        }
+        meta = {
+            "10_11": SeatMeta(seat_uid="10_11", carriage_no=10, seat_no="11", compartment_no=1),
+            "10_12": SeatMeta(seat_uid="10_12", carriage_no=10, seat_no="12", compartment_no=2),
+            "11_21": SeatMeta(seat_uid="11_21", carriage_no=11, seat_no="21", compartment_no=2),
+        }
+        bal = solve_top_strategies(
+            avail, meta, station_names, segment_durations,
+            config=OptimizerConfig(profile=OptimizationProfile.BALANCED),
+        )
+        min_tr = solve_top_strategies(
+            avail, meta, station_names, segment_durations,
+            config=OptimizerConfig(profile=OptimizationProfile.MINIMAL_TRANSFERS),
+        )
+        assert bal and min_tr
+        assert min_tr[0].transfers_count <= bal[0].transfers_count

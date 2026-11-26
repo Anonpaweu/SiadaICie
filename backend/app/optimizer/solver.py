@@ -138,7 +138,7 @@ def calculate_transfer_penalty(
         return 0.0
 
     if is_standing_b or seat_a.seat_uid == "STANDING" or seat_b.seat_uid == "STANDING":
-        return base_transfer + 100.0
+        return config.p_base_transfer + 100.0
 
     if seat_a.seat_uid == seat_b.seat_uid:
         return 0.0
@@ -335,7 +335,7 @@ def find_optimal_path(
 
                 penalty = calculate_transfer_penalty(b.seat, next_b.seat, next_b.is_standing, config)
                 if require_at_least_one_seat and (b.is_standing != next_b.is_standing):
-                    penalty = 100.0
+                    penalty = config.p_base_transfer * 0.35 + 100.0
 
                 if next_b.block_id in dp:
                     candidate_val = b_score - penalty + dp[next_b.block_id][0]

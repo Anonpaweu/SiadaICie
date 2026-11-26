@@ -539,7 +539,7 @@
       <div class="flex flex-wrap items-center justify-between gap-3 pb-3 border-b rail-hairline">
         <div>
           <h2 class="text-base font-bold">Plan podróży i zakupu biletów</h2>
-          <p class="text-xs" style="color: var(--muted);">Kolejne kroki gwarantujące miejsce siedzące na całej trasie</p>
+          <p id="purchasePlanSubtitle" class="text-xs" style="color: var(--muted);">Kolejne kroki gwarantujące miejsce siedzące na całej trasie</p>
         </div>
         <span id="ticketsCountBadge" class="text-xs font-bold px-3 py-1 rounded-full tabular-nums" style="background-color: var(--accent-bg); color: var(--accent);">
           Liczba biletów: 0
@@ -1614,6 +1614,7 @@
       const section = document.getElementById('purchasePlanSection');
       const list = document.getElementById('purchaseInstructionsList');
       const countBadge = document.getElementById('ticketsCountBadge');
+      const subtitleEl = document.getElementById('purchasePlanSubtitle');
 
       const activeStrategy = (data.strategies && data.strategies[selectedStrategyIndex])
         ? data.strategies[selectedStrategyIndex]
@@ -1628,6 +1629,8 @@
         && data.full_route_booking_url.startsWith('https://ebilet.intercity.pl/')
       ) ? data.full_route_booking_url : '';
       const hasStations = Array.isArray(data.stations) && data.stations.length >= 2;
+      const activeTrainNo = String(data.train_number || document.getElementById('trainNo')?.value || '').trim();
+      const isEipTrain = /^EIP\b/i.test(activeTrainNo);
 
       if (!instructions.length && !(fullRouteUrl && hasStations)) {
         section.classList.add('hidden');
@@ -1641,10 +1644,28 @@
         ? activeStrategy.steps.filter(st => st && st.is_standing).length
         : 0;
 
+      if (subtitleEl) {
+        if (!instructions.length) {
+          if (isEipTrain) {
+            subtitleEl.innerText = 'Brak wolnych miejsc w tej klasie — w pociągach EIP (Pendolino) obowiązuje rezerwacja miejsc';
+          } else if (data.full_route_standing_status === 'OVERBOOKED') {
+            subtitleEl.innerText = 'PKP Intercity zablokowało sprzedaż w tej klasie — brak miejsc siedzących i stojących';
+          } else {
+            subtitleEl.innerText = 'Brak pełnego wariantu siedzącego — sprawdź dostępność biletu bez gwarancji miejsca w e-IC';
+          }
+        } else if (standingStepsCount > 0) {
+          subtitleEl.innerText = 'Plan mieszany: część trasy z miejscem siedzącym, a część bez gwarancji miejsca (korytarz)';
+        } else {
+          subtitleEl.innerText = 'Kolejne kroki gwarantujące miejsce siedzące na całej trasie';
+        }
+      }
+
       if (instructions.length) {
         countBadge.innerText = standingStepsCount > 0
           ? `Bilety: ${ticketsCount} siedzące + ${standingStepsCount} bez gwarancji`
           : `Liczba biletów: ${ticketsCount}`;
+      } else if (isEipTrain) {
+        countBadge.innerText = 'Brak wolnych miejsc (EIP)';
       } else {
         countBadge.innerText = data.full_route_standing_status === 'OVERBOOKED'
           ? 'Brak biletów w tej klasie'
@@ -1655,7 +1676,12 @@
       if (!instructions.length) {
         const notice = document.createElement('div');
         notice.className = 'rail-tonal rounded-2xl p-3.5 text-xs';
-        if (data.full_route_standing_status === 'OVERBOOKED') {
+        if (isEipTrain) {
+          notice.style.backgroundColor = 'var(--error-bg)';
+          notice.style.color = 'var(--error)';
+          notice.style.border = '1px solid color-mix(in srgb, var(--error) 40%, transparent)';
+          notice.innerText = 'Pociąg EIP (Pendolino) wymaga obowiązkowej rezerwacji miejsca i PKP Intercity nie sprzedaje w nim biletów bez gwarancji miejsca siedzącego. Sprawdź inną klasę, filtry specjalne lub inny pociąg.';
+        } else if (data.full_route_standing_status === 'OVERBOOKED') {
           notice.style.backgroundColor = 'var(--error-bg)';
           notice.style.color = 'var(--error)';
           notice.style.border = '1px solid color-mix(in srgb, var(--error) 40%, transparent)';
@@ -1727,7 +1753,7 @@
         )
       );
 
-      if (hasStandingLeg && fullRouteUrl && hasStations) {
+      if (hasStandingLeg && fullRouteUrl && hasStations && !isEipTrain) {
         const firstSt = data.stations[0];
         const lastSt = data.stations[data.stations.length - 1];
         const fullInfo = getStandingBadgeInfo(data.full_route_standing_status);

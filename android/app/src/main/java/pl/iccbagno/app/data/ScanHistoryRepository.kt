@@ -45,6 +45,8 @@ object ScanHistorySerializer {
                 put("travelDate", item.availabilityMap.travelDate)
                 put("fastPathUsed", item.availabilityMap.fastPathUsed)
                 put("totalRouteSegments", item.availabilityMap.totalRouteSegments)
+                put("noSeatmapMode", item.availabilityMap.noSeatmapMode)
+                put("fullRouteStandingStatus", item.availabilityMap.fullRouteStandingStatus ?: JSONObject.NULL)
                 val segArr = JSONArray()
                 for (seg in item.availabilityMap.segments) {
                     val carObj = JSONObject()
@@ -69,6 +71,7 @@ object ScanHistorySerializer {
                             put("seatTags", tagsObj)
                             put("status", seg.status)
                             put("errorReason", seg.errorReason ?: JSONObject.NULL)
+                            put("standingStatus", seg.standingStatus ?: JSONObject.NULL)
                         }
                     )
                 }
@@ -146,7 +149,8 @@ object ScanHistorySerializer {
                             carriages = carriages,
                             seatTags = seatTags,
                             status = sObj.optString("status", "OK"),
-                            errorReason = if (sObj.isNull("errorReason")) null else sObj.optString("errorReason")
+                            errorReason = if (sObj.isNull("errorReason")) null else sObj.optString("errorReason"),
+                            standingStatus = if (sObj.isNull("standingStatus")) null else sObj.optString("standingStatus")
                         )
                     )
                 }
@@ -155,6 +159,8 @@ object ScanHistorySerializer {
                     travelDate = mapObj.optString("travelDate", ""),
                     fastPathUsed = mapObj.optBoolean("fastPathUsed", false),
                     totalRouteSegments = mapObj.optInt("totalRouteSegments", segs.size),
+                    noSeatmapMode = mapObj.optBoolean("noSeatmapMode", false),
+                    fullRouteStandingStatus = if (mapObj.isNull("fullRouteStandingStatus")) null else mapObj.optString("fullRouteStandingStatus"),
                     segments = segs
                 )
                 result.add(

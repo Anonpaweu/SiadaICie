@@ -69,7 +69,8 @@ data class SegmentAvailabilityMap(
     val carriages: Map<String, List<String>> = emptyMap(),
     val seatTags: Map<String, List<String>> = emptyMap(),
     val status: String = "OK",
-    val errorReason: String? = null
+    val errorReason: String? = null,
+    val standingStatus: String? = null
 )
 
 data class FullTrainAvailabilityMap(
@@ -77,6 +78,8 @@ data class FullTrainAvailabilityMap(
     val travelDate: String,
     val fastPathUsed: Boolean = false,
     val totalRouteSegments: Int = 0,
+    val noSeatmapMode: Boolean = false,
+    val fullRouteStandingStatus: String? = null,
     val segments: List<SegmentAvailabilityMap> = emptyList()
 )
 

@@ -100,6 +100,7 @@ fun ResultScreen(
     onOpenSupport: () -> Unit
 ) {
     val colors = LocalRailColors.current
+    val isNoSeatmap = scan.noSeatmapMode || (scan.availabilityMap?.noSeatmapMode == true)
     var showLogs by remember { mutableStateOf(false) }
     var showResultFilters by remember { mutableStateOf(false) }
     var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -516,7 +517,47 @@ fun ResultScreen(
                 }
             }
 
-            if (!scan.isRunning && scan.availabilityMap != null) {
+            if (!scan.isRunning && isNoSeatmap) {
+                item(key = "no_seatmap_banner") {
+                    Surface(
+                        color = colors.cardTonal,
+                        shape = RoundedCornerShape(16.dp),
+                        border = BorderStroke(1.dp, colors.brandNavy.copy(alpha = 0.28f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Info,
+                                contentDescription = null,
+                                tint = colors.brandNavy,
+                                modifier = Modifier
+                                    .padding(top = 2.dp)
+                                    .size(18.dp)
+                            )
+                            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text(
+                                    text = "Pociąg bez schematu miejsc (przydział automatyczny)",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = colors.textPrimary
+                                )
+                                Text(
+                                    text = "Ten pociąg nie ma graficznej mapy miejsc w e-IC. System sprawdził odcinki bez blokowania biletów i znalazł najdłuższe fragmenty z gwarantowanym miejscem siedzącym.",
+                                    fontSize = 12.sp,
+                                    lineHeight = 16.sp,
+                                    color = colors.textSecondary
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!scan.isRunning && scan.availabilityMap != null && !isNoSeatmap) {
                 item(key = "result_filters") {
                     Surface(
                         color = colors.card,
@@ -770,63 +811,67 @@ fun ResultScreen(
                 }
 
                 // Optimization profile + variant switchers
-                item(key = "selectors") {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            OptimizationProfile.entries.forEach { p ->
-                                FilterChip(
-                                    selected = ui.profile == p,
-                                    onClick = { onProfileChange(p) },
-                                    label = { Text(p.label, fontSize = 12.sp) },
-                                    colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = colors.brandNavy,
-                                        selectedLabelColor = Color.White,
-                                        containerColor = colors.card,
-                                        labelColor = colors.textSecondary
-                                    ),
-                                    border = FilterChipDefaults.filterChipBorder(
-                                        enabled = true,
-                                        selected = ui.profile == p,
-                                        borderColor = colors.hairline
-                                    )
-                                )
+                if (!isNoSeatmap || scan.strategies.size > 1) {
+                    item(key = "selectors") {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            if (!isNoSeatmap) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    OptimizationProfile.entries.forEach { p ->
+                                        FilterChip(
+                                            selected = ui.profile == p,
+                                            onClick = { onProfileChange(p) },
+                                            label = { Text(p.label, fontSize = 12.sp) },
+                                            colors = FilterChipDefaults.filterChipColors(
+                                                selectedContainerColor = colors.brandNavy,
+                                                selectedLabelColor = Color.White,
+                                                containerColor = colors.card,
+                                                labelColor = colors.textSecondary
+                                            ),
+                                            border = FilterChipDefaults.filterChipBorder(
+                                                enabled = true,
+                                                selected = ui.profile == p,
+                                                borderColor = colors.hairline
+                                            )
+                                        )
+                                    }
+                                }
                             }
-                        }
 
-                        if (scan.strategies.size > 1) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                scan.strategies.forEachIndexed { idx, s ->
-                                    val isSel = idx == safeIdx
-                                    Surface(
-                                        onClick = { onSelectStrategy(idx) },
-                                        color = if (isSel) colors.accent else colors.card,
-                                        shape = RoundedCornerShape(14.dp),
-                                        border = if (!isSel) BorderStroke(1.dp, colors.hairline) else null
-                                    ) {
-                                        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp)) {
-                                            Text(
-                                                text = "Wariant ${idx + 1}",
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = if (isSel) Color.White.copy(alpha = 0.85f) else colors.accent
-                                            )
-                                            Text(
-                                                text = s.title,
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.SemiBold,
-                                                color = if (isSel) Color.White else colors.textPrimary,
-                                                maxLines = 1
-                                            )
+                            if (scan.strategies.size > 1) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    scan.strategies.forEachIndexed { idx, s ->
+                                        val isSel = idx == safeIdx
+                                        Surface(
+                                            onClick = { onSelectStrategy(idx) },
+                                            color = if (isSel) colors.accent else colors.card,
+                                            shape = RoundedCornerShape(14.dp),
+                                            border = if (!isSel) BorderStroke(1.dp, colors.hairline) else null
+                                        ) {
+                                            Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp)) {
+                                                Text(
+                                                    text = "Wariant ${idx + 1}",
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = if (isSel) Color.White.copy(alpha = 0.85f) else colors.accent
+                                                )
+                                                Text(
+                                                    text = s.title,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = if (isSel) Color.White else colors.textPrimary,
+                                                    maxLines = 1
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -1014,11 +1059,14 @@ private fun TimelineStepCard(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = if (step.isStanding) {
-                            "KORYTARZ - brak miejsca siedzącego"
-                        } else {
-                            "Wagon ${step.carriageNo} · Miejsce ${step.seatNo}" +
-                                (if (step.compartment != null) " (przedział ${step.compartment})" else "")
+                        text = when {
+                            step.isStanding ->
+                                "KORYTARZ - brak miejsca siedzącego"
+                            step.seatNo.startsWith("AUTO") ->
+                                "Miejsce siedzące · przydział automatyczny e-IC"
+                            else ->
+                                "Wagon ${step.carriageNo} · Miejsce ${step.seatNo}" +
+                                    (if (step.compartment != null) " (przedział ${step.compartment})" else "")
                         },
                         color = badgeFg,
                         fontWeight = FontWeight.Bold,

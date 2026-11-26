@@ -37,6 +37,7 @@ import pl.iccbagno.app.optimizer.OptimizerConfig
 import pl.iccbagno.app.optimizer.SeatOptimizer
 import pl.iccbagno.app.scraper.EbiletWebViewScanner
 import pl.iccbagno.app.scraper.GrmParser
+import pl.iccbagno.app.scraper.NonGrmScanner
 import pl.iccbagno.app.scraper.ScheduleClient
 
 data class ScanProgressState(
@@ -53,6 +54,7 @@ data class ScanProgressState(
     val toStation: String = "",
     val travelDate: String = "",
     val fastPathUsed: Boolean = false,
+    val noSeatmapMode: Boolean = false,
     val fullRouteBookingUrl: String? = null,
     val loadedFromHistoryAtMs: Long? = null,
     val debugWebView: android.webkit.WebView? = null
@@ -153,6 +155,7 @@ class ScanForegroundService : Service() {
             val strategies = computeStrategiesForMap(map, profile, seatFilters)
             _state.value = current.copy(
                 strategies = strategies,
+                noSeatmapMode = map.noSeatmapMode,
                 fullRouteBookingUrl = current.fullRouteBookingUrl ?: buildFullRouteBookingUrl(map),
                 error = if (strategies.isEmpty()) buildFilteredEmptyMessage(map, current.ticketClass, seatFilters) else null
             )
@@ -179,6 +182,7 @@ class ScanForegroundService : Service() {
                 toStation = item.toStation,
                 travelDate = item.travelDate,
                 fastPathUsed = item.availabilityMap.fastPathUsed,
+                noSeatmapMode = item.availabilityMap.noSeatmapMode,
                 fullRouteBookingUrl = buildFullRouteBookingUrl(item.availabilityMap),
                 loadedFromHistoryAtMs = item.savedAtEpochMs
             )
@@ -343,32 +347,49 @@ class ScanForegroundService : Service() {
             } catch (_: Exception) {
             }
 
-            val scanner = EbiletWebViewScanner(
-                context = applicationContext,
-                scheduleClient = scheduleClient,
-                onProgress = { pct, msg ->
-                    val cur = _state.value
-                    val nextPct = maxOf(cur.progress, pct)
-                    val updatedLogs = (cur.logs + "[$nextPct%] $msg").takeLast(40)
-                    _state.value = cur.copy(progress = nextPct, statusMessage = msg, logs = updatedLogs)
-                    nm.notify(NOTIFICATION_ID, buildNotification(trainNumber, nextPct, msg))
-                },
-                onAttachDebugWebView = { wv ->
-                    _state.value = _state.value.copy(debugWebView = wv)
-                }
-            )
+            val onProgress: (Int, String) -> Unit = { pct, msg ->
+                val cur = _state.value
+                val nextPct = maxOf(cur.progress, pct)
+                val updatedLogs = (cur.logs + "[$nextPct%] $msg").takeLast(40)
+                _state.value = cur.copy(progress = nextPct, statusMessage = msg, logs = updatedLogs)
+                nm.notify(NOTIFICATION_ID, buildNotification(trainNumber, nextPct, msg))
+            }
 
             try {
-                val map = scanner.scanFullTrain(
-                    fromStation = fromStation,
-                    toStation = toStation,
-                    travelDate = travelDate,
-                    trainNumber = trainNumber,
-                    departureTime = depTime,
-                    ticketClass = ticketClass,
-                    fastPath = !forceFull,
-                    seatFilters = seatFilters
-                )
+                val grmAvailable = NonGrmScanner.checkGrmAvailable(trainNumber, travelDate)
+                val map = if (!grmAvailable) {
+                    _state.value = _state.value.copy(noSeatmapMode = true)
+                    onProgress(5, "Wykryto pociąg bez graficznego schematu miejsc — uruchamiam tryb odcinkowy...")
+                    NonGrmScanner.scanNonGrmTrain(
+                        scheduleClient = scheduleClient,
+                        fromStation = fromStation,
+                        toStation = toStation,
+                        travelDate = travelDate,
+                        trainNumber = trainNumber,
+                        depTime = depTime,
+                        ticketClass = ticketClass,
+                        onProgress = onProgress
+                    )
+                } else {
+                    val scanner = EbiletWebViewScanner(
+                        context = applicationContext,
+                        scheduleClient = scheduleClient,
+                        onProgress = onProgress,
+                        onAttachDebugWebView = { wv ->
+                            _state.value = _state.value.copy(debugWebView = wv)
+                        }
+                    )
+                    scanner.scanFullTrain(
+                        fromStation = fromStation,
+                        toStation = toStation,
+                        travelDate = travelDate,
+                        trainNumber = trainNumber,
+                        departureTime = depTime,
+                        ticketClass = ticketClass,
+                        fastPath = !forceFull,
+                        seatFilters = seatFilters
+                    )
+                }
 
                 val fullUrl = buildFullRouteBookingUrl(map)
                 val isEipTrain = Regex("^EIP\\b", RegexOption.IGNORE_CASE).containsMatchIn(trainNumber.trim())
@@ -457,6 +478,7 @@ class ScanForegroundService : Service() {
                     availabilityMap = map,
                     strategies = strategies,
                     fastPathUsed = map.fastPathUsed,
+                    noSeatmapMode = map.noSeatmapMode,
                     fullRouteBookingUrl = fullUrl,
                     error = null,
                     debugWebView = null

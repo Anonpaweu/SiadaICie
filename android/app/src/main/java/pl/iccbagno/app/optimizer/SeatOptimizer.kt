@@ -413,9 +413,10 @@ object SeatOptimizer {
 
         for ((cNo, sNo) in sortedSeats) {
             val seatUid = "${cNo}_$sNo"
-            val sInt = sNo.toIntOrNull() ?: 1
-            val cInt = cNo.toIntOrNull() ?: 1
-            val comp = if (sInt >= 10) sInt / 10 else 1
+            val isAuto = sNo.startsWith("AUTO")
+            val sInt = if (isAuto) 1 else (sNo.toIntOrNull() ?: 1)
+            val cInt = if (isAuto) 0 else (cNo.toIntOrNull() ?: 1)
+            val comp = if (isAuto) null else (if (sInt >= 10) sInt / 10 else 1)
             val mergedTags = LinkedHashSet<String>()
             val vec = segs.map { seg ->
                 val freeInC = seg.carriages[cNo].orEmpty()
@@ -453,6 +454,19 @@ object SeatOptimizer {
             return emptyList()
         }
 
+        val isAutoMode = seatsMeta.values.any { it.seatNo.startsWith("AUTO") }
+        if (isAutoMode) {
+            return solveAutoModeStrategy(
+                availabilityMatrix = availabilityMatrix,
+                seatsMeta = seatsMeta,
+                stationNames = stationNames,
+                segmentDurations = segmentDurations,
+                stationEvas = stationEvas,
+                departureTimes = departureTimes,
+                segmentDates = segmentDates,
+                defaultTravelDate = defaultTravelDate
+            )
+        }
         val strategies = ArrayList<OptimizationStrategy>()
         val excludedSeats = HashSet<String>()
         val excludedCarriages = HashSet<Int>()
@@ -523,18 +537,26 @@ object SeatOptimizer {
 
             for (idx in path.indices) {
                 val b = path[idx]
+                val isAutoStep = !b.isStanding && b.seat.seatNo.startsWith("AUTO")
                 if (b.isStanding) {
                     standingMin += b.durationMin
-                } else if (b.seat.carriageNo !in carriagesUsed) {
+                } else if (!isAutoStep && b.seat.carriageNo !in carriagesUsed) {
                     carriagesUsed.add(b.seat.carriageNo)
                 }
 
                 val instruction = if (idx > 0) {
                     val prevB = path[idx - 1]
+                    val prevIsAuto = !prevB.isStanding && prevB.seat.seatNo.startsWith("AUTO")
                     val stName = stationNames[b.startSeg]
                     when {
+                        b.isStanding && prevIsAuto ->
+                            "Na stacji $stName kończy się odcinek z miejscem siedzącym (korytarz / przesiadka na ${b.durationMin} min)."
                         b.isStanding ->
                             "Na stacji $stName zwolnij miejsce ${prevB.seat.seatNo} (przejdź na korytarz na ${b.durationMin} min)."
+                        isAutoStep && prevB.isStanding ->
+                            "Od stacji $stName masz gwarantowane miejsce siedzące (przydział automatyczny e-IC)."
+                        isAutoStep ->
+                            "Na stacji $stName przesiadka na nowy bilet (kolejne miejsce przydzieli system e-IC)."
                         prevB.isStanding ->
                             "Na stacji $stName zajmij miejsce ${b.seat.seatNo} w wagonie ${b.seat.carriageNo}."
                         prevB.seat.carriageNo == b.seat.carriageNo ->
@@ -545,7 +567,7 @@ object SeatOptimizer {
                 } else null
 
                 val altSeatMetas = ArrayList<SeatMeta>()
-                if (!b.isStanding) {
+                if (!b.isStanding && !isAutoStep) {
                     for ((oUid, oVec) in availabilityMatrix) {
                         if (oUid != b.seat.seatUid) {
                             val oMeta = seatsMeta[oUid]
@@ -569,8 +591,8 @@ object SeatOptimizer {
                     )
                     .map { it.seatNo }
 
-                val sInt = b.seat.seatNo.toIntOrNull()
-                val compNo = b.seat.compartmentNo ?: if (sInt != null) { if (sInt >= 10) sInt / 10 else 1 } else null
+                val sInt = if (isAutoStep) null else b.seat.seatNo.toIntOrNull()
+                val compNo = if (isAutoStep) null else (b.seat.compartmentNo ?: if (sInt != null) { if (sInt >= 10) sInt / 10 else 1 } else null)
 
                 val fromName = stationNames[b.startSeg]
                 val toName = stationNames[b.endSeg]
@@ -620,6 +642,14 @@ object SeatOptimizer {
 
             val transfersCount = max(0, nonStandingBlocks.size - 1)
             val title = when {
+                isAutoMode && transfersCount == 0 && standingMin == 0 ->
+                    "100% Trasy z miejscem siedzącym (przydział e-IC)"
+                isAutoMode && standingMin > 0 && transfersCount == 0 ->
+                    "1 odcinek siedzący + bez gwarancji ($standingMin min)"
+                isAutoMode && standingMin > 0 ->
+                    "Odcinki siedzące (${formatTransfersPl(transfersCount)}, korytarz $standingMin min)"
+                isAutoMode ->
+                    "Podział biletów na siedząco (${formatTransfersPl(transfersCount)})"
                 transfersCount == 0 && standingMin == 0 ->
                     "100% Trasy bez przesiadek (Złoty Strzał)"
                 carriagesUsed.size == 1 && standingMin == 0 ->
@@ -636,7 +666,13 @@ object SeatOptimizer {
             val purchaseInstructions = ArrayList<String>()
             var ticketNr = 1
             for (s in steps) {
-                if (!s.isStanding) {
+                if (!s.isStanding && s.seatNo.startsWith("AUTO")) {
+                    ticketsToBuy.add("Bilet $ticketNr: ${s.fromStationName} -> ${s.toStationName} (miejsce siedzące, przydział e-IC)")
+                    purchaseInstructions.add(
+                        "Krok $ticketNr: Kup bilet na odcinek ${s.fromStationName} -> ${s.toStationName} — system e-IC przydzieli miejsce siedzące automatycznie"
+                    )
+                    ticketNr++
+                } else if (!s.isStanding) {
                     ticketsToBuy.add("Bilet $ticketNr: ${s.fromStationName} -> ${s.toStationName} (Wagon ${s.carriageNo}, Miejsce ${s.seatNo})")
                     var instr = "Krok $ticketNr: Kup bilet na odcinek ${s.fromStationName} -> ${s.toStationName}: wybierz Wagon ${s.carriageNo}, Miejsce ${s.seatNo}"
                     if (s.alternativeSeatsInSameCarriage.isNotEmpty()) {
@@ -664,5 +700,146 @@ object SeatOptimizer {
             )
         }
         return strategies
+    }
+
+    /**
+     * Reconstructs the exact linear leg strategy for Non-GRM trains (`AUTO_*` markers)
+     * without applying carriage-transfer penalties that would drop shorter seated legs.
+     */
+    private fun solveAutoModeStrategy(
+        availabilityMatrix: Map<String, List<Int>>,
+        seatsMeta: Map<String, SeatMeta>,
+        stationNames: List<String>,
+        segmentDurations: List<Int>,
+        stationEvas: Map<String, String>,
+        departureTimes: List<String>,
+        segmentDates: List<String>,
+        defaultTravelDate: String
+    ): List<OptimizationStrategy> {
+        val numSegs = segmentDurations.size
+        if (numSegs == 0) return emptyList()
+
+        val segOwner = arrayOfNulls<SeatMeta>(numSegs)
+        for (i in 0 until numSegs) {
+            for ((uid, vec) in availabilityMatrix) {
+                if (i < vec.size && vec[i] == 1) {
+                    segOwner[i] = seatsMeta[uid]
+                    break
+                }
+            }
+        }
+
+        val steps = ArrayList<PathStep>()
+        val ticketsToBuy = ArrayList<String>()
+        val purchaseInstructions = ArrayList<String>()
+        var standingMin = 0
+        var seatedLegsCount = 0
+        var ticketNr = 1
+
+        var segIdx = 0
+        while (segIdx < numSegs) {
+            val owner = segOwner[segIdx]
+            var endIdx = segIdx + 1
+            while (endIdx < numSegs && segOwner[endIdx]?.seatUid == owner?.seatUid) {
+                endIdx++
+            }
+            val durMin = (segIdx until endIdx).sumOf { segmentDurations[it] }
+            val fromName = stationNames.getOrElse(segIdx) { "" }
+            val toName = stationNames.getOrElse(endIdx) { "" }
+            val bookingUrl = if (defaultTravelDate.isNotBlank()) {
+                val fEva = stationEvas[fromName].orEmpty()
+                val tEva = stationEvas[toName].orEmpty()
+                if (fEva.isNotEmpty() && tEva.isNotEmpty()) {
+                    val depT = departureTimes.getOrNull(segIdx)?.takeIf { it.isNotBlank() } ?: "08:00"
+                    val sDate = segmentDates.getOrNull(segIdx)?.takeIf { it.isNotBlank() } ?: defaultTravelDate
+                    GrmParser.buildEicSearchUrl(fEva, tEva, sDate, depT, directOnly = true)
+                } else null
+            } else null
+
+            val isStanding = owner == null
+            val transferInstruction = if (steps.isNotEmpty()) {
+                val prevStanding = steps.last().isStanding
+                when {
+                    isStanding ->
+                        "Na stacji $fromName kończy się odcinek z miejscem siedzącym (korytarz / przesiadka na $durMin min)."
+                    prevStanding ->
+                        "Od stacji $fromName masz gwarantowane miejsce siedzące (przydział automatyczny e-IC)."
+                    else ->
+                        "Na stacji $fromName przesiadka na nowy bilet (kolejne miejsce przydzieli system e-IC)."
+                }
+            } else null
+
+            if (isStanding) {
+                standingMin += durMin
+                steps.add(
+                    PathStep(
+                        seatUid = "STANDING",
+                        carriageNo = 0,
+                        seatNo = "KORYTARZ",
+                        fromStationIdx = segIdx,
+                        toStationIdx = endIdx,
+                        fromStationName = fromName,
+                        toStationName = toName,
+                        durationMin = durMin,
+                        isStanding = true,
+                        transferInstruction = transferInstruction,
+                        bookingUrl = bookingUrl
+                    )
+                )
+                purchaseInstructions.add(
+                    "Odcinek $fromName -> $toName: brak miejsc ogólnodostępnych — przesiadka / miejsca specjalne lub korytarz ($durMin min)"
+                )
+            } else {
+                seatedLegsCount++
+                steps.add(
+                    PathStep(
+                        seatUid = owner!!.seatUid,
+                        carriageNo = 0,
+                        seatNo = owner.seatNo,
+                        fromStationIdx = segIdx,
+                        toStationIdx = endIdx,
+                        fromStationName = fromName,
+                        toStationName = toName,
+                        durationMin = durMin,
+                        isStanding = false,
+                        transferInstruction = transferInstruction,
+                        bookingUrl = bookingUrl
+                    )
+                )
+                ticketsToBuy.add("Bilet $ticketNr: $fromName -> $toName (miejsce siedzące, przydział e-IC)")
+                purchaseInstructions.add(
+                    "Krok $ticketNr: Kup bilet na odcinek $fromName -> $toName — system e-IC przydzieli miejsce siedzące automatycznie"
+                )
+                ticketNr++
+            }
+            segIdx = endIdx
+        }
+
+        if (seatedLegsCount == 0) return emptyList()
+        val transfersCount = max(0, seatedLegsCount - 1)
+        val title = when {
+            transfersCount == 0 && standingMin == 0 ->
+                "100% Trasy z miejscem siedzącym (przydział e-IC)"
+            standingMin > 0 && transfersCount == 0 ->
+                "1 odcinek siedzący + bez gwarancji ($standingMin min)"
+            standingMin > 0 ->
+                "Odcinki siedzące (${formatTransfersPl(transfersCount)}, korytarz $standingMin min)"
+            else ->
+                "Podział biletów na siedząco (${formatTransfersPl(transfersCount)})"
+        }
+
+        return listOf(
+            OptimizationStrategy(
+                rank = 1,
+                title = title,
+                totalScore = 1000.0 - standingMin * 25.0 - transfersCount * 100.0,
+                transfersCount = transfersCount,
+                totalStandingMin = standingMin,
+                carriagesUsed = emptyList(),
+                steps = steps,
+                ticketsToBuy = ticketsToBuy,
+                purchaseInstructions = purchaseInstructions
+            )
+        )
     }
 }

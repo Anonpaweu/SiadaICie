@@ -341,7 +341,7 @@
             <select id="trainSelect" onchange="onTrainSelected()" class="rail-tonal rounded-xl px-3 py-2 text-xs font-medium focus:outline-none">
               <option value="">-- Kliknij „Szukaj pociągów” lub wpisz numer po prawej --</option>
             </select>
-            <input type="text" id="trainNo" value="" oninput="window.selectedTrainDepTime = null;" placeholder="Nr pociągu ręcznie (np. 1646)" class="rail-tonal rounded-xl px-3 py-2 text-xs font-semibold tabular-nums focus:outline-none placeholder:font-normal placeholder:opacity-60" style="color: var(--text);" />
+            <input type="text" id="trainNo" value="" oninput="window.selectedTrainDepTime = null; clearSelectedScanStartStop();" placeholder="Nr pociągu ręcznie (np. 1646)" class="rail-tonal rounded-xl px-3 py-2 text-xs font-semibold tabular-nums focus:outline-none placeholder:font-normal placeholder:opacity-60" style="color: var(--text);" />
           </div>
 
           <!-- Visual Train Cards Grid (populated by loadAvailableTrains) -->
@@ -357,8 +357,18 @@
         <!-- Detected Route Preview Card -->
         <div id="routePreviewCard" class="hidden rail-tonal rounded-2xl p-3.5 text-xs space-y-2">
           <div class="flex flex-wrap justify-between items-center gap-2 font-bold">
-            <span id="routePreviewTitle">Wykryta trasa pociągu</span>
-            <span id="routePreviewCount" class="font-normal text-[11px]" style="color: var(--muted);"></span>
+            <div class="flex items-center gap-1.5 flex-wrap">
+              <span id="routePreviewTitle">Wykryta trasa pociągu</span>
+              <button type="button" onclick="toggleRouteStartStopHelp()" title="Wyjaśnienie wyboru stacji startowej" class="w-4 h-4 rounded-full inline-flex items-center justify-center text-[10px] font-extrabold border rail-hairline hover:opacity-80" style="background-color: var(--card); color: var(--muted);">i</button>
+              <span id="routeStartStopHint" class="text-[11px] font-normal" style="color: var(--muted);">Kliknij przystanek, aby skanować od niego</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <button id="clearStartStopBtn" type="button" onclick="clearSelectedScanStartStop()" class="hidden text-[11px] font-semibold hover:underline" style="color: var(--accent);">Cała trasa</button>
+              <span id="routePreviewCount" class="font-normal text-[11px]" style="color: var(--muted);"></span>
+            </div>
+          </div>
+          <div id="routeStartStopHelp" class="hidden rail-card rounded-xl px-3 py-2 text-[11px] leading-relaxed" style="color: var(--muted);">
+            Jedziesz już tym pociągiem bez gwarancji miejsca? Kliknij najbliższy przystanek przed sobą — przeskanujemy wolne miejsca od tej stacji do celu. Bez zaznaczenia skan obejmie całą trasę.
           </div>
           <div id="routeStopsList" class="flex flex-wrap gap-1.5 text-[11px] tabular-nums"></div>
         </div>
@@ -1000,6 +1010,97 @@
 
     window.allFetchedTrains = [];
     window.selectedTrainDepTime = null;
+    window.selectedScanStartStop = null;
+    window.latestRouteStops = [];
+
+    function shiftIsoDateJS(isoDate, dayOffset) {
+      if (!isoDate || !dayOffset) return isoDate;
+      const parts = isoDate.split('-').map(Number);
+      if (parts.length !== 3 || parts.some(isNaN)) return isoDate;
+      const dt = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2] + dayOffset));
+      const y = dt.getUTCFullYear();
+      const m = String(dt.getUTCMonth() + 1).padStart(2, '0');
+      const d = String(dt.getUTCDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+
+    function toggleRouteStartStopHelp() {
+      const box = document.getElementById('routeStartStopHelp');
+      if (box) box.classList.toggle('hidden');
+    }
+
+    function updateScanButtonLabel() {
+      const btnLabel = document.getElementById('btnScanSeatsLabel');
+      const clearBtn = document.getElementById('clearStartStopBtn');
+      const hint = document.getElementById('routeStartStopHint');
+      const sel = window.selectedScanStartStop;
+      if (btnLabel) {
+        btnLabel.innerText = sel ? `Skanuj od: ${sel.name}` : 'Wyszukaj i optymalizuj miejsca';
+      }
+      if (clearBtn) {
+        if (sel) clearBtn.classList.remove('hidden');
+        else clearBtn.classList.add('hidden');
+      }
+      if (hint) {
+        hint.innerText = sel ? `Wybrano start od: ${sel.name}` : 'Kliknij przystanek, aby skanować od niego';
+        hint.style.color = sel ? 'var(--accent)' : 'var(--muted)';
+        hint.classList.toggle('font-semibold', Boolean(sel));
+      }
+    }
+
+    function renderRouteStopsChips() {
+      const list = document.getElementById('routeStopsList');
+      if (!list) return;
+      const stops = window.latestRouteStops || [];
+      if (!stops.length) return;
+      list.innerHTML = '';
+      const sel = window.selectedScanStartStop;
+
+      stops.forEach((st, idx) => {
+        const isLast = idx === stops.length - 1;
+        const time = st.departure_time || st.arrival_time || '--:--';
+        if (isLast) {
+          const endBadge = document.createElement('div');
+          endBadge.className = 'rail-card px-2.5 py-1 rounded-xl flex items-center gap-1.5 opacity-80';
+          endBadge.innerHTML = `<span class="font-bold" style="color: var(--muted);">Cel:</span> <strong class="font-semibold">${escapeHtml(st.name)}</strong> <span style="color: var(--muted);">${escapeHtml(time)}</span>`;
+          list.appendChild(endBadge);
+          return;
+        }
+        const isSelected = Boolean(sel && sel.seq === idx && sel.name === st.name);
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'rail-card px-2.5 py-1 rounded-xl flex items-center gap-1.5 cursor-pointer transition-all hover:opacity-85';
+        if (isSelected) {
+          btn.style.backgroundColor = 'var(--accent)';
+          btn.style.color = '#ffffff';
+          btn.style.borderColor = 'var(--accent)';
+          btn.innerHTML = `<span class="font-bold">${idx + 1}.</span> <strong class="font-semibold">${escapeHtml(st.name)}</strong> <span class="opacity-90">${escapeHtml(time)}</span>`;
+        } else {
+          btn.innerHTML = `<span class="font-bold" style="color: var(--accent);">${idx + 1}.</span> <strong class="font-semibold">${escapeHtml(st.name)}</strong> <span style="color: var(--muted);">${escapeHtml(time)}</span>`;
+        }
+        btn.addEventListener('click', () => {
+          toggleScanStartStop(idx, st.name, st.departure_time || st.arrival_time || '', Number(st.day_offset || 0));
+        });
+        list.appendChild(btn);
+      });
+    }
+
+    function toggleScanStartStop(seq, name, depTime, dayOffset) {
+      const cur = window.selectedScanStartStop;
+      if (cur && cur.seq === seq && cur.name === name) {
+        window.selectedScanStartStop = null;
+      } else {
+        window.selectedScanStartStop = { seq, name, depTime, dayOffset: Number(dayOffset || 0) };
+      }
+      updateScanButtonLabel();
+      renderRouteStopsChips();
+    }
+
+    function clearSelectedScanStartStop() {
+      window.selectedScanStartStop = null;
+      updateScanButtonLabel();
+      renderRouteStopsChips();
+    }
 
     function toggleDirectFilter() {
       updateSeatFiltersUi();
@@ -1158,6 +1259,8 @@
       if (!fromSt || !toSt) return;
 
       window.selectedTrainDepTime = null;
+      window.latestRouteStops = [];
+      clearSelectedScanStartStop();
       select.innerHTML = '<option value="">Wyszukiwanie połączeń w rozkładzie PKP...</option>';
       try {
         const url = `/api/v1/trains?from_station=${encodeURIComponent(fromSt)}&to_station=${encodeURIComponent(toSt)}&date=${encodeURIComponent(date)}&time=${encodeURIComponent(depTime)}&direct_only=false`;
@@ -1182,6 +1285,8 @@
         if (opt.dataset && opt.dataset.dep) {
           window.selectedTrainDepTime = opt.dataset.dep;
         }
+        window.latestRouteStops = [];
+        clearSelectedScanStartStop();
         renderTrainCardHighlight(select.selectedIndex - 1, true);
         fetchTrainRoute(true);
       }
@@ -1222,15 +1327,12 @@
         const data = await res.json();
         title.innerText = `Trasa ${data.train_number || trainNo} (${data.travel_date})`;
         count.innerText = `Przystanków: ${data.stops.length}`;
-        list.innerHTML = '';
-
-        data.stops.forEach((st, idx) => {
-          const badge = document.createElement('div');
-          badge.className = 'rail-card px-2.5 py-1 rounded-xl flex items-center gap-1.5';
-          const time = st.departure_time || st.arrival_time || '--:--';
-          badge.innerHTML = `<span class="font-bold" style="color: var(--accent);">${idx + 1}.</span> <strong class="font-semibold">${escapeHtml(st.name)}</strong> <span style="color: var(--muted);">${escapeHtml(time)}</span>`;
-          list.appendChild(badge);
-        });
+        window.latestRouteStops = Array.isArray(data.stops) ? data.stops : [];
+        if (window.selectedScanStartStop && !window.latestRouteStops.some((st, i) => i < window.latestRouteStops.length - 1 && st.name === window.selectedScanStartStop.name)) {
+          window.selectedScanStartStop = null;
+          updateScanButtonLabel();
+        }
+        renderRouteStopsChips();
       } catch (err) {
         if (!silent) {
           card.classList.add('hidden');
@@ -1274,6 +1376,10 @@
       const date = document.getElementById('travelDate').value;
       const trainNo = document.getElementById('trainNo').value.trim();
       const depTime = (window.selectedTrainDepTime || document.getElementById('travelTime').value.trim());
+      const customStart = window.selectedScanStartStop;
+      const effectiveFrom = customStart ? customStart.name : fromSt;
+      const effectiveDepTime = customStart ? (customStart.depTime || depTime) : depTime;
+      const effectiveDate = customStart ? shiftIsoDateJS(date, customStart.dayOffset) : date;
       const ticketClass = parseInt(document.getElementById('ticketClass')?.value || '2', 10);
       const profile = document.getElementById('optProfile')?.value || 'BALANCED';
 
@@ -1309,7 +1415,9 @@
       if (btnCancel) btnCancel.classList.remove('hidden');
 
       currentTicketClass = ticketClass;
-      fetchTrainRoute(true);
+      if (!customStart) {
+        fetchTrainRoute(true);
+      }
 
       errorAlert.classList.add('hidden');
       const scrapeWarnBanner = document.getElementById('scrapeErrorWarningBanner');
@@ -1370,10 +1478,10 @@
           headers: { 'Content-Type': 'application/json' },
           signal: activeScanController.signal,
           body: JSON.stringify({
-            from_station: fromSt,
+            from_station: effectiveFrom,
             to_station: toSt,
-            date: date,
-            time: depTime,
+            date: effectiveDate,
+            time: effectiveDepTime,
             train_number: trainNo,
             ticket_class: ticketClass,
             profile: profile,
@@ -1428,7 +1536,7 @@
         }
         if (btnCancel) btnCancel.classList.add('hidden');
         if (btnScan) btnScan.disabled = false;
-        if (btnLabel) btnLabel.innerText = 'Wyszukaj i optymalizuj miejsca';
+        updateScanButtonLabel();
       }
     }
 

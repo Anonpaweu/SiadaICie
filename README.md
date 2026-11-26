@@ -29,6 +29,8 @@ Znasz to uczucie? Jest niedzielne popołudnie, koniec długiego weekendu albo ś
 
 System kolejowy przy próbie zakupu biletu na **całą relację** mówi „nie ma miejsc”, bo żaden pojedynczy fotel nie jest wolny od stacji początkowej do samego końca. Wystarczy jednak kupić **dwa lub trzy bilety cząstkowe** na kolejne odcinki i w trakcie podróży przesiąść się na inny wolny fotel — i całą trasę pokonujesz wygodnie na siedząco.
 
+**Aplikacja przydaje się też już w trakcie samej jazdy.** Jeśli jedziesz z biletem bez gwarancji miejsca i nie chcesz krążyć po całym składzie w ciemno, możesz w trakcie podróży rozwinąć przystanki swojego pociągu, zaznaczyć najbliższą stację przed sobą i puścić skan. SiadaICie sprawdzi bieżący stan rezerwacji w systemie PKP IC na resztę trasy i pokaże, w którym wagonie oraz na których numerach miejsc nikt nie ma wykupionej miejscówki (system widzi oczywiście brak rezerwacji, a nie to, czy fizycznie nie usiadł tam już ktoś inny bez miejscówki — ale i tak oszczędza sporo bezsensownego chodzenia po pociągu).
+
 **SiadaICie** (dostępne zarówno jako **aplikacja PC Web**, jak i natywna **aplikacja na Androida**) robi za Ciebie całą czarną robotę: pobiera rozkład, sprawdza schematy wagonów, zbiera wolne fotele na poszczególnych odcinkach i układa matematycznie optymalną podróż z minimalną liczbą przesiadek.
 
 ---

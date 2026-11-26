@@ -1958,6 +1958,41 @@ class EbiletWebViewScanner(
                 }.awaitAll()
             }
 
+            // Phase 3C: Sequential retry on pool[0] for transient non-metro-hub WebView UI errors (e.g. price-loader stall)
+            val retryCandidates = resultsByIdx.mapIndexedNotNull { idx, seg ->
+                if (seg == null || seg.status != "SCRAPE_ERROR") {
+                    null
+                } else {
+                    val isMetroHop = RouteHelpers.isSameMetroHub(seg.fromStation, seg.toStation) && seg.durationMin <= 15
+                    val errLow = (seg.errorReason ?: "").lowercase()
+                    val isTransient = listOf(
+                        "nie udało się wybrać klasy",
+                        "not_found",
+                        "timeout",
+                        "kafelek pociągu zniknął"
+                    ).any { it in errLow }
+                    if (!isMetroHop && isTransient) idx else null
+                }
+            }.take(3)
+
+            for (idx in retryCandidates) {
+                ensureActive()
+                val failedSeg = resultsByIdx[idx] ?: continue
+                onProgress(95, "Ponawiam odczyt odcinka ${failedSeg.fromStation} -> ${failedSeg.toStation}...")
+                delay(800L)
+                val retried = scanSegmentViaWebView(
+                    worker = pool[0],
+                    idx = idx,
+                    progressRangeStart = 95,
+                    progressRangeEnd = 96,
+                    rangeDoneCounter = null,
+                    rangeTotalCount = 1
+                )
+                if (retried.status != "SCRAPE_ERROR") {
+                    resultsByIdx[idx] = retried
+                }
+            }
+
             val scannedList = resultsByIdx.map { it!! }.toMutableList()
 
             // 4. Tail & Head metropolitan boundary recovery

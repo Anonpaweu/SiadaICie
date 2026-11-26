@@ -369,7 +369,22 @@ def _build_optimization_response(
                     segments_info[i].get("standing_status")
                     for i in range(max(0, step.from_station_idx), min(len(segments_info), step.to_station_idx))
                 ]
-                step_dict["standing_status"] = _aggregate_standing_status(seg_statuses_for_step)
+                agg_standing = _aggregate_standing_status(seg_statuses_for_step)
+                if agg_standing is None and avail:
+                    start_i = max(0, step.from_station_idx)
+                    end_i = min(len(segments_info), step.to_station_idx)
+                    if start_i < end_i and all(
+                        any(
+                            k < len(vec)
+                            and vec[k] == 1
+                            and uid in meta
+                            and not is_seat_allowed(meta[uid].seat_tags, active_filters)
+                            for uid, vec in avail.items()
+                        )
+                        for k in range(start_i, end_i)
+                    ):
+                        agg_standing = "SPECIAL_ONLY"
+                step_dict["standing_status"] = agg_standing
             if travel_date:
                 from_eva = _resolve_eva(step.from_station_name)
                 to_eva = _resolve_eva(step.to_station_name)

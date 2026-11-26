@@ -297,3 +297,68 @@ def test_bike_suggestion_triggered_only_when_bike_disabled_and_strictly_better(m
     )
     assert resp_elderly.status_code == 200
     assert resp_elderly.json()["bike_suggestion"] is None
+
+
+def test_standing_step_infers_special_only_and_enables_on_recompute(monkeypatch):
+    from backend.app import main as main_mod
+    from backend.app.models.domain import FullTrainAvailabilityMap, SegmentAvailabilityMap
+    from backend.app.scraper.ebilet_seat_scraper import LiveTrainScanner
+
+    sample_map = FullTrainAvailabilityMap(
+        train_number="IC 1644",
+        travel_date="2026-11-27",
+        fast_path_used=False,
+        total_route_segments=2,
+        segments=[
+            SegmentAvailabilityMap(
+                segment_index=0,
+                from_station="Koluszki",
+                to_station="Częstochowa Stradom",
+                departure_time="16:15",
+                duration_min=70,
+                carriages={"5": ["44"]},
+                status="OK",
+            ),
+            SegmentAvailabilityMap(
+                segment_index=1,
+                from_station="Częstochowa Stradom",
+                to_station="Opole Główne",
+                departure_time="17:25",
+                duration_min=55,
+                carriages={"7": ["15"]},
+                seat_tags={"7_15": [TAG_ELDERLY]},
+                status="OK",
+            ),
+        ],
+    )
+
+    async def mock_scan(self, **kwargs):
+        return sample_map
+
+    monkeypatch.setattr(main_mod, "check_grm_available", lambda *a, **kw: True)
+    monkeypatch.setattr(LiveTrainScanner, "scan_full_train", mock_scan)
+
+    resp = client.post(
+        "/api/v1/optimize",
+        json={
+            "from_station": "Koluszki",
+            "to_station": "Opole Główne",
+            "date": "2026-11-27",
+            "time": "16:15",
+            "train_number": "IC 1644",
+        },
+    )
+    assert resp.status_code == 200
+    steps = resp.json()["strategies"][0]["steps"]
+    assert len(steps) == 2
+    assert steps[1]["is_standing"] is True
+    assert steps[1]["standing_status"] == "SPECIAL_ONLY"
+
+    re_resp = client.post(
+        "/api/v1/recompute",
+        json={"profile": "BALANCED", "seat_filters": {"allow_elderly": True}},
+    )
+    assert re_resp.status_code == 200
+    re_steps = re_resp.json()["strategies"][0]["steps"]
+    assert re_steps[1]["is_standing"] is False
+    assert re_steps[1]["seat_no"] == "15"

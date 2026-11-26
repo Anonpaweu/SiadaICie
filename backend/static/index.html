@@ -502,6 +502,21 @@
       </div>
     </div>
 
+    <!-- Informacja o trybie bez graficznego schematu miejsc (Non-GRM) -->
+    <div id="noSeatmapBanner" class="hidden scroll-mt-20 rounded-2xl p-4 text-xs flex items-start gap-3" style="background-color: var(--tonal); color: var(--text); border: 1px solid color-mix(in srgb, var(--navy) 35%, transparent);">
+      <svg class="w-5 h-5 shrink-0 mt-0.5" style="color: var(--navy);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+      </svg>
+      <div class="space-y-0.5 leading-relaxed">
+        <div class="font-bold" style="color: var(--navy);">
+          Pociąg bez graficznego schematu miejsc (tryb odcinkowy e-IC)
+        </div>
+        <div style="color: var(--muted);">
+          PKP Intercity nie udostępnia mapy wagonów dla tego pociągu. Wyznaczono najdłuższe dostępne odcinki z gwarantowanym miejscem siedzącym bez blokowania foteli — konkretny numer wagonu i miejsca przydzieli system e-IC przy zakupie.
+        </div>
+      </div>
+    </div>
+
     <!-- Informacja o szybkim skanowaniu (Fast-Path) -->
     <div id="fastPathBanner" class="hidden scroll-mt-20 rounded-2xl p-4 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3" style="background-color: var(--emerald-bg); color: var(--emerald); border: 1px solid color-mix(in srgb, var(--emerald) 35%, transparent);">
       <div class="flex items-start gap-3">
@@ -1612,9 +1627,22 @@
       }, 1600);
 
       renderScrapeErrorWarning(data.segments);
+      const noSeatmapBanner = document.getElementById('noSeatmapBanner');
+      if (noSeatmapBanner) {
+        if (data && data.no_seatmap_mode) noSeatmapBanner.classList.remove('hidden');
+        else noSeatmapBanner.classList.add('hidden');
+      }
       renderFastPathBanner(data);
       const resultFiltersSec = document.getElementById('resultSeatFiltersSection');
-      if (resultFiltersSec) resultFiltersSec.classList.remove('hidden');
+      if (resultFiltersSec) {
+        if (data && data.no_seatmap_mode) resultFiltersSec.classList.add('hidden');
+        else resultFiltersSec.classList.remove('hidden');
+      }
+      const profRow = document.getElementById('profileSegmentedRow');
+      if (profRow) {
+        if (data && data.no_seatmap_mode) profRow.classList.add('hidden');
+        else profRow.classList.remove('hidden');
+      }
       const statusEl = document.getElementById('resultFiltersStatus');
       if (statusEl) {
         statusEl.style.color = 'var(--muted)';
@@ -1626,13 +1654,15 @@
       renderStrategies(data.strategies);
       renderMatrix();
 
-      const scrollTarget = (!document.getElementById('fastPathBanner')?.classList.contains('hidden'))
-        ? document.getElementById('fastPathBanner')
-        : (resultFiltersSec && !resultFiltersSec.classList.contains('hidden')
-          ? resultFiltersSec
-          : (!document.getElementById('purchasePlanSection')?.classList.contains('hidden')
-            ? document.getElementById('purchasePlanSection')
-            : document.getElementById('strategiesSection')));
+      const scrollTarget = (noSeatmapBanner && !noSeatmapBanner.classList.contains('hidden'))
+        ? noSeatmapBanner
+        : ((!document.getElementById('fastPathBanner')?.classList.contains('hidden'))
+          ? document.getElementById('fastPathBanner')
+          : (resultFiltersSec && !resultFiltersSec.classList.contains('hidden')
+            ? resultFiltersSec
+            : (!document.getElementById('purchasePlanSection')?.classList.contains('hidden')
+              ? document.getElementById('purchasePlanSection')
+              : document.getElementById('strategiesSection'))));
       scrollToElementSmooth(scrollTarget, 'start');
     }
 
@@ -1641,7 +1671,7 @@
       const desc = document.getElementById('fastPathDesc');
       if (!banner) return;
 
-      if (data && data.fast_path_used) {
+      if (data && data.fast_path_used && !data.no_seatmap_mode) {
         const totalSegs = Number(data.total_route_segments || 0);
         if (desc) {
           desc.innerText = totalSegs > 1
@@ -1969,7 +1999,9 @@
                     <strong class="font-semibold">${escapeHtml(step.from_station_name)} &rarr; ${escapeHtml(step.to_station_name)}</strong>
                   </div>
                   <div class="text-[11px] tabular-nums" style="color: var(--emerald);">
-                    Wagon ${escapeHtml(step.carriage_no)}, m. ${escapeHtml(step.seat_no)}${compStr} (${escapeHtml(step.duration_min)} min)
+                    ${step.seat_no === 'AUTO'
+                      ? `Miejsce siedzące — przydział automatyczny e-IC (${escapeHtml(step.duration_min)} min)`
+                      : `Wagon ${escapeHtml(step.carriage_no)}, m. ${escapeHtml(step.seat_no)}${compStr} (${escapeHtml(step.duration_min)} min)`}
                   </div>
                   ${stepTagsHtml}
                   ${transferText ? `<div class="text-[11px] mt-0.5" style="color: var(--amber);">${escapeHtml(transferText)}</div>` : ''}
@@ -2019,6 +2051,10 @@
     function renderMatrix() {
       if (!currentAnalysisData) return;
       const matrixSection = document.getElementById('matrixSection');
+      if (currentAnalysisData.no_seatmap_mode) {
+        if (matrixSection) matrixSection.classList.add('hidden');
+        return;
+      }
       if (matrixSection) matrixSection.classList.remove('hidden');
 
       const table = document.getElementById('ganttTable');

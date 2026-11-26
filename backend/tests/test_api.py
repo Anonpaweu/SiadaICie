@@ -9,6 +9,13 @@ from backend.app.main import app
 client = TestClient(app)
 
 
+@pytest.fixture(autouse=True)
+def _mock_grm_available_default(monkeypatch):
+    from backend.app import main as main_mod
+
+    monkeypatch.setattr(main_mod, "check_grm_available", lambda *a, **kw: True)
+
+
 class TestHealthEndpoint:
     """Test /api/health and / return 200 OK."""
 
@@ -752,3 +759,86 @@ class TestStandingTicketLinksAndStatus:
         assert d["seat_matrix"] == []
         assert d["full_route_standing_status"] == "OVERBOOKED"
         assert "swyj=5100065" in (d["full_route_booking_url"] or "")
+
+    def test_optimize_routes_to_non_grm_scanner_when_grm_unavailable(self, monkeypatch):
+        from backend.app import main as main_mod
+        from backend.app.models.schemas import AnalyzeResponse, StepResponse, StrategyResponse
+        from backend.app.scraper.ebilet_seat_scraper import LiveTrainScanner
+
+        def forbid_scanner_init(*args, **kwargs):
+            raise AssertionError("LiveTrainScanner must not be instantiated in non-GRM mode")
+
+        async def mock_non_grm_scan(**kwargs):
+            return AnalyzeResponse(
+                stations=["Wrocław Główny", "Warszawa Centralna"],
+                segments=[
+                    {
+                        "segment_index": 0,
+                        "from_station": "Wrocław Główny",
+                        "to_station": "Warszawa Centralna",
+                        "departure_time": "14:37",
+                        "duration_min": 243,
+                        "from_eva": "5100069",
+                        "to_eva": "5100065",
+                        "segment_date": "2026-11-27",
+                        "carriages": {"AUTO": ["e-IC"]},
+                        "seat_tags": {},
+                        "status": "OK",
+                        "error_reason": None,
+                        "standing_status": None,
+                    }
+                ],
+                strategies=[
+                    StrategyResponse(
+                        rank=1,
+                        title="100% Trasy z miejscem siedzącym (przydział e-IC)",
+                        total_score=1000.0,
+                        transfers_count=0,
+                        total_standing_min=0,
+                        carriages_used=[],
+                        steps=[
+                            StepResponse(
+                                seat_uid="AUTO_0_1",
+                                carriage_no=0,
+                                seat_no="AUTO",
+                                from_station_idx=0,
+                                to_station_idx=1,
+                                from_station_name="Wrocław Główny",
+                                to_station_name="Warszawa Centralna",
+                                duration_min=243,
+                                is_standing=False,
+                            )
+                        ],
+                        purchase_instructions=["Krok 1: Kup bilet"],
+                        tickets_to_buy=["Bilet 1"],
+                    )
+                ],
+                seat_matrix=[],
+                raw_availability_report="ok",
+                purchase_instructions=["Krok 1: Kup bilet"],
+                fast_path_used=True,
+                total_route_segments=1,
+                no_seatmap_mode=True,
+            )
+
+        monkeypatch.setattr(main_mod, "check_grm_available", lambda *a, **kw: False)
+        monkeypatch.setattr(main_mod, "scan_non_grm_train", mock_non_grm_scan)
+        monkeypatch.setattr(LiveTrainScanner, "__init__", forbid_scanner_init)
+
+        resp = client.post(
+            "/api/v1/optimize",
+            json={
+                "from_station": "Wrocław Główny",
+                "to_station": "Warszawa Centralna",
+                "date": "2026-11-27",
+                "time": "14:37",
+                "train_number": "IC 6138",
+                "ticket_class": 2,
+                "scan_id": "test-non-grm-route",
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["no_seatmap_mode"] is True
+        assert data["fast_path_used"] is True
+        assert data["strategies"][0]["steps"][0]["seat_no"] == "AUTO"

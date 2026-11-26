@@ -132,6 +132,7 @@ class FullTrainAvailabilityMap(BaseModel):
     fast_path_used: bool = False
     total_route_segments: int = 0
     full_route_standing_status: Optional[str] = None
+    no_seatmap_mode: bool = False
     segments: List[SegmentAvailabilityMap] = Field(default_factory=list)
 
 

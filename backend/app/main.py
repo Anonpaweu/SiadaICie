@@ -51,6 +51,7 @@ from backend.app.optimizer.solver import OptimizerConfig, SeatMeta, parse_profil
 from backend.app.scraper.ebilet_seat_scraper import LiveTrainScanner
 from backend.app.scraper.grm_parser import build_eic_search_url, is_seat_allowed
 from backend.app.scraper.ic_client import GraphicReservationUnavailableError, PKPIntercityScraper
+from backend.app.scraper.non_grm_scanner import check_grm_available, scan_non_grm_train
 from backend.app.scraper.mock_provider import (
     scenario_classic_b_c_block,
     scenario_overlapping_windows_and_proximity,
@@ -619,6 +620,35 @@ async def optimize_live(request: LiveOptimizeRequest):
     def _on_progress(msg: str) -> None:
         tracker.update(msg)
         global_scan_tracker.update(msg)
+
+    train_num_val = request.train_number or "IC 3520"
+    if not await asyncio.to_thread(check_grm_available, train_num_val, request.date):
+        _on_progress("[5%] Wykryto pociąg bez graficznego schematu miejsc — uruchamiam tryb odcinkowy...")
+        try:
+            non_grm_resp = await scan_non_grm_train(
+                from_station=request.from_station,
+                to_station=request.to_station,
+                travel_date=request.date,
+                train_number=train_num_val,
+                dep_time=request.time,
+                ticket_class=request.ticket_class,
+                on_progress=_on_progress,
+            )
+            tracker.complete()
+            global_scan_tracker.complete()
+            return non_grm_resp
+        except asyncio.CancelledError:
+            tracker.cancel()
+            global_scan_tracker.cancel()
+            raise HTTPException(
+                status_code=499,
+                detail="Skanowanie zostało anulowane przez użytkownika.",
+            )
+        except Exception as e:
+            err_msg = f"Błąd podczas analizy pociągu bez schematu miejsc: {str(e)}"
+            tracker.error(err_msg)
+            global_scan_tracker.error(err_msg)
+            raise HTTPException(status_code=502, detail=err_msg)
 
     scanner = LiveTrainScanner(
         headless=is_headless,

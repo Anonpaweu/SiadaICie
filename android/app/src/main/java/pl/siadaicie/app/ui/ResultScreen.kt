@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.AirlineSeatReclineNormal
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DirectionsBike
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -688,6 +689,60 @@ fun ResultScreen(
                                         color = colors.accent
                                     )
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!scan.isRunning && !isNoSeatmap && !scan.bikeSuggestion.isNullOrBlank() && !ui.seatFilters.allowBike) {
+                item(key = "bike_suggestion_banner") {
+                    Surface(
+                        color = colors.seatEmeraldContainer,
+                        shape = RoundedCornerShape(16.dp),
+                        border = BorderStroke(1.dp, colors.seatEmerald.copy(alpha = 0.35f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 11.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.DirectionsBike,
+                                contentDescription = null,
+                                tint = colors.seatEmerald,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                Text(
+                                    text = "Podpowiedź: włącz filtr Rower",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = colors.textPrimary
+                                )
+                                Text(
+                                    text = scan.bikeSuggestion,
+                                    fontSize = 12.sp,
+                                    lineHeight = 16.sp,
+                                    color = colors.textSecondary
+                                )
+                            }
+                            Button(
+                                onClick = { onSeatFiltersChange(ui.seatFilters.copy(allowBike = true)) },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = colors.seatEmerald,
+                                    contentColor = Color.White
+                                ),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                            ) {
+                                Text("Włącz Rower", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                             }
                         }
                     }

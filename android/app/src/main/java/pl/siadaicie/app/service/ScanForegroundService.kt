@@ -55,6 +55,7 @@ data class ScanProgressState(
     val fastPathUsed: Boolean = false,
     val noSeatmapMode: Boolean = false,
     val fullRouteStandingStatus: String? = null,
+    val bikeSuggestion: String? = null,
     val fullRouteBookingUrl: String? = null,
     val loadedFromHistoryAtMs: Long? = null,
     val debugWebView: android.webkit.WebView? = null
@@ -157,6 +158,7 @@ class ScanForegroundService : Service() {
                 strategies = strategies,
                 noSeatmapMode = map.noSeatmapMode,
                 fullRouteStandingStatus = map.fullRouteStandingStatus,
+                bikeSuggestion = SeatOptimizer.computeBikeSuggestion(map, profile, seatFilters, strategies),
                 fullRouteBookingUrl = current.fullRouteBookingUrl ?: buildFullRouteBookingUrl(map),
                 error = if (strategies.isEmpty()) buildFilteredEmptyMessage(map, current.ticketClass, seatFilters) else null
             )
@@ -185,6 +187,7 @@ class ScanForegroundService : Service() {
                 fastPathUsed = item.availabilityMap.fastPathUsed,
                 noSeatmapMode = item.availabilityMap.noSeatmapMode,
                 fullRouteStandingStatus = item.availabilityMap.fullRouteStandingStatus,
+                bikeSuggestion = SeatOptimizer.computeBikeSuggestion(item.availabilityMap, profile, seatFilters, strategies),
                 fullRouteBookingUrl = buildFullRouteBookingUrl(item.availabilityMap),
                 loadedFromHistoryAtMs = item.savedAtEpochMs
             )
@@ -400,6 +403,7 @@ class ScanForegroundService : Service() {
                         availabilityMap = if (scrapeErrorSegs.isEmpty()) map else _state.value.availabilityMap,
                         noSeatmapMode = map.noSeatmapMode,
                         fullRouteStandingStatus = if (scrapeErrorSegs.isEmpty()) map.fullRouteStandingStatus else null,
+                        bikeSuggestion = if (scrapeErrorSegs.isEmpty()) SeatOptimizer.computeBikeSuggestion(map, profile, seatFilters, emptyList()) else null,
                         fullRouteBookingUrl = if (scrapeErrorSegs.isEmpty()) fullUrl else null,
                         error = errorText,
                         debugWebView = null
@@ -442,6 +446,7 @@ class ScanForegroundService : Service() {
                         strategies = emptyList(),
                         noSeatmapMode = map.noSeatmapMode,
                         fullRouteStandingStatus = map.fullRouteStandingStatus,
+                        bikeSuggestion = SeatOptimizer.computeBikeSuggestion(map, profile, seatFilters, emptyList()),
                         fullRouteBookingUrl = fullUrl,
                         error = details,
                         debugWebView = null
@@ -470,6 +475,7 @@ class ScanForegroundService : Service() {
                     fastPathUsed = map.fastPathUsed,
                     noSeatmapMode = map.noSeatmapMode,
                     fullRouteStandingStatus = map.fullRouteStandingStatus,
+                    bikeSuggestion = SeatOptimizer.computeBikeSuggestion(map, profile, seatFilters, strategies),
                     fullRouteBookingUrl = fullUrl,
                     error = null,
                     debugWebView = null

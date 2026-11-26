@@ -1,6 +1,8 @@
 package pl.siadaicie.app
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import pl.siadaicie.app.domain.FullTrainAvailabilityMap
@@ -282,5 +284,78 @@ class SeatOptimizerTest {
         val firstStanding = strategies[0].steps.first { it.isStanding }
         assertTrue(firstStanding.bookingUrl?.contains("swyj=5100081") == true)
         assertTrue(firstStanding.bookingUrl?.contains("sprzy=5103667") == true)
+    }
+
+    @Test
+    fun bikeSuggestionTriggersOnlyWhenBikeDisabledAndStrictlyImprovesJourney() {
+        val mapWithBike = FullTrainAvailabilityMap(
+            trainNumber = "IC 6120",
+            travelDate = "2026-11-27",
+            segments = listOf(
+                SegmentAvailabilityMap(
+                    segmentIndex = 0,
+                    fromStation = "Wrocław Główny",
+                    toStation = "Oleśnica",
+                    departureTime = "19:30",
+                    durationMin = 25,
+                    carriages = mapOf("7" to listOf("12")),
+                    seatTags = mapOf("7_12" to listOf(GrmParser.TAG_BIKE))
+                ),
+                SegmentAvailabilityMap(
+                    segmentIndex = 1,
+                    fromStation = "Oleśnica",
+                    toStation = "Warszawa Centralna",
+                    departureTime = "19:55",
+                    durationMin = 210,
+                    carriages = mapOf("5" to listOf("44"), "7" to listOf("12")),
+                    seatTags = mapOf("7_12" to listOf(GrmParser.TAG_BIKE))
+                )
+            )
+        )
+        val matrix = SeatOptimizer.availabilityMapToMatrix(mapWithBike)
+        val noBikePrefs = SeatFilterPrefs(allowBike = false)
+        val currentNoBike = SeatOptimizer.solveTopStrategies(
+            matrix.availabilityMatrix,
+            matrix.seatsMeta,
+            matrix.stationNames,
+            matrix.segmentDurations,
+            config = OptimizerConfig(seatFilters = noBikePrefs)
+        )
+        assertEquals(25, currentNoBike[0].totalStandingMin)
+
+        // When allowBike = false, suggests 100% seated without transfers
+        val hint = SeatOptimizer.computeBikeSuggestion(
+            mapWithBike,
+            OptimizationProfile.BALANCED,
+            noBikePrefs,
+            currentNoBike
+        )
+        assertNotNull(hint)
+        assertTrue(hint!!.contains("100%"))
+
+        // When allowBike = true, never suggests
+        assertNull(
+            SeatOptimizer.computeBikeSuggestion(
+                mapWithBike,
+                OptimizationProfile.BALANCED,
+                SeatFilterPrefs(allowBike = true),
+                currentNoBike
+            )
+        )
+
+        // When only ELDERLY / WHEELCHAIR exist (no BIKE), never suggests them
+        val mapElderlyOnly = mapWithBike.copy(
+            segments = mapWithBike.segments.map { seg ->
+                seg.copy(seatTags = mapOf("7_12" to listOf(GrmParser.TAG_ELDERLY)))
+            }
+        )
+        assertNull(
+            SeatOptimizer.computeBikeSuggestion(
+                mapElderlyOnly,
+                OptimizationProfile.BALANCED,
+                noBikePrefs,
+                currentNoBike
+            )
+        )
     }
 }

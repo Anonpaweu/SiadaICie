@@ -710,6 +710,52 @@ object SeatOptimizer {
         return strategies
     }
 
+    /**
+     * Suggests enabling the `Rower` filter (strictly only BIKE seats, never other special categories)
+     * when `seatFilters.allowBike` is disabled and enabling it strictly improves the journey
+     * (e.g. eliminates standing time or reduces transfers/tickets).
+     */
+    fun computeBikeSuggestion(
+        map: FullTrainAvailabilityMap,
+        profile: OptimizationProfile,
+        seatFilters: SeatFilterPrefs,
+        currentStrategies: List<OptimizationStrategy>
+    ): String? {
+        if (seatFilters.allowBike || map.noSeatmapMode) return null
+        val matrix = availabilityMapToMatrix(map)
+        if (matrix.availabilityMatrix.isEmpty()) return null
+        val hasBikeSeats = matrix.seatsMeta.values.any { GrmParser.TAG_BIKE in it.seatTags }
+        if (!hasBikeSeats) return null
+
+        val bikeStrategies = solveTopStrategies(
+            availabilityMatrix = matrix.availabilityMatrix,
+            seatsMeta = matrix.seatsMeta,
+            stationNames = matrix.stationNames,
+            segmentDurations = matrix.segmentDurations,
+            config = OptimizerConfig(
+                profile = profile,
+                seatFilters = seatFilters.copy(allowBike = true)
+            ),
+            topK = 1
+        )
+        val bestBike = bikeStrategies.firstOrNull() ?: return null
+        val bestCur = currentStrategies.firstOrNull()
+
+        val isStrictlyBetter = bestCur == null ||
+            bestBike.totalStandingMin < bestCur.totalStandingMin ||
+            (bestBike.totalStandingMin == bestCur.totalStandingMin && bestBike.transfersCount < bestCur.transfersCount)
+        if (!isStrictlyBetter) return null
+
+        return when {
+            bestBike.transfersCount == 0 && bestBike.totalStandingMin == 0 ->
+                "Z miejscem rowerowym pojedziesz 100% trasy na siedząco bez przesiadek."
+            bestCur != null && bestBike.totalStandingMin < bestCur.totalStandingMin ->
+                "Z miejscem rowerowym skrócisz stanie z ${bestCur.totalStandingMin} min do ${bestBike.totalStandingMin} min (${formatTransfersPl(bestBike.transfersCount)})."
+            else ->
+                "Z miejscem rowerowym masz wygodniejszy wariant: ${formatTransfersPl(bestBike.transfersCount)}, stanie ${bestBike.totalStandingMin} min."
+        }
+    }
+
     private fun worstStandingStatus(
         statuses: List<String?>,
         startSeg: Int,

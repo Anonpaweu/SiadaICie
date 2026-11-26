@@ -222,7 +222,8 @@ class NonGrmScannerTest {
             seatsMeta = matrix.seatsMeta,
             stationNames = matrix.stationNames,
             segmentDurations = matrix.segmentDurations,
-            defaultTravelDate = map.travelDate
+            defaultTravelDate = map.travelDate,
+            segmentStandingStatuses = map.segments.map { it.standingStatus }
         )
 
         assertEquals(1, strategies.size)
@@ -231,9 +232,40 @@ class NonGrmScannerTest {
         assertEquals("AUTO_1", steps[0].seatNo)
         assertEquals("Wrocław Główny", steps[0].fromStationName)
         assertEquals("Opole Główne", steps[0].toStationName)
+        assertNull(steps[0].standingStatus)
         assertTrue(steps[1].isStanding)
+        assertEquals("SPECIAL_ONLY", steps[1].standingStatus)
         assertEquals("AUTO_2", steps[2].seatNo)
         assertEquals("AUTO_3", steps[3].seatNo)
         assertTrue(strategies[0].carriagesUsed.isEmpty())
+    }
+
+    @Test
+    fun `SeatOptimizer propagates worst OVERBOOKED standingStatus across merged segments`() {
+        val map = FullTrainAvailabilityMap(
+            trainNumber = "IC 6138",
+            travelDate = "2026-11-27",
+            noSeatmapMode = true,
+            segments = listOf(
+                SegmentAvailabilityMap(0, "A", "B", "10:00", 30, carriages = mapOf("0" to listOf("AUTO_1")), status = "OK"),
+                SegmentAvailabilityMap(1, "B", "C", "10:30", 25, carriages = emptyMap(), status = "SOLD_OUT", standingStatus = "AVAILABLE"),
+                SegmentAvailabilityMap(2, "C", "D", "10:55", 20, carriages = emptyMap(), status = "SOLD_OUT", standingStatus = "OVERBOOKED"),
+                SegmentAvailabilityMap(3, "D", "E", "11:15", 40, carriages = mapOf("0" to listOf("AUTO_2")), status = "OK")
+            )
+        )
+        val matrix = SeatOptimizer.availabilityMapToMatrix(map)
+        val strategies = SeatOptimizer.solveTopStrategies(
+            availabilityMatrix = matrix.availabilityMatrix,
+            seatsMeta = matrix.seatsMeta,
+            stationNames = matrix.stationNames,
+            segmentDurations = matrix.segmentDurations,
+            defaultTravelDate = map.travelDate,
+            segmentStandingStatuses = map.segments.map { it.standingStatus }
+        )
+        assertEquals(1, strategies.size)
+        val steps = strategies[0].steps
+        assertEquals(3, steps.size)
+        assertTrue(steps[1].isStanding)
+        assertEquals("OVERBOOKED", steps[1].standingStatus)
     }
 }

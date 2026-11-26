@@ -54,6 +54,7 @@ data class ScanProgressState(
     val travelDate: String = "",
     val fastPathUsed: Boolean = false,
     val noSeatmapMode: Boolean = false,
+    val fullRouteStandingStatus: String? = null,
     val fullRouteBookingUrl: String? = null,
     val loadedFromHistoryAtMs: Long? = null,
     val debugWebView: android.webkit.WebView? = null
@@ -155,6 +156,7 @@ class ScanForegroundService : Service() {
             _state.value = current.copy(
                 strategies = strategies,
                 noSeatmapMode = map.noSeatmapMode,
+                fullRouteStandingStatus = map.fullRouteStandingStatus,
                 fullRouteBookingUrl = current.fullRouteBookingUrl ?: buildFullRouteBookingUrl(map),
                 error = if (strategies.isEmpty()) buildFilteredEmptyMessage(map, current.ticketClass, seatFilters) else null
             )
@@ -182,6 +184,7 @@ class ScanForegroundService : Service() {
                 travelDate = item.travelDate,
                 fastPathUsed = item.availabilityMap.fastPathUsed,
                 noSeatmapMode = item.availabilityMap.noSeatmapMode,
+                fullRouteStandingStatus = item.availabilityMap.fullRouteStandingStatus,
                 fullRouteBookingUrl = buildFullRouteBookingUrl(item.availabilityMap),
                 loadedFromHistoryAtMs = item.savedAtEpochMs
             )
@@ -247,7 +250,8 @@ class ScanForegroundService : Service() {
                 stationEvas = evas,
                 departureTimes = depTimes,
                 segmentDates = segDates,
-                defaultTravelDate = map.travelDate
+                defaultTravelDate = map.travelDate,
+                segmentStandingStatuses = map.segments.map { it.standingStatus }
             )
         }
     }
@@ -395,6 +399,7 @@ class ScanForegroundService : Service() {
                         statusMessage = errorText,
                         availabilityMap = if (scrapeErrorSegs.isEmpty()) map else _state.value.availabilityMap,
                         noSeatmapMode = map.noSeatmapMode,
+                        fullRouteStandingStatus = if (scrapeErrorSegs.isEmpty()) map.fullRouteStandingStatus else null,
                         fullRouteBookingUrl = if (scrapeErrorSegs.isEmpty()) fullUrl else null,
                         error = errorText,
                         debugWebView = null
@@ -436,6 +441,7 @@ class ScanForegroundService : Service() {
                         availabilityMap = map,
                         strategies = emptyList(),
                         noSeatmapMode = map.noSeatmapMode,
+                        fullRouteStandingStatus = map.fullRouteStandingStatus,
                         fullRouteBookingUrl = fullUrl,
                         error = details,
                         debugWebView = null
@@ -463,6 +469,7 @@ class ScanForegroundService : Service() {
                     strategies = strategies,
                     fastPathUsed = map.fastPathUsed,
                     noSeatmapMode = map.noSeatmapMode,
+                    fullRouteStandingStatus = map.fullRouteStandingStatus,
                     fullRouteBookingUrl = fullUrl,
                     error = null,
                     debugWebView = null

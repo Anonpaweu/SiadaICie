@@ -37,10 +37,12 @@ import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.AirlineSeatReclineNormal
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LocalCafe
 import androidx.compose.material.icons.filled.Refresh
@@ -69,14 +71,19 @@ import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import pl.siadaicie.app.domain.FullTrainAvailabilityMap
 import pl.siadaicie.app.domain.SeatFilterPrefs
 import pl.siadaicie.app.optimizer.OptimizationProfile
 import pl.siadaicie.app.optimizer.OptimizationStrategy
@@ -101,8 +108,10 @@ fun ResultScreen(
 ) {
     val colors = LocalRailColors.current
     val isNoSeatmap = scan.noSeatmapMode || (scan.availabilityMap?.noSeatmapMode == true)
+    val fullRouteStandingStatus = scan.fullRouteStandingStatus ?: scan.availabilityMap?.fullRouteStandingStatus
     var showLogs by remember { mutableStateOf(false) }
     var showResultFilters by remember { mutableStateOf(false) }
+    var showSeatGrid by remember { mutableStateOf(false) }
     var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
     LaunchedEffect(scan.loadedFromHistoryAtMs) {
@@ -471,7 +480,22 @@ fun ResultScreen(
                             )
                             val isEipEmpty = Regex("^EIP\\b", RegexOption.IGNORE_CASE)
                                 .containsMatchIn(scan.trainNumber.trim())
-                            if (scan.strategies.isEmpty() && !isEipEmpty && !scan.fullRouteBookingUrl.isNullOrBlank()) {
+                            val isOverbookedFull = fullRouteStandingStatus == "OVERBOOKED"
+                            if (isOverbookedFull && !isEipEmpty) {
+                                Surface(
+                                    color = colors.errorContainer,
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(
+                                        text = "PKP Intercity zablokowało sprzedaż w wybranej klasie (brak miejsc siedzących i stojących). Sprawdź 1. klasę lub inny pociąg.",
+                                        color = colors.errorRed,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp)
+                                    )
+                                }
+                            } else if (scan.strategies.isEmpty() && !isEipEmpty && !scan.fullRouteBookingUrl.isNullOrBlank()) {
                                 OutlinedButton(
                                     onClick = { onOpenBooking(scan.fullRouteBookingUrl) },
                                     shape = RoundedCornerShape(12.dp),
@@ -479,7 +503,11 @@ fun ResultScreen(
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
                                     Text(
-                                        text = "Sprawdź bilet bez gwarancji w e-IC",
+                                        text = if (fullRouteStandingStatus == "SPECIAL_ONLY") {
+                                            "Sprawdź specjalne / 1. klasę w e-IC"
+                                        } else {
+                                            "Sprawdź bilet bez gwarancji w e-IC"
+                                        },
                                         color = colors.corridorAmber,
                                         fontWeight = FontWeight.SemiBold,
                                         fontSize = 13.sp
@@ -882,13 +910,49 @@ fun ResultScreen(
 
                 // Timeline header: Selected Variant Only
                 item(key = "timeline_header") {
-                    Text(
-                        text = "Miejsca z wybranego wariantu",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
-                        color = colors.textPrimary,
-                        modifier = Modifier.padding(top = 4.dp, start = 2.dp)
-                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp, start = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Miejsca z wybranego wariantu",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            color = colors.textPrimary,
+                            modifier = Modifier.weight(1f)
+                        )
+                        val gridMap = scan.availabilityMap
+                        if (!isNoSeatmap && gridMap != null) {
+                            Surface(
+                                onClick = { showSeatGrid = true },
+                                color = colors.cardTonal,
+                                shape = RoundedCornerShape(10.dp),
+                                border = BorderStroke(1.dp, colors.brandNavy.copy(alpha = 0.25f))
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.GridOn,
+                                        contentDescription = null,
+                                        tint = colors.brandNavy,
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                    Text(
+                                        text = "Siatka miejsc",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = colors.brandNavy
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
 
                 item(key = "timeline_steps") {
@@ -900,7 +964,7 @@ fun ResultScreen(
                             isEipTrain = isEipTrain,
                             onOpenBooking = onOpenBooking
                         )
-                        if (selectedStrategy.totalStandingMin > 0 && !isEipTrain && !scan.fullRouteBookingUrl.isNullOrBlank()) {
+                        if (selectedStrategy.totalStandingMin > 0 && !isEipTrain && !scan.fullRouteBookingUrl.isNullOrBlank() && fullRouteStandingStatus != "OVERBOOKED") {
                             OutlinedButton(
                                 onClick = { onOpenBooking(scan.fullRouteBookingUrl) },
                                 shape = RoundedCornerShape(14.dp),
@@ -910,7 +974,11 @@ fun ResultScreen(
                                     .height(44.dp)
                             ) {
                                 Text(
-                                    text = "Alternatywa: 1 bilet bez gwarancji (cała trasa)",
+                                    text = if (fullRouteStandingStatus == "SPECIAL_ONLY") {
+                                        "Alternatywa: sprawdź całą trasę w e-IC (tylko specjalne)"
+                                    } else {
+                                        "Alternatywa: 1 bilet bez gwarancji (cała trasa)"
+                                    },
                                     color = colors.corridorAmber,
                                     fontWeight = FontWeight.SemiBold,
                                     fontSize = 13.sp
@@ -927,6 +995,15 @@ fun ResultScreen(
                     }
                 }
             }
+        }
+
+        val modalMap = scan.availabilityMap
+        if (showSeatGrid && !isNoSeatmap && modalMap != null) {
+            SeatAvailabilityGridDialog(
+                map = modalMap,
+                seatFilters = ui.seatFilters,
+                onDismiss = { showSeatGrid = false }
+            )
         }
     }
 }
@@ -954,7 +1031,11 @@ private fun JourneyTimeline(
     Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
         strategy.steps.forEachIndexed { idx, step ->
             val isLast = idx == strategy.steps.lastIndex
-            val railColor = if (step.isStanding) colors.corridorAmber else colors.seatEmerald
+            val railColor = when {
+                step.isStanding && step.standingStatus == "OVERBOOKED" -> colors.errorRed
+                step.isStanding -> colors.corridorAmber
+                else -> colors.seatEmerald
+            }
 
             Row(
                 modifier = Modifier
@@ -1011,8 +1092,17 @@ private fun TimelineStepCard(
     modifier: Modifier = Modifier
 ) {
     val colors = LocalRailColors.current
-    val badgeBg = if (step.isStanding) colors.corridorAmberContainer else colors.seatEmeraldContainer
-    val badgeFg = if (step.isStanding) colors.corridorAmber else colors.seatEmerald
+    val isOverbookedStep = step.isStanding && step.standingStatus == "OVERBOOKED"
+    val badgeBg = when {
+        isOverbookedStep -> colors.errorContainer
+        step.isStanding -> colors.corridorAmberContainer
+        else -> colors.seatEmeraldContainer
+    }
+    val badgeFg = when {
+        isOverbookedStep -> colors.errorRed
+        step.isStanding -> colors.corridorAmber
+        else -> colors.seatEmerald
+    }
 
     Surface(
         color = colors.card,
@@ -1060,6 +1150,10 @@ private fun TimelineStepCard(
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = when {
+                            isOverbookedStep ->
+                                "BRAK BILETÓW W TEJ KLASIE (nawet stojących)"
+                            step.isStanding && step.standingStatus == "SPECIAL_ONLY" ->
+                                "Brak miejsc ogólnodostępnych (tylko specjalne)"
                             step.isStanding ->
                                 "KORYTARZ - brak miejsca siedzącego"
                             step.seatNo.startsWith("AUTO") ->
@@ -1073,6 +1167,14 @@ private fun TimelineStepCard(
                         fontSize = 13.sp
                     )
                 }
+            }
+
+            if (isOverbookedStep) {
+                Text(
+                    text = "Na tym odcinku system e-IC zablokował sprzedaż w wybranej klasie. Sprawdź 1. klasę lub inny pociąg.",
+                    fontSize = 12.sp,
+                    color = colors.errorRed
+                )
             }
 
             if (!step.isStanding && step.seatTags.isNotEmpty()) {
@@ -1137,7 +1239,7 @@ private fun TimelineStepCard(
                         modifier = Modifier.size(15.dp)
                     )
                 }
-            } else if (step.isStanding && !isEipTrain && !step.bookingUrl.isNullOrBlank()) {
+            } else if (step.isStanding && !isEipTrain && !isOverbookedStep && !step.bookingUrl.isNullOrBlank()) {
                 OutlinedButton(
                     onClick = { onOpenBooking(step.bookingUrl) },
                     shape = RoundedCornerShape(12.dp),
@@ -1147,7 +1249,11 @@ private fun TimelineStepCard(
                         .height(40.dp)
                 ) {
                     Text(
-                        text = "Kup bilet bez gwarancji (e-IC)",
+                        text = if (step.standingStatus == "SPECIAL_ONLY") {
+                            "Sprawdź specjalne / 1. klasę (e-IC)"
+                        } else {
+                            "Kup bilet bez gwarancji (e-IC)"
+                        },
                         color = colors.corridorAmber,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 12.sp
@@ -1159,6 +1265,358 @@ private fun TimelineStepCard(
                         tint = colors.corridorAmber,
                         modifier = Modifier.size(14.dp)
                     )
+                }
+            }
+        }
+    }
+}
+
+private fun Modifier.verticalRotated(): Modifier = layout { measurable, constraints ->
+    val placeable = measurable.measure(
+        constraints.copy(
+            minWidth = 0,
+            maxWidth = constraints.maxHeight,
+            minHeight = 0,
+            maxHeight = constraints.maxWidth
+        )
+    )
+    layout(placeable.height, placeable.width) {
+        placeable.place(
+            x = -(placeable.width / 2 - placeable.height / 2),
+            y = placeable.width / 2 - placeable.height / 2
+        )
+    }
+}
+
+private fun abbreviateStationForGrid(name: String): String {
+    return name
+        .replace("Warszawa ", "W-wa ")
+        .replace("Wrocław ", "Wro ")
+        .replace("Kraków ", "Kra ")
+        .replace("Gdańsk ", "Gda ")
+        .replace("Poznań ", "Poz ")
+        .replace("Główny", "Gł.")
+        .replace("Główna", "Gł.")
+        .replace("Centralna", "Centr.")
+        .replace("Zachodnia", "Zach.")
+        .replace("Wschodnia", "Wsch.")
+        .replace("Trybunalski", "Tryb.")
+        .trim()
+}
+
+@Composable
+private fun SeatAvailabilityGridDialog(
+    map: FullTrainAvailabilityMap,
+    seatFilters: SeatFilterPrefs,
+    onDismiss: () -> Unit
+) {
+    val colors = LocalRailColors.current
+    val matrix = remember(map, seatFilters) { SeatOptimizer.availabilityMapToMatrix(map) }
+    val allCarriages = remember(matrix) {
+        matrix.seatsMeta.values
+            .map { it.carriageNo }
+            .distinct()
+            .sorted()
+    }
+    var selectedCarriage by remember(allCarriages) { mutableStateOf<Int?>(null) }
+    var selectedSegIdx by remember(map) { mutableStateOf<Int?>(null) }
+
+    val filteredSeats = remember(matrix, seatFilters, selectedCarriage) {
+        matrix.availabilityMatrix.entries
+            .mapNotNull { (uid, vec) ->
+                val meta = matrix.seatsMeta[uid] ?: return@mapNotNull null
+                if (!GrmParser.isSeatAllowed(meta.seatTags, seatFilters)) return@mapNotNull null
+                if (selectedCarriage != null && meta.carriageNo != selectedCarriage) return@mapNotNull null
+                if (vec.none { it == 1 }) return@mapNotNull null
+                meta to vec
+            }
+    }
+
+    val segments = map.segments
+    val anyScrapeError = remember(segments) { segments.any { it.status == "SCRAPE_ERROR" } }
+    val hScroll = rememberScrollState()
+    val seatColWidth = 70.dp
+    val cellColWidth = 28.dp
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            color = colors.card,
+            shape = RoundedCornerShape(22.dp),
+            border = BorderStroke(1.dp, colors.hairline),
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.88f)
+                .padding(horizontal = 12.dp, vertical = 20.dp)
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                // Header
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 6.dp, top = 10.dp, bottom = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Siatka wolnych miejsc",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp,
+                            color = colors.textPrimary
+                        )
+                        Text(
+                            text = "${map.trainNumber} · ${filteredSeats.size} miejsc · ${segments.size} odc.",
+                            fontSize = 12.sp,
+                            color = colors.textSecondary
+                        )
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Zamknij siatkę",
+                            tint = colors.textSecondary
+                        )
+                    }
+                }
+
+                // Carriage filter chips
+                if (allCarriages.size > 1) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(horizontal = 14.dp, vertical = 2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        FilterChip(
+                            selected = selectedCarriage == null,
+                            onClick = { selectedCarriage = null },
+                            label = { Text("Wszystkie", fontSize = 12.sp) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = colors.brandNavy,
+                                selectedLabelColor = Color.White
+                            )
+                        )
+                        allCarriages.forEach { wNo ->
+                            FilterChip(
+                                selected = selectedCarriage == wNo,
+                                onClick = { selectedCarriage = if (selectedCarriage == wNo) null else wNo },
+                                label = { Text("Wag. $wNo", fontSize = 12.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = colors.brandNavy,
+                                    selectedLabelColor = Color.White
+                                )
+                            )
+                        }
+                    }
+                }
+
+                // Compact legend
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Box(
+                            modifier = Modifier
+                                .size(12.dp)
+                                .clip(RoundedCornerShape(3.dp))
+                                .background(colors.seatEmerald)
+                        )
+                        Text("Wolne", fontSize = 11.sp, color = colors.textSecondary)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Box(
+                            modifier = Modifier
+                                .size(12.dp)
+                                .clip(RoundedCornerShape(3.dp))
+                                .background(colors.cardTonal)
+                                .border(1.dp, colors.hairline, RoundedCornerShape(3.dp))
+                        )
+                        Text("Zajęte", fontSize = 11.sp, color = colors.textSecondary)
+                    }
+                    if (anyScrapeError) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                            Box(
+                                modifier = Modifier
+                                    .size(12.dp)
+                                    .clip(RoundedCornerShape(3.dp))
+                                    .background(colors.errorContainer)
+                                    .border(1.dp, colors.errorRed.copy(alpha = 0.6f), RoundedCornerShape(3.dp))
+                            )
+                            Text("Błąd odczytu", fontSize = 11.sp, color = colors.errorRed)
+                        }
+                    }
+                }
+
+                val activeSeg = selectedSegIdx?.let { segments.getOrNull(it) }
+                if (activeSeg != null) {
+                    Surface(
+                        color = colors.cardTonal,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 3.dp)
+                    ) {
+                        Text(
+                            text = "Odc. ${activeSeg.segmentIndex + 1}: ${activeSeg.fromStation} -> ${activeSeg.toStation} (${activeSeg.departureTime})",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = colors.textPrimary,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                        )
+                    }
+                }
+
+                HorizontalDivider(color = colors.hairline)
+
+                if (filteredSeats.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "Brak wolnych miejsc pasujących do wybranych filtrów.",
+                            fontSize = 13.sp,
+                            color = colors.textSecondary
+                        )
+                    }
+                } else {
+                    // Column headers with vertical rotated station pairs
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(colors.cardTonal.copy(alpha = 0.55f))
+                            .padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
+                        verticalAlignment = Alignment.Bottom
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .width(seatColWidth)
+                                .height(92.dp),
+                            contentAlignment = Alignment.BottomStart
+                        ) {
+                            Text(
+                                text = "Wagon · M.",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = colors.textSecondary
+                            )
+                        }
+                        Row(modifier = Modifier.horizontalScroll(hScroll)) {
+                            segments.forEachIndexed { idx, seg ->
+                                val shortLabel = "${abbreviateStationForGrid(seg.fromStation)} -> ${abbreviateStationForGrid(seg.toStation)}"
+                                val isErrCol = seg.status == "SCRAPE_ERROR"
+                                Box(
+                                    modifier = Modifier
+                                        .width(cellColWidth)
+                                        .height(92.dp)
+                                        .clickable {
+                                            selectedSegIdx = if (selectedSegIdx == idx) null else idx
+                                        },
+                                    contentAlignment = Alignment.BottomCenter
+                                ) {
+                                    Text(
+                                        text = shortLabel,
+                                        fontSize = 10.sp,
+                                        fontWeight = if (selectedSegIdx == idx) FontWeight.Bold else FontWeight.Medium,
+                                        color = when {
+                                            isErrCol -> colors.errorRed
+                                            selectedSegIdx == idx -> colors.accent
+                                            else -> colors.textSecondary
+                                        },
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier
+                                            .verticalRotated()
+                                            .rotate(-90f)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    HorizontalDivider(color = colors.hairline)
+
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(vertical = 4.dp)
+                    ) {
+                        items(
+                            count = filteredSeats.size,
+                            key = { idx -> filteredSeats[idx].first.seatUid }
+                        ) { rowIdx ->
+                            val (meta, vec) = filteredSeats[rowIdx]
+                            val hasRestricted = meta.seatTags.any { GrmParser.isRestrictedTag(it) }
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    modifier = Modifier.width(seatColWidth),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "W${meta.carriageNo} · ${meta.seatNo}",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = colors.textPrimary,
+                                        maxLines = 1
+                                    )
+                                    if (hasRestricted) {
+                                        Text(
+                                            text = " *",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = colors.corridorAmber
+                                        )
+                                    }
+                                }
+                                Row(modifier = Modifier.horizontalScroll(hScroll)) {
+                                    segments.forEachIndexed { segIdx, seg ->
+                                        val isFree = vec.getOrElse(segIdx) { 0 } == 1
+                                        val isErr = seg.status == "SCRAPE_ERROR"
+                                        Box(
+                                            modifier = Modifier.width(cellColWidth),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(20.dp)
+                                                    .clip(RoundedCornerShape(5.dp))
+                                                    .background(
+                                                        when {
+                                                            isErr -> colors.errorContainer
+                                                            isFree -> colors.seatEmerald
+                                                            else -> colors.cardTonal
+                                                        }
+                                                    )
+                                                    .border(
+                                                        width = 1.dp,
+                                                        color = when {
+                                                            isErr -> colors.errorRed.copy(alpha = 0.55f)
+                                                            isFree -> colors.seatEmerald
+                                                            else -> colors.hairline
+                                                        },
+                                                        shape = RoundedCornerShape(5.dp)
+                                                    )
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

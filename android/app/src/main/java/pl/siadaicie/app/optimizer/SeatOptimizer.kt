@@ -46,7 +46,8 @@ data class PathStep(
     val compartment: Int? = null,
     val seatTags: List<String> = emptyList(),
     val alternativeSeatsInSameCarriage: List<String> = emptyList(),
-    val bookingUrl: String? = null
+    val bookingUrl: String? = null,
+    val standingStatus: String? = null
 )
 
 data class OptimizationStrategy(
@@ -444,7 +445,8 @@ object SeatOptimizer {
         stationEvas: Map<String, String> = emptyMap(),
         departureTimes: List<String> = emptyList(),
         segmentDates: List<String> = emptyList(),
-        defaultTravelDate: String = ""
+        defaultTravelDate: String = "",
+        segmentStandingStatuses: List<String?> = emptyList()
     ): List<OptimizationStrategy> {
         val hasAnyAllowedSeat = availabilityMatrix.keys.any { uid ->
             val m = seatsMeta[uid]
@@ -464,7 +466,8 @@ object SeatOptimizer {
                 stationEvas = stationEvas,
                 departureTimes = departureTimes,
                 segmentDates = segmentDates,
-                defaultTravelDate = defaultTravelDate
+                defaultTravelDate = defaultTravelDate,
+                segmentStandingStatuses = segmentStandingStatuses
             )
         }
         val strategies = ArrayList<OptimizationStrategy>()
@@ -606,6 +609,10 @@ object SeatOptimizer {
                     } else null
                 } else null
 
+                val stepStandingStatus = if (b.isStanding) {
+                    worstStandingStatus(segmentStandingStatuses, b.startSeg, b.endSeg)
+                } else null
+
                 steps.add(
                     PathStep(
                         seatUid = b.seat.seatUid,
@@ -621,7 +628,8 @@ object SeatOptimizer {
                         compartment = compNo,
                         seatTags = b.seat.seatTags,
                         alternativeSeatsInSameCarriage = sortedAlts,
-                        bookingUrl = bookingUrl
+                        bookingUrl = bookingUrl,
+                        standingStatus = stepStandingStatus
                     )
                 )
             }
@@ -702,6 +710,26 @@ object SeatOptimizer {
         return strategies
     }
 
+    private fun worstStandingStatus(
+        statuses: List<String?>,
+        startSeg: Int,
+        endSeg: Int
+    ): String? {
+        if (statuses.isEmpty()) return null
+        val priority = mapOf("OVERBOOKED" to 3, "SPECIAL_ONLY" to 2, "AVAILABLE" to 1)
+        var best: String? = null
+        var bestPrio = 0
+        for (i in startSeg until endSeg) {
+            val st = statuses.getOrNull(i) ?: continue
+            val p = priority[st] ?: 0
+            if (p > bestPrio) {
+                bestPrio = p
+                best = st
+            }
+        }
+        return best
+    }
+
     /**
      * Reconstructs the exact linear leg strategy for Non-GRM trains (`AUTO_*` markers)
      * without applying carriage-transfer penalties that would drop shorter seated legs.
@@ -714,7 +742,8 @@ object SeatOptimizer {
         stationEvas: Map<String, String>,
         departureTimes: List<String>,
         segmentDates: List<String>,
-        defaultTravelDate: String
+        defaultTravelDate: String,
+        segmentStandingStatuses: List<String?> = emptyList()
     ): List<OptimizationStrategy> {
         val numSegs = segmentDurations.size
         if (numSegs == 0) return emptyList()
@@ -771,6 +800,7 @@ object SeatOptimizer {
 
             if (isStanding) {
                 standingMin += durMin
+                val gapStatus = worstStandingStatus(segmentStandingStatuses, segIdx, endIdx)
                 steps.add(
                     PathStep(
                         seatUid = "STANDING",
@@ -783,7 +813,8 @@ object SeatOptimizer {
                         durationMin = durMin,
                         isStanding = true,
                         transferInstruction = transferInstruction,
-                        bookingUrl = bookingUrl
+                        bookingUrl = bookingUrl,
+                        standingStatus = gapStatus
                     )
                 )
                 purchaseInstructions.add(

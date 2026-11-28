@@ -14,6 +14,8 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/Anonpaweu/SiadaICie/actions/workflows/ci-web.yml"><img src="https://github.com/Anonpaweu/SiadaICie/actions/workflows/ci-web.yml/badge.svg?branch=main" alt="Web CI" /></a>
+  <a href="https://github.com/Anonpaweu/SiadaICie/actions/workflows/ci-android.yml"><img src="https://github.com/Anonpaweu/SiadaICie/actions/workflows/ci-android.yml/badge.svg?branch=android-dev" alt="Android CI" /></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.12-blue.svg" alt="Python 3.12" /></a>
   <a href="https://fastapi.tiangolo.com"><img src="https://img.shields.io/badge/FastAPI-0.115+-009688.svg" alt="FastAPI" /></a>
   <a href="https://playwright.dev/python/"><img src="https://img.shields.io/badge/Playwright-Async-45ba4b.svg" alt="Playwright" /></a>

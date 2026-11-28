@@ -41,7 +41,10 @@ DEFAULT_HEADERS = {
     "Accept-Language": "pl-PL,pl;q=0.9,en-US;q=0.8,en;q=0.7",
 }
 
-FULL_DAY_WINDOWS = ["00:00", "04:30", "07:00", "09:30", "12:00", "14:00", "15:45", "17:30", "19:30", "21:30"]
+FULL_DAY_WINDOWS = [
+    "00:00", "02:30", "05:00", "07:00", "09:00", "11:00",
+    "13:00", "15:00", "17:00", "19:00", "21:00", "22:30",
+]
 
 
 @functools.lru_cache(maxsize=1)
@@ -286,7 +289,7 @@ def get_station_epa_map(eva_codes: List[str]) -> Dict[str, str]:
         conn.close()
 
 
-def _fetch_single_window_trains(
+def _fetch_single_window_with_meta(
     from_name: str,
     from_eva: str,
     to_name: str,
@@ -294,8 +297,8 @@ def _fetch_single_window_trains(
     date_formatted: str,
     time_str: str,
     direct_only: bool = True,
-) -> List[Dict]:
-    """Helper to query a single time window from rozklad-pkp.pl."""
+) -> Tuple[List[Dict], List[int]]:
+    """Helper to query a single time window from rozklad-pkp.pl, returning (ic_trains, all_dep_minutes)."""
     url = "https://rozklad-pkp.pl/pl/tp"
     params = {
         "REQ0JourneyStopsS0A": "1",
@@ -323,15 +326,21 @@ def _fetch_single_window_trains(
             verify=get_system_ssl_context(),
         )
         if r.status_code != 200:
-            return []
+            return [], []
 
         trains = []
+        all_dep_minutes: List[int] = []
         for m in re.finditer(
             r'<tr[^>]+class="[^"]*tpOverview[^"]*"[^>]*>(.*?)(?=<tr[^>]+class="[^"]*tpOverview|$)',
             r.text,
             re.DOTALL,
         ):
             chunk = m.group(1)
+
+            dep_match = re.search(r'odj.*?<span>(\d{1,2}:\d{2})</span>', chunk, re.DOTALL | re.IGNORECASE)
+            dep_time = dep_match.group(1) if dep_match else ""
+            if dep_time:
+                all_dep_minutes.append(time_to_minutes(dep_time))
 
             # Strict PKP Intercity category match - iterate through alts in chunk
             clean_name = ""
@@ -343,12 +352,10 @@ def _fetch_single_window_trains(
             if not clean_name:
                 continue
 
-            dep_match = re.search(r'odj.*?<span>(\d{1,2}:\d{2})</span>', chunk, re.DOTALL | re.IGNORECASE)
             arr_match = re.search(r'przyj.*?<span>(\d{1,2}:\d{2})</span>', chunk, re.DOTALL | re.IGNORECASE)
             dur_match = re.search(r'czas przejazdu:&nbsp;(\d+:\d{2})', chunk)
             changes_match = re.search(r'przesiadki:\s*(\d+)', chunk)
 
-            dep_time = dep_match.group(1) if dep_match else ""
             arr_time = arr_match.group(1) if arr_match else ""
             duration = dur_match.group(1) if dur_match else ""
             changes = int(changes_match.group(1)) if changes_match else 0
@@ -369,10 +376,93 @@ def _fetch_single_window_trains(
                     "duration": duration,
                     "changes": changes,
                 })
-        return trains
+        return trains, all_dep_minutes
     except Exception as e:
         logger.warning(f"Live timetable query error for window {time_str}: {e}")
-        return []
+        return [], []
+
+
+def _fetch_single_window_trains(
+    from_name: str,
+    from_eva: str,
+    to_name: str,
+    to_eva: str,
+    date_formatted: str,
+    time_str: str,
+    direct_only: bool = True,
+) -> List[Dict]:
+    """Helper to query a single time window from rozklad-pkp.pl."""
+    trains, _ = _fetch_single_window_with_meta(
+        from_name, from_eva, to_name, to_eva, date_formatted, time_str, direct_only
+    )
+    return trains
+
+
+def _fetch_adaptive_full_day(
+    executor: concurrent.futures.ThreadPoolExecutor,
+    from_name: str,
+    from_eva: str,
+    to_name: str,
+    to_eva: str,
+    date_formatted: str,
+    windows: List[str],
+    direct_only: bool,
+    adaptive: bool,
+) -> List[Dict]:
+    queried_minutes: set[int] = set()
+    results_by_qmin: Dict[int, Tuple[List[Dict], List[int]]] = {}
+
+    def run_batch(qmins: List[int]) -> None:
+        fresh = [m for m in qmins if 0 <= m <= 1439 and m not in queried_minutes]
+        if not fresh:
+            return
+        for m in fresh:
+            queried_minutes.add(m)
+        futures = {
+            m: executor.submit(
+                _fetch_single_window_with_meta,
+                from_name,
+                from_eva,
+                to_name,
+                to_eva,
+                date_formatted,
+                format_minutes_to_time(m),
+                direct_only,
+            )
+            for m in fresh
+        }
+        for m, fut in futures.items():
+            results_by_qmin[m] = fut.result()
+
+    run_batch([time_to_minutes(w) for w in windows])
+
+    if adaptive:
+        for _ in range(4):
+            sorted_items = sorted(results_by_qmin.items())
+            gap_probes: List[int] = []
+            for idx, (qmin, (_ic, all_deps)) in enumerate(sorted_items):
+                if len(all_deps) < 3:
+                    continue
+                max_dep = max(all_deps)
+                if max_dep < qmin:
+                    continue
+                if idx + 1 < len(sorted_items):
+                    next_qmin, (_nic, next_deps) = sorted_items[idx + 1]
+                    next_forward = [d for d in next_deps if d >= qmin]
+                    next_boundary = min(next_qmin, min(next_forward)) if next_forward else next_qmin
+                else:
+                    next_boundary = 1435
+                probe_min = max_dep + 1
+                if qmin < probe_min < next_boundary and probe_min not in queried_minutes:
+                    gap_probes.append(probe_min)
+            if not gap_probes:
+                break
+            run_batch(gap_probes[:12])
+
+    merged: List[Dict] = []
+    for qmin in sorted(results_by_qmin.keys()):
+        merged.extend(results_by_qmin[qmin][0])
+    return merged
 
 
 def fetch_live_train_connections(
@@ -385,8 +475,8 @@ def fetch_live_train_connections(
 ) -> List[Dict]:
     """
     Scrapes real PKP Intercity connections from official timetable portal (rozklad-pkp.pl).
-    When full_day=True, queries across denser time windows covering daytime peaks
-    in parallel to retrieve departures across the entire 24 hours of that day without misses.
+    When full_day=True, queries across denser time windows and adaptively fills any time gaps
+    where HAFAS hits its 3-row page limit (e.g. busy regional+IC hubs like Koluszki).
     When direct_only=False, queries both direct trains and transfer connections so all
     possibilities are available.
     Filters strictly to PKP Intercity operated trains (EIP, EIC, IC, TLK).
@@ -403,20 +493,20 @@ def fetch_live_train_connections(
 
     windows = FULL_DAY_WINDOWS if full_day else [travel_time]
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=min(12, len(windows) * 2)) as executor:
-        direct_futures = [
-            executor.submit(_fetch_single_window_trains, from_name, from_eva, to_name, to_eva, date_formatted, w, True)
-            for w in windows
-        ]
-        transfer_futures = []
-        if not direct_only:
-            transfer_futures = [
-                executor.submit(_fetch_single_window_trains, from_name, from_eva, to_name, to_eva, date_formatted, w, False)
-                for w in windows
-            ]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=12) as executor:
+        direct_trains = _fetch_adaptive_full_day(
+            executor, from_name, from_eva, to_name, to_eva, date_formatted, windows, True, full_day
+        )
+        transfer_trains = (
+            _fetch_adaptive_full_day(
+                executor, from_name, from_eva, to_name, to_eva, date_formatted, windows, False, full_day
+            )
+            if not direct_only
+            else []
+        )
 
-        direct_results = [f.result() for f in direct_futures]
-        transfer_results = [f.result() for f in transfer_futures]
+    direct_results = [direct_trains]
+    transfer_results = [transfer_trains]
 
     all_trains = []
     seen = set()

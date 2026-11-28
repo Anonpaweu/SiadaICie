@@ -575,6 +575,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         startTrainScan(last)
     }
 
+    fun forceFullRescan() {
+        val st = _uiState.value
+        val curScan = ScanForegroundService.state.value
+        val from = curScan.fromStation.ifBlank { st.fromQuery.trim() }
+        val to = curScan.toStation.ifBlank { st.toQuery.trim() }
+        val date = curScan.travelDate.ifBlank { st.travelDate }
+        val trainNo = curScan.trainNumber.ifBlank { st.lastScannedTrain?.trainNumber.orEmpty() }
+        if (from.isEmpty() || to.isEmpty() || trainNo.isEmpty()) return
+        val depTime = curScan.availabilityMap?.segments?.firstOrNull()?.departureTime?.ifBlank { null }
+            ?: st.lastScannedTrain?.departure?.ifBlank { null }
+            ?: "12:00"
+        val ticketClass = curScan.ticketClass.takeIf { it in 1..2 } ?: st.ticketClass
+        _uiState.update { it.copy(selectedStrategyIdx = 0, activeScreen = AppScreen.SCAN_RESULT) }
+        ScanForegroundService.startScan(
+            context = getApplication<Application>().applicationContext,
+            fromStation = from,
+            toStation = to,
+            travelDate = date,
+            trainNumber = trainNo,
+            depTime = depTime,
+            ticketClass = ticketClass,
+            profile = st.profile,
+            forceFull = true,
+            seatFilters = st.seatFilters
+        )
+    }
+
     fun cancelScan() {
         ScanForegroundService.cancelScan(getApplication<Application>().applicationContext)
     }

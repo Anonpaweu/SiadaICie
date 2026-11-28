@@ -89,6 +89,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
@@ -103,6 +104,7 @@ import pl.siadaicie.app.domain.TrainConnection
 import pl.siadaicie.app.optimizer.SeatOptimizer
 import pl.siadaicie.app.service.ScanProgressState
 import java.time.LocalDate
+import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
@@ -144,6 +146,8 @@ fun SearchScreen(
     var showHistoryInfoDialog by remember { mutableStateOf(false) }
     var showMidJourneyInfoDialog by remember { mutableStateOf(false) }
     var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    val nowDate = remember(nowMs) { LocalDate.now() }
+    val nowTime = remember(nowMs) { LocalTime.now() }
 
     LaunchedEffect(history.size) {
         nowMs = System.currentTimeMillis()
@@ -719,6 +723,9 @@ fun SearchScreen(
                         val tKey = "${train.trainNumber}_${train.departure}"
                         BoardingPassTrainCard(
                             train = train,
+                            travelDate = ui.travelDate,
+                            nowDate = nowDate,
+                            nowTime = nowTime,
                             enabled = !scan.isRunning,
                             stops = ui.trainRoutesByKey[tKey].orEmpty(),
                             isLoadingStops = tKey in ui.loadingRouteKeys,
@@ -1033,10 +1040,36 @@ internal fun SuggestionsList(items: List<StationInfo>, onSelect: (StationInfo) -
     }
 }
 
+internal fun isDeparturePastForDate(
+    travelDate: String,
+    timeStr: String,
+    dayOffset: Int = 0,
+    nowDate: LocalDate = LocalDate.now(),
+    nowTime: LocalTime = LocalTime.now()
+): Boolean {
+    val baseDate = try {
+        LocalDate.parse(travelDate.trim(), DateTimeFormatter.ISO_LOCAL_DATE)
+    } catch (_: Exception) {
+        return false
+    }
+    val effectiveDate = baseDate.plusDays(dayOffset.toLong())
+    if (effectiveDate.isBefore(nowDate)) return true
+    if (effectiveDate.isAfter(nowDate)) return false
+    val parts = timeStr.trim().split(":")
+    if (parts.size < 2) return false
+    val hh = parts[0].toIntOrNull() ?: return false
+    val mm = parts[1].toIntOrNull() ?: return false
+    if (hh !in 0..23 || mm !in 0..59) return false
+    return LocalTime.of(hh, mm).isBefore(nowTime)
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun BoardingPassTrainCard(
     train: TrainConnection,
+    travelDate: String,
+    nowDate: LocalDate,
+    nowTime: LocalTime,
     enabled: Boolean,
     stops: List<StationStop>,
     isLoadingStops: Boolean,
@@ -1049,6 +1082,14 @@ private fun BoardingPassTrainCard(
 ) {
     val colors = LocalRailColors.current
     var expanded by remember(train.trainNumber, train.departure) { mutableStateOf(false) }
+    val isOriginDeparted = isDeparturePastForDate(travelDate, train.departure, 0, nowDate, nowTime)
+    val isEffectiveDeparted = if (selectedStartStop != null) {
+        val selTime = selectedStartStop.departureTime.ifBlank { selectedStartStop.arrivalTime }
+        isDeparturePastForDate(travelDate, selTime, selectedStartStop.dayOffset, nowDate, nowTime)
+    } else {
+        isOriginDeparted
+    }
+    val canScan = enabled && !isEffectiveDeparted
     val brand = train.trainNumber.trim().split(Regex("\\s+")).firstOrNull()?.uppercase().orEmpty()
     val (badgeBg, badgeFg) = when (brand) {
         "EIP" -> Color(0xFFFEF3C7) to Color(0xFF92400E)
@@ -1068,7 +1109,7 @@ private fun BoardingPassTrainCard(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable(enabled = enabled) { onClick() }
+                    .clickable(enabled = canScan) { onClick() }
                     .padding(horizontal = 16.dp, vertical = 14.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
@@ -1093,7 +1134,7 @@ private fun BoardingPassTrainCard(
                         }
                         Text(
                             text = train.trainNumber,
-                            color = colors.textPrimary,
+                            color = if (isEffectiveDeparted) colors.textSecondary else colors.textPrimary,
                             fontWeight = FontWeight.SemiBold,
                             fontSize = 14.sp,
                             maxLines = 1,
@@ -1102,8 +1143,16 @@ private fun BoardingPassTrainCard(
                     }
 
                     Text(
-                        text = if (train.changes == 0) "Bezpośredni" else SeatOptimizer.formatTransfersPl(train.changes),
-                        color = if (train.changes == 0) colors.seatEmerald else colors.textSecondary,
+                        text = when {
+                            isEffectiveDeparted -> "Odjechał"
+                            train.changes == 0 -> "Bezpośredni"
+                            else -> SeatOptimizer.formatTransfersPl(train.changes)
+                        },
+                        color = when {
+                            isEffectiveDeparted -> colors.corridorAmber
+                            train.changes == 0 -> colors.seatEmerald
+                            else -> colors.textSecondary
+                        },
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Medium
                     )
@@ -1119,7 +1168,8 @@ private fun BoardingPassTrainCard(
                             fontSize = 22.sp,
                             fontWeight = FontWeight.Bold,
                             fontFeatureSettings = "tnum",
-                            color = colors.textPrimary
+                            color = if (isOriginDeparted) colors.textSecondary else colors.textPrimary,
+                            textDecoration = if (isOriginDeparted) TextDecoration.LineThrough else TextDecoration.None
                         )
                     )
 
@@ -1152,14 +1202,14 @@ private fun BoardingPassTrainCard(
                             fontSize = 22.sp,
                             fontWeight = FontWeight.Bold,
                             fontFeatureSettings = "tnum",
-                            color = colors.textPrimary
+                            color = if (isEffectiveDeparted) colors.textSecondary else colors.textPrimary
                         )
                     )
 
                     Spacer(modifier = Modifier.width(12.dp))
 
                     Surface(
-                        color = colors.accentContainer,
+                        color = if (isEffectiveDeparted) colors.cardTonal else colors.accentContainer,
                         shape = RoundedCornerShape(10.dp)
                     ) {
                         Row(
@@ -1168,15 +1218,16 @@ private fun BoardingPassTrainCard(
                         ) {
                             Text(
                                 text = "Skanuj",
-                                color = colors.accent,
+                                color = if (isEffectiveDeparted) colors.textSecondary else colors.accent,
                                 fontWeight = FontWeight.SemiBold,
-                                fontSize = 12.sp
+                                fontSize = 12.sp,
+                                textDecoration = if (isEffectiveDeparted) TextDecoration.LineThrough else TextDecoration.None
                             )
                             Spacer(modifier = Modifier.width(3.dp))
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.ArrowForward,
                                 contentDescription = null,
-                                tint = colors.accent,
+                                tint = if (isEffectiveDeparted) colors.textSecondary else colors.accent,
                                 modifier = Modifier.size(14.dp)
                             )
                         }
@@ -1186,27 +1237,32 @@ private fun BoardingPassTrainCard(
 
             HorizontalDivider(color = colors.hairline.copy(alpha = 0.6f))
 
+            val highlightStopPicker = isEffectiveDeparted
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .background(if (highlightStopPicker) colors.accentContainer.copy(alpha = 0.55f) else Color.Transparent)
                     .clickable(enabled = enabled) {
                         val next = !expanded
                         expanded = next
                         if (next) onExpandStops()
                     }
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                    .padding(horizontal = 16.dp, vertical = 9.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = if (selectedStartStop != null) {
-                        "Skanuj od: ${selectedStartStop.name} (zmień)"
-                    } else {
-                        "Pokaż trasę i wybierz stację startową"
+                    text = when {
+                        selectedStartStop != null && !isEffectiveDeparted ->
+                            "Skanuj od: ${selectedStartStop.name} (zmień)"
+                        highlightStopPicker ->
+                            "Pociąg odjechał — rozwiń trasę i wybierz kolejną stację"
+                        else ->
+                            "Pokaż trasę i wybierz stację startową"
                     },
                     fontSize = 11.sp,
-                    fontWeight = if (selectedStartStop != null) FontWeight.SemiBold else FontWeight.Medium,
-                    color = if (selectedStartStop != null) colors.accent else colors.textSecondary,
+                    fontWeight = if (selectedStartStop != null || highlightStopPicker) FontWeight.SemiBold else FontWeight.Medium,
+                    color = if (selectedStartStop != null || highlightStopPicker) colors.accent else colors.textSecondary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
@@ -1214,7 +1270,7 @@ private fun BoardingPassTrainCard(
                 Icon(
                     imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
                     contentDescription = if (expanded) "Zwiń trasę" else "Rozwiń trasę",
-                    tint = colors.textSecondary,
+                    tint = if (highlightStopPicker) colors.accent else colors.textSecondary,
                     modifier = Modifier.size(18.dp)
                 )
             }
@@ -1283,25 +1339,50 @@ private fun BoardingPassTrainCard(
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 val selectableStops = stops.dropLast(1)
-                                selectableStops.forEach { stop ->
-                                    val isSel = selectedStartStop != null &&
+                                val firstUpcomingIdx = selectableStops.indexOfFirst { st ->
+                                    val tLbl = st.departureTime.ifBlank { st.arrivalTime }
+                                    !isDeparturePastForDate(travelDate, tLbl, st.dayOffset, nowDate, nowTime)
+                                }
+                                selectableStops.forEachIndexed { idx, stop ->
+                                    val timeLabel = stop.departureTime.ifBlank { stop.arrivalTime }
+                                    val isPastStop = isDeparturePastForDate(travelDate, timeLabel, stop.dayOffset, nowDate, nowTime)
+                                    val isSel = !isPastStop &&
+                                        selectedStartStop != null &&
                                         selectedStartStop.seq == stop.seq &&
                                         selectedStartStop.name == stop.name
-                                    val timeLabel = stop.departureTime.ifBlank { stop.arrivalTime }
+                                    val isFirstUpcomingHighlight = isOriginDeparted &&
+                                        selectedStartStop == null &&
+                                        idx == firstUpcomingIdx
                                     Surface(
-                                        onClick = { onSelectStartStop(stop) },
-                                        color = if (isSel) colors.accent else colors.card,
+                                        onClick = { if (!isPastStop) onSelectStartStop(stop) },
+                                        enabled = !isPastStop,
+                                        color = when {
+                                            isPastStop -> colors.cardTonal.copy(alpha = 0.7f)
+                                            isSel -> colors.accent
+                                            isFirstUpcomingHighlight -> colors.accentContainer
+                                            else -> colors.card
+                                        },
                                         shape = RoundedCornerShape(10.dp),
                                         border = BorderStroke(
                                             1.dp,
-                                            if (isSel) colors.accent else colors.hairline
+                                            when {
+                                                isPastStop -> colors.hairline.copy(alpha = 0.5f)
+                                                isSel || isFirstUpcomingHighlight -> colors.accent
+                                                else -> colors.hairline
+                                            }
                                         )
                                     ) {
                                         Text(
                                             text = if (timeLabel.isNotBlank()) "${stop.name} $timeLabel" else stop.name,
                                             fontSize = 11.sp,
-                                            fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
-                                            color = if (isSel) Color.White else colors.textPrimary,
+                                            fontWeight = if (isSel || isFirstUpcomingHighlight) FontWeight.Bold else FontWeight.Medium,
+                                            color = when {
+                                                isPastStop -> colors.textSecondary.copy(alpha = 0.65f)
+                                                isSel -> Color.White
+                                                isFirstUpcomingHighlight -> colors.accent
+                                                else -> colors.textPrimary
+                                            },
+                                            textDecoration = if (isPastStop) TextDecoration.LineThrough else TextDecoration.None,
                                             modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
                                         )
                                     }

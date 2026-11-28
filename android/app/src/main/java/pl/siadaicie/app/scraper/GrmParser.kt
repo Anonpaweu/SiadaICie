@@ -155,6 +155,54 @@ object GrmParser {
         return null
     }
 
+    /**
+     * Checks whether the opposite ticket class (e.g. Class 1 when scanning Class 2)
+     * appears to have purchasable tickets on the e-IC connection card.
+     */
+    fun isAlternateClassAvailableFromCardText(cardText: String?, ticketClass: Int = TARGET_CLASS): Boolean {
+        val low = (cardText ?: "").replace(Regex("\\s+"), " ").trim().lowercase()
+        if (low.isEmpty()) return false
+        val otherClass = if (ticketClass == 2) 1 else 2
+        val prefix = "klasa $otherClass:"
+        if (prefix !in low) return false
+        val after = low.substringAfter(prefix)
+        val snippet = after.substringBefore("klasa $ticketClass:").take(160)
+        val unavailable = listOf(
+            "zostały wyprzedane",
+            "zostaly wyprzedane",
+            "wyprzedano",
+            "brak miejsc",
+            "brak wolnych miejsc",
+            "niedostępna",
+            "niedostepna",
+            "zablokowana"
+        ).any { it in snippet }
+        if (unavailable) return false
+        return ("zł" in snippet || "zl" in snippet || "pln" in snippet || "kup bilet" in snippet || "wybierz" in snippet)
+    }
+
+    fun collectFilteredSpecialLabels(
+        map: pl.siadaicie.app.domain.FullTrainAvailabilityMap,
+        seatFilters: SeatFilterPrefs
+    ): List<String> {
+        val found = LinkedHashSet<String>()
+        for (seg in map.segments) {
+            for ((wNo, seats) in seg.carriages) {
+                for (sNo in seats) {
+                    val tags = seg.seatTags["${wNo}_$sNo"].orEmpty()
+                    if (!isSeatAllowed(tags, seatFilters)) {
+                        for (t in tags) {
+                            if (isRestrictedTag(t)) {
+                                found.add(formatSeatTagPl(t))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return found.toList()
+    }
+
     fun parseGrmWagonSvg(svgXml: String, ticketClass: Int = TARGET_CLASS): List<String> {
         return parseGrmWagonSvgWithMeta(svgXml, ticketClass, includeWheelchair = false).first
     }

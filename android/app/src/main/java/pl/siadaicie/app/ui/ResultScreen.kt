@@ -107,6 +107,7 @@ fun ResultScreen(
     onBack: () -> Unit,
     onCancelScan: () -> Unit,
     onRetryScan: () -> Unit,
+    onForceFullScan: () -> Unit,
     onProfileChange: (OptimizationProfile) -> Unit,
     onSeatFiltersChange: (SeatFilterPrefs) -> Unit,
     onSelectStrategy: (Int) -> Unit,
@@ -489,6 +490,23 @@ fun ResultScreen(
                                 .containsMatchIn(scan.trainNumber.trim())
                             val isOverbookedFull = fullRouteStandingStatus == "OVERBOOKED"
                             val isSpecialOnlyFull = fullRouteStandingStatus == "SPECIAL_ONLY"
+                            val hasAltClass1 = scan.ticketClass == 2 &&
+                                (scan.alternateClassAvailable || scan.availabilityMap?.alternateClassAvailable == true)
+                            if (hasAltClass1) {
+                                Surface(
+                                    color = colors.seatEmeraldContainer,
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(
+                                        text = "Brak biletów w Klasie 2 — dostępne są wyłącznie bilety w Klasie 1.",
+                                        color = colors.seatEmerald,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp)
+                                    )
+                                }
+                            }
                             if (isOverbookedFull && !isEipEmpty) {
                                 Surface(
                                     color = colors.errorContainer,
@@ -882,6 +900,57 @@ fun ResultScreen(
                     }
                 }
 
+                if (scan.fastPathUsed && !isNoSeatmap) {
+                    item(key = "force_full_scan_card") {
+                        Surface(
+                            color = colors.card,
+                            shape = RoundedCornerShape(16.dp),
+                            border = BorderStroke(1.dp, colors.brandNavy.copy(alpha = 0.25f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = "Skanowanie szybkie (Fast-Path)",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = colors.textPrimary
+                                )
+                                Text(
+                                    text = "Znaleziono wolne miejsce na całą trasę bez sprawdzania odcinków pośrednich. Jeśli chcesz zobaczyć pełną siatkę wolnych miejsc na każdym odcinku, uruchom pełne skanowanie.",
+                                    fontSize = 12.sp,
+                                    lineHeight = 16.sp,
+                                    color = colors.textSecondary
+                                )
+                                OutlinedButton(
+                                    onClick = onForceFullScan,
+                                    shape = RoundedCornerShape(12.dp),
+                                    border = BorderStroke(1.dp, colors.brandNavy.copy(alpha = 0.45f)),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(40.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Refresh,
+                                        contentDescription = null,
+                                        tint = colors.brandNavy,
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Wymuś pełne skanowanie (wszystkie odcinki)",
+                                        color = colors.brandNavy,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 12.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
                 item(key = "support_coffee_bar") {
                     Surface(
                         onClick = onOpenSupport,
@@ -1244,12 +1313,15 @@ private fun TimelineStepCard(
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
+                    val specialTagsSuffix = if (step.availableSpecialTags.isNotEmpty()) {
+                        " (${step.availableSpecialTags.joinToString(", ")})"
+                    } else ""
                     Text(
                         text = when {
                             isOverbookedStep ->
                                 "BRAK BILETÓW W TEJ KLASIE (nawet stojących)"
                             step.isStanding && step.standingStatus == "SPECIAL_ONLY" ->
-                                "Tylko miejsca specjalne (brak zwykłych i stojących)"
+                                "Tylko miejsca specjalne$specialTagsSuffix"
                             step.isStanding ->
                                 "KORYTARZ - brak miejsca siedzącego"
                             step.seatNo.startsWith("AUTO") ->
@@ -1272,8 +1344,11 @@ private fun TimelineStepCard(
                     color = colors.errorRed
                 )
             } else if (step.isStanding && step.standingStatus == "SPECIAL_ONLY") {
+                val specDesc = if (step.availableSpecialTags.isNotEmpty()) {
+                    " (${step.availableSpecialTags.joinToString(", ")})"
+                } else ""
                 Text(
-                    text = "Na tym odcinku e-IC nie sprzedaje zwykłych biletów ani biletów bez gwarancji miejsca — dostępne są wyłącznie miejsca specjalne (dla uprawnionych) lub 1. klasa.",
+                    text = "Na tym odcinku e-IC nie sprzedaje zwykłych biletów ani biletów bez gwarancji miejsca — dostępne są wyłącznie miejsca specjalne$specDesc (dla uprawnionych) lub 1. klasa.",
                     fontSize = 12.sp,
                     color = colors.textSecondary
                 )

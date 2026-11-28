@@ -169,6 +169,7 @@ fun MainScreen(viewModel: MainViewModel) {
                 onBack = viewModel::navigateBackToSearch,
                 onCancelScan = viewModel::cancelScan,
                 onRetryScan = viewModel::retryLastScan,
+                onForceFullScan = viewModel::forceFullRescan,
                 onProfileChange = viewModel::setProfile,
                 onSeatFiltersChange = handleSeatFilterChange,
                 onSelectStrategy = viewModel::selectStrategy,

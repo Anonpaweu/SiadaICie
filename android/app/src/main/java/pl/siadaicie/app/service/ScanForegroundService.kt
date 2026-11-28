@@ -55,6 +55,7 @@ data class ScanProgressState(
     val fastPathUsed: Boolean = false,
     val noSeatmapMode: Boolean = false,
     val fullRouteStandingStatus: String? = null,
+    val alternateClassAvailable: Boolean = false,
     val bikeSuggestion: String? = null,
     val fullRouteBookingUrl: String? = null,
     val loadedFromHistoryAtMs: Long? = null,
@@ -158,6 +159,7 @@ class ScanForegroundService : Service() {
                 strategies = strategies,
                 noSeatmapMode = map.noSeatmapMode,
                 fullRouteStandingStatus = map.fullRouteStandingStatus,
+                alternateClassAvailable = map.alternateClassAvailable,
                 bikeSuggestion = SeatOptimizer.computeBikeSuggestion(map, profile, seatFilters, strategies),
                 fullRouteBookingUrl = current.fullRouteBookingUrl ?: buildFullRouteBookingUrl(map),
                 error = if (strategies.isEmpty()) buildFilteredEmptyMessage(map, current.ticketClass, seatFilters) else null
@@ -187,6 +189,7 @@ class ScanForegroundService : Service() {
                 fastPathUsed = item.availabilityMap.fastPathUsed,
                 noSeatmapMode = item.availabilityMap.noSeatmapMode,
                 fullRouteStandingStatus = item.availabilityMap.fullRouteStandingStatus,
+                alternateClassAvailable = item.availabilityMap.alternateClassAvailable,
                 bikeSuggestion = SeatOptimizer.computeBikeSuggestion(item.availabilityMap, profile, seatFilters, strategies),
                 fullRouteBookingUrl = buildFullRouteBookingUrl(item.availabilityMap),
                 loadedFromHistoryAtMs = item.savedAtEpochMs
@@ -217,13 +220,20 @@ class ScanForegroundService : Service() {
                     }
                 }
             }
+            val specialNames = GrmParser.collectFilteredSpecialLabels(map, seatFilters)
+            val specialSuffix = if (specialNames.isNotEmpty()) " (${specialNames.joinToString(", ")})" else ""
+            val altClassSuffix = if (ticketClass == 2 && map.alternateClassAvailable) {
+                " Dostępne są bilety w Klasie 1."
+            } else ""
             return when {
                 anyRawSeats && !anyAllowedSeats ->
-                    "Wolne miejsca w Klasie $ticketClass są dostępne tylko w wyłączonych kategoriach specjalnych (np. bez roweru lub wymagające zaznaczenia w filtrach)."
+                    "Wolne miejsca w Klasie $ticketClass są dostępne tylko w wyłączonych kategoriach specjalnych$specialSuffix — włącz odpowiedni filtr powyżej.$altClassSuffix"
                 isEip ->
-                    "Pociąg EIP (Pendolino) w Klasie $ticketClass wymaga obowiązkowej rezerwacji miejsca i nie sprzedaje biletów bez gwarancji miejsca. Sprawdź inną klasę, filtry lub inny pociąg."
+                    "Pociąg EIP (Pendolino) w Klasie $ticketClass wymaga obowiązkowej rezerwacji miejsca i nie sprzedaje biletów bez gwarancji miejsca.$altClassSuffix Sprawdź inną klasę, filtry lub inny pociąg."
                 anyRawSeats ->
-                    "Brak opłacalnych wariantów siedzących spełniających wybrane filtry w Klasie $ticketClass."
+                    "Brak opłacalnych wariantów siedzących spełniających wybrane filtry w Klasie $ticketClass.$altClassSuffix"
+                ticketClass == 2 && map.alternateClassAvailable ->
+                    "Brak wolnych biletów w Klasie 2 — dostępne są wyłącznie bilety w Klasie 1."
                 else -> "Brak wariantów siedzących w zapisanej analizie."
             }
         }
@@ -392,7 +402,10 @@ class ScanForegroundService : Service() {
                             ?: "Nie udało się odczytać schematu miejsc z systemu e-IC."
                         "Błąd pobierania schematu (${scrapeErrorSegs.size}/${map.segments.size} odcinków): $sampleReason"
                     } else if (isEipTrain) {
-                        "Pociąg EIP (Pendolino) w Klasie $ticketClass wymaga obowiązkowej rezerwacji miejsca i nie sprzedaje biletów bez gwarancji miejsca. Sprawdź inną klasę lub inny pociąg."
+                        val altNote = if (ticketClass == 2 && map.alternateClassAvailable) " Dostępne są bilety w Klasie 1." else ""
+                        "Pociąg EIP (Pendolino) w Klasie $ticketClass wymaga obowiązkowej rezerwacji miejsca i nie sprzedaje biletów bez gwarancji miejsca.$altNote Sprawdź inną klasę lub inny pociąg."
+                    } else if (ticketClass == 2 && map.alternateClassAvailable) {
+                        "Brak wolnych biletów w Klasie 2 dla pociągu $trainNumber — dostępne są wyłącznie bilety w Klasie 1."
                     } else {
                         "Brak wolnych miejsc w Klasie $ticketClass dla pociągu $trainNumber."
                     }
@@ -403,6 +416,7 @@ class ScanForegroundService : Service() {
                         availabilityMap = if (scrapeErrorSegs.isEmpty()) map else _state.value.availabilityMap,
                         noSeatmapMode = map.noSeatmapMode,
                         fullRouteStandingStatus = if (scrapeErrorSegs.isEmpty()) map.fullRouteStandingStatus else null,
+                        alternateClassAvailable = if (scrapeErrorSegs.isEmpty()) map.alternateClassAvailable else false,
                         bikeSuggestion = if (scrapeErrorSegs.isEmpty()) SeatOptimizer.computeBikeSuggestion(map, profile, seatFilters, emptyList()) else null,
                         fullRouteBookingUrl = if (scrapeErrorSegs.isEmpty()) fullUrl else null,
                         error = errorText,
@@ -421,21 +435,26 @@ class ScanForegroundService : Service() {
                     }
                     val freeSegments = map.segments.filter { seg -> seg.carriages.values.any { it.isNotEmpty() } }
                     val errSegs = map.segments.filter { it.status == "SCRAPE_ERROR" }
+                    val specialNames = GrmParser.collectFilteredSpecialLabels(map, seatFilters)
+                    val specialSuffix = if (specialNames.isNotEmpty()) " (${specialNames.joinToString(", ")})" else ""
+                    val altNote = if (ticketClass == 2 && map.alternateClassAvailable) " Dostępne są bilety w Klasie 1." else ""
                     val details = when {
                         freeSegments.isNotEmpty() && !anyAllowedRaw ->
-                            "Znaleziono wolne miejsca w Klasie $ticketClass, ale wszystkie wymagają włączenia odpowiedniej kategorii w filtrach."
+                            "Znaleziono wolne miejsca w Klasie $ticketClass, ale wszystkie wymagają włączenia odpowiedniej kategorii w filtrach$specialSuffix.$altNote"
                         isEipTrain ->
-                            "Pociąg EIP (Pendolino) w Klasie $ticketClass wymaga obowiązkowej rezerwacji miejsca i nie sprzedaje biletów bez gwarancji miejsca. Sprawdź inną klasę, filtry lub inny pociąg."
+                            "Pociąg EIP (Pendolino) w Klasie $ticketClass wymaga obowiązkowej rezerwacji miejsca i nie sprzedaje biletów bez gwarancji miejsca.$altNote Sprawdź inną klasę, filtry lub inny pociąg."
                         freeSegments.isNotEmpty() -> {
                             val listStr = freeSegments.take(3).joinToString("; ") { seg ->
                                 "${seg.fromStation} -> ${seg.toStation}"
                             }
-                            "Większość trasy jest wyprzedana - znaleziono tylko pojedyncze krótkie odcinki ($listStr), na których nie opłaca się przesiadka w optymalizatorze."
+                            "Większość trasy jest wyprzedana - znaleziono tylko pojedyncze krótkie odcinki ($listStr), na których nie opłaca się przesiadka w optymalizatorze.$altNote"
                         }
                         errSegs.isNotEmpty() -> {
                             val reason = errSegs.mapNotNull { it.errorReason }.firstOrNull() ?: "Błąd odczytu."
                             "Błąd odczytu (${errSegs.size}/${map.segments.size} odcinków): $reason"
                         }
+                        ticketClass == 2 && map.alternateClassAvailable ->
+                            "Brak wolnych biletów w Klasie 2 — dostępne są wyłącznie bilety w Klasie 1."
                         else -> "Brak wariantów podróży z miejscem siedzącym w Klasie $ticketClass."
                     }
                     _state.value = _state.value.copy(
@@ -446,6 +465,7 @@ class ScanForegroundService : Service() {
                         strategies = emptyList(),
                         noSeatmapMode = map.noSeatmapMode,
                         fullRouteStandingStatus = map.fullRouteStandingStatus,
+                        alternateClassAvailable = map.alternateClassAvailable,
                         bikeSuggestion = SeatOptimizer.computeBikeSuggestion(map, profile, seatFilters, emptyList()),
                         fullRouteBookingUrl = fullUrl,
                         error = details,
@@ -475,6 +495,7 @@ class ScanForegroundService : Service() {
                     fastPathUsed = map.fastPathUsed,
                     noSeatmapMode = map.noSeatmapMode,
                     fullRouteStandingStatus = map.fullRouteStandingStatus,
+                    alternateClassAvailable = map.alternateClassAvailable,
                     bikeSuggestion = SeatOptimizer.computeBikeSuggestion(map, profile, seatFilters, strategies),
                     fullRouteBookingUrl = fullUrl,
                     error = null,

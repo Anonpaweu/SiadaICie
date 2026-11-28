@@ -48,7 +48,8 @@ import kotlin.coroutines.resume
 
 open class GraphicReservationException(
     message: String,
-    val standingStatus: String? = null
+    val standingStatus: String? = null,
+    val alternateClassAvailable: Boolean = false
 ) : Exception(message)
 
 class EbiletWebViewScanner(
@@ -1111,7 +1112,12 @@ class EbiletWebViewScanner(
                 }
 
                 if (matchedIdx < 0) {
-                    Log.w(TAG, "[$fromStation -> $toStation] Train '$trainCleanNum' not matched after pagination")
+                    Log.w(TAG, "[$fromStation -> $toStation] Train '$trainCleanNum' not matched after pagination (isSameMetro=$isSameMetro)")
+                    if (isSameMetro) {
+                        throw GraphicReservationException(
+                            "SCRAPE_ERROR: PKP Intercity (e-IC) nie prowadzi sprzedaży biletów na krótkie odcinki wewnątrz tej samej aglomeracji ($fromStation -> $toStation). Wybierz wcześniejszą stację początkową lub dalszą stację docelową."
+                        )
+                    }
                     throw GraphicReservationException(
                         "SCRAPE_ERROR: Nie znaleziono pociągu $trainNumber na liście połączeń dla relacji $fromStation -> $toStation."
                     )
@@ -1232,6 +1238,7 @@ class EbiletWebViewScanner(
                     )
                 )
                 val cardStandingStatus = GrmParser.classifyStandingStatusFromCardText(matchedCardText, ticketClass)
+                val cardAltClassAvailable = GrmParser.isAlternateClassAvailableFromCardText(matchedCardText, ticketClass)
 
                 // Wait for class buttons to render after expanding (re-try expand up to 3 times if card stays closed)
                 var selectClassResult = ""
@@ -1312,11 +1319,12 @@ class EbiletWebViewScanner(
                         Log.i(TAG, "[$fromStation -> $toStation] Retry expand #$reExpandAttempts: $retryExp")
                     }
                 }
-                Log.i(TAG, "[$fromStation -> $toStation] Class selection: $selectClassResult (standing=$cardStandingStatus)")
+                Log.i(TAG, "[$fromStation -> $toStation] Class selection: $selectClassResult (standing=$cardStandingStatus, altClass=$cardAltClassAvailable)")
                 if (selectClassResult == "SOLD_OUT") {
                     throw GraphicReservationException(
                         "BRAK_MIEJSC_KLASA_$ticketClass: Wyczerpano pulę miejsc w Klasie $ticketClass na tym odcinku.",
-                        standingStatus = cardStandingStatus
+                        standingStatus = cardStandingStatus,
+                        alternateClassAvailable = cardAltClassAvailable
                     )
                 }
                 if (!selectClassResult.startsWith("CLICKED:")) {
@@ -1668,6 +1676,8 @@ class EbiletWebViewScanner(
 
             // 1. Direct Fast-Path A -> B
             var fpWagonsUnavailable = false
+            var fpStandingStatus: String? = null
+            var fpAltClassAvailable = false
             if (fastPath && numSegments > 1) {
                 val sFirst = stops.first()
                 val sLast = stops.last()
@@ -1721,6 +1731,8 @@ class EbiletWebViewScanner(
                     throw e
                 } catch (e: GraphicReservationException) {
                     fpWagonsUnavailable = GrmParser.isSeatmapWagonsUnavailableError(e.message)
+                    if (e.standingStatus != null) fpStandingStatus = e.standingStatus
+                    if (e.alternateClassAvailable) fpAltClassAvailable = true
                     onProgress(22, "Brak wolnego miejsca na całą trasę (${sFirst.name} -> ${sLast.name}) - przechodzę dalej...")
                 } catch (_: Exception) {
                     onProgress(22, "Fast-Path niedostępny - sprawdzam dalej...")
@@ -1895,6 +1907,7 @@ class EbiletWebViewScanner(
                 val stepTicks = AtomicInteger(0)
                 val safeTotal = rangeTotalCount.coerceAtLeast(1)
                 var standingStatus: String? = null
+                var altClassAvailable = false
 
                 try {
                     val segScan = withTimeout(75_000L) {
@@ -1941,6 +1954,7 @@ class EbiletWebViewScanner(
                     seatTags = emptyMap()
                     if (status == "SOLD_OUT") {
                         standingStatus = e.standingStatus
+                        altClassAvailable = e.alternateClassAvailable
                     }
                 } catch (e: Exception) {
                     status = "SCRAPE_ERROR"
@@ -1968,7 +1982,8 @@ class EbiletWebViewScanner(
                     seatTags = seatTags,
                     status = status,
                     errorReason = errReason,
-                    standingStatus = standingStatus
+                    standingStatus = standingStatus,
+                    alternateClassAvailable = altClassAvailable
                 )
             }
 
@@ -2148,6 +2163,7 @@ class EbiletWebViewScanner(
                 val errLow = (seg.errorReason ?: "").lowercase()
                 val matchesKnown = listOf(
                     "nie znaleziono pociągu",
+                    "nie prowadzi sprzedaży biletów na krótkie odcinki",
                     "nie znalazł żadnych połączeń",
                     "timeout"
                 ).any { it in errLow }
@@ -2250,6 +2266,8 @@ class EbiletWebViewScanner(
                 travelDate = travelDate,
                 fastPathUsed = false,
                 totalRouteSegments = finalSegments.size,
+                fullRouteStandingStatus = fpStandingStatus,
+                alternateClassAvailable = fpAltClassAvailable || finalSegments.any { it.alternateClassAvailable },
                 segments = finalSegments
             )
         } finally {

@@ -47,7 +47,8 @@ data class PathStep(
     val seatTags: List<String> = emptyList(),
     val alternativeSeatsInSameCarriage: List<String> = emptyList(),
     val bookingUrl: String? = null,
-    val standingStatus: String? = null
+    val standingStatus: String? = null,
+    val availableSpecialTags: List<String> = emptyList()
 )
 
 data class OptimizationStrategy(
@@ -612,6 +613,23 @@ object SeatOptimizer {
                 var stepStandingStatus = if (b.isStanding) {
                     worstStandingStatus(segmentStandingStatuses, b.startSeg, b.endSeg)
                 } else null
+                val stepSpecialTags = LinkedHashSet<String>()
+                if (b.isStanding) {
+                    for (segIdx in b.startSeg until b.endSeg) {
+                        for ((uid, vec) in availabilityMatrix) {
+                            if (vec.getOrNull(segIdx) == 1) {
+                                val m = seatsMeta[uid] ?: continue
+                                if (!GrmParser.isSeatAllowed(m.seatTags, config.seatFilters)) {
+                                    for (t in m.seatTags) {
+                                        if (GrmParser.isRestrictedTag(t)) {
+                                            stepSpecialTags.add(GrmParser.formatSeatTagPl(t))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 if (b.isStanding && stepStandingStatus == null) {
                     val allSegsHaveFilteredSpecialSeats = (b.startSeg until b.endSeg).all { segIdx ->
                         availabilityMatrix.any { (uid, vec) ->
@@ -642,7 +660,8 @@ object SeatOptimizer {
                         seatTags = b.seat.seatTags,
                         alternativeSeatsInSameCarriage = sortedAlts,
                         bookingUrl = bookingUrl,
-                        standingStatus = stepStandingStatus
+                        standingStatus = stepStandingStatus,
+                        availableSpecialTags = stepSpecialTags.toList()
                     )
                 )
             }

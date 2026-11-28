@@ -27,7 +27,10 @@ class ScheduleClient(private val stationsRepo: StationsRepository) {
     private val routeCache = ConcurrentHashMap<String, List<StationStop>>()
 
     companion object {
-        val FULL_DAY_WINDOWS = listOf("00:00", "04:30", "07:00", "09:30", "12:00", "14:00", "15:45", "17:30", "19:30", "21:30")
+        val FULL_DAY_WINDOWS = listOf(
+            "00:00", "02:30", "05:00", "07:00", "09:00", "11:00",
+            "13:00", "15:00", "17:00", "19:00", "21:00", "22:30"
+        )
         private const val UA =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
 
@@ -281,6 +284,11 @@ class ScheduleClient(private val stationsRepo: StationsRepository) {
         }
     }
 
+    private data class WindowFetchResult(
+        val icTrains: List<TrainConnection>,
+        val allDepMinutes: List<Int>
+    )
+
     private fun fetchSingleWindowTrains(
         fromName: String,
         fromEva: String,
@@ -289,7 +297,7 @@ class ScheduleClient(private val stationsRepo: StationsRepository) {
         dateFormatted: String,
         timeStr: String,
         directOnly: Boolean
-    ): List<TrainConnection> {
+    ): WindowFetchResult {
         return try {
             val urlBuilder = "https://rozklad-pkp.pl/pl/tp".toHttpUrl().newBuilder()
                 .addQueryParameter("REQ0JourneyStopsS0A", "1")
@@ -303,10 +311,15 @@ class ScheduleClient(private val stationsRepo: StationsRepository) {
             if (toEva.isNotEmpty()) urlBuilder.addQueryParameter("REQ0JourneyStopsZ0ID", "A=1@L=$toEva@")
             if (directOnly) urlBuilder.addQueryParameter("REQ0HafasNoOfChanges", "0")
 
-            val html = executeGet(urlBuilder.build().toString()) ?: return emptyList()
+            val html = executeGet(urlBuilder.build().toString()) ?: return WindowFetchResult(emptyList(), emptyList())
             val trains = ArrayList<TrainConnection>()
+            val allDepMinutes = ArrayList<Int>()
             for (m in TP_ROW_SPLIT.findAll(html)) {
                 val chunk = m.groupValues[1]
+                val depTime = DEP_TIME_REGEX.find(chunk)?.groupValues?.get(1).orEmpty()
+                if (depTime.isEmpty()) continue
+                allDepMinutes.add(RouteHelpers.timeToMinutes(depTime))
+
                 var cleanName = ""
                 for (a in ALT_ATTR_REGEX.findAll(chunk)) {
                     val c = RouteHelpers.cleanPkpTrainName(a.groupValues[1])
@@ -317,8 +330,6 @@ class ScheduleClient(private val stationsRepo: StationsRepository) {
                 }
                 if (cleanName.isEmpty()) continue
 
-                val depTime = DEP_TIME_REGEX.find(chunk)?.groupValues?.get(1).orEmpty()
-                if (depTime.isEmpty()) continue
                 val arrTime = ARR_TIME_REGEX.find(chunk)?.groupValues?.get(1).orEmpty()
                 val duration = DUR_REGEX.find(chunk)?.groupValues?.get(1).orEmpty()
                 val changes = CHANGES_REGEX.find(chunk)?.groupValues?.get(1)?.toIntOrNull() ?: 0
@@ -339,10 +350,64 @@ class ScheduleClient(private val stationsRepo: StationsRepository) {
                     )
                 )
             }
-            trains
+            WindowFetchResult(trains, allDepMinutes)
         } catch (_: Exception) {
-            emptyList()
+            WindowFetchResult(emptyList(), emptyList())
         }
+    }
+
+    private suspend fun fetchAdaptiveFullDay(
+        fromName: String,
+        fromEva: String,
+        toName: String,
+        toEva: String,
+        dateFormatted: String,
+        directOnly: Boolean
+    ): List<TrainConnection> = coroutineScope {
+        val queriedMinutes = HashSet<Int>()
+        val resultsByQueryMin = java.util.TreeMap<Int, WindowFetchResult>()
+
+        suspend fun runBatch(minutesList: List<Int>) {
+            val fresh = minutesList.filter { it in 0..1439 && queriedMinutes.add(it) }
+            if (fresh.isEmpty()) return
+            val fetched = fresh.map { qMin ->
+                val tStr = "%02d:%02d".format(qMin / 60, qMin % 60)
+                async { qMin to fetchSingleWindowTrains(fromName, fromEva, toName, toEva, dateFormatted, tStr, directOnly) }
+            }.awaitAll()
+            for ((qMin, res) in fetched) {
+                resultsByQueryMin[qMin] = res
+            }
+        }
+
+        runBatch(FULL_DAY_WINDOWS.map { RouteHelpers.timeToMinutes(it) })
+
+        // HAFAS /pl/tp returns only ~3 connections per query (including regional carriers).
+        // Adaptively probe any time gap where a window hit the 3-row cap before reaching the next window.
+        for (round in 1..4) {
+            val entries = resultsByQueryMin.entries.toList()
+            val gapProbes = ArrayList<Int>()
+            for (i in entries.indices) {
+                val (qMin, res) = entries[i]
+                if (res.allDepMinutes.size < 3) continue
+                val maxDep = res.allDepMinutes.maxOrNull() ?: continue
+                if (maxDep < qMin) continue
+                val nextEntry = entries.getOrNull(i + 1)
+                val nextBoundary = if (nextEntry != null) {
+                    val nextMinDep = nextEntry.value.allDepMinutes.filter { it >= qMin }.minOrNull()
+                    if (nextMinDep != null) minOf(nextEntry.key, nextMinDep) else nextEntry.key
+                } else {
+                    1435
+                }
+                val probeMin = maxDep + 1
+                if (probeMin in (qMin + 1) until nextBoundary && probeMin !in queriedMinutes) {
+                    gapProbes.add(probeMin)
+                }
+            }
+            if (gapProbes.isEmpty()) break
+            runBatch(gapProbes.take(12))
+        }
+
+        resultsByQueryMin.values.flatMap { it.icTrains }
     }
 
     suspend fun fetchLiveTrainConnections(
@@ -356,27 +421,25 @@ class ScheduleClient(private val stationsRepo: StationsRepository) {
         val dateFormatted = formatHafasDate(travelDate)
 
         coroutineScope {
-            val directJobs = FULL_DAY_WINDOWS.map { w ->
-                async { fetchSingleWindowTrains(fromName, fromEva, toName, toEva, dateFormatted, w, true) }
+            val directDeferred = async {
+                fetchAdaptiveFullDay(fromName, fromEva, toName, toEva, dateFormatted, true)
             }
-            val transferJobs = if (!directOnly) {
-                FULL_DAY_WINDOWS.map { w ->
-                    async { fetchSingleWindowTrains(fromName, fromEva, toName, toEva, dateFormatted, w, false) }
+            val transferDeferred = if (!directOnly) {
+                async {
+                    fetchAdaptiveFullDay(fromName, fromEva, toName, toEva, dateFormatted, false)
                 }
-            } else emptyList()
+            } else null
 
-            val directBatches = directJobs.awaitAll()
-            val transferBatches = transferJobs.awaitAll()
+            val directTrains = directDeferred.await()
+            val transferTrains = transferDeferred?.await().orEmpty()
 
             val allTrains = ArrayList<TrainConnection>()
             val seen = HashSet<Pair<String, String>>()
 
-            for (batch in directBatches + transferBatches) {
-                for (t in batch) {
-                    val codeStr = TRAIN_CODE_PREFIX_REGEX.find(t.trainNumber)?.value ?: t.trainNumber
-                    if (seen.add(codeStr to t.departure)) {
-                        allTrains.add(t)
-                    }
+            for (t in directTrains + transferTrains) {
+                val codeStr = TRAIN_CODE_PREFIX_REGEX.find(t.trainNumber)?.value ?: t.trainNumber
+                if (seen.add(codeStr to t.departure)) {
+                    allTrains.add(t)
                 }
             }
             allTrains.sortedBy { it.departure }

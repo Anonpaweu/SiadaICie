@@ -36,7 +36,9 @@ Najprościej zainstalować gotową aplikację na telefonie (Android 10+ / API 29
 1. Pobierz najnowszy plik `.apk` ze strony **[GitHub Releases](https://github.com/Anonpaweu/SiadaICie/releases)** bezpośrednio na telefon.
 2. Otwórz pobrany plik i zezwól na instalację z nieznanych źródeł (jeśli Google Play Protect poprosi o potwierdzenie dla aplikacji spoza Sklepu Play, wybierz *„Zainstaluj mimo to”*).
 
-> **Demo aplikacji:** tutaj możesz wkleić link do `SiadaICie_demo.mp4` po przeciągnięciu pliku w edytorze GitHuba (GitHub automatycznie zamieni go w odtwarzacz wideo).
+### Demo działania (e-IC pokazuje brak miejsc -> SiadaICie znajduje fotele i siatkę miejsc)
+
+https://github.com/user-attachments/assets/398321dd-2f49-4fc7-af03-6585f12016a5
 
 ---
 

@@ -43,6 +43,7 @@ FALLBACK_STATIONS: List[Dict[str, str]] = [
     {"eva_code": "5100032", "name": "Kutno"},
     {"eva_code": "5100005", "name": "Bydgoszcz Główna"},
     {"eva_code": "5104415", "name": "Żyrardów"},
+    {"eva_code": "5100059", "name": "Świnoujście"},
     {"eva_code": "5100119", "name": "Koluszki"},
     {"eva_code": "5100046", "name": "Opole Główne"},
     {"eva_code": "5100097", "name": "Częstochowa"},

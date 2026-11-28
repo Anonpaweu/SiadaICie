@@ -1,6 +1,7 @@
 """
 Tests for PKP schedule scraper and live train connection provider.
 """
+import os
 import pytest
 from backend.app.scraper.schedule_scraper import (
     get_station_info,
@@ -79,6 +80,7 @@ def test_clean_pkp_train_name():
     assert clean_pkp_train_name("prognozowany planowy przyjazd pociągu") == ""
 
 
+@pytest.mark.skipif(os.getenv("CI") == "true", reason="Live rozklad-pkp.pl network test skipped on CI runners")
 def test_fetch_live_train_connections_direct_only():
     """Verify live train connections returns list of direct trains across full day."""
     trains = fetch_live_train_connections(
@@ -96,6 +98,7 @@ def test_fetch_live_train_connections_direct_only():
         assert ":" in t["arrival"]
 
 
+@pytest.mark.skipif(os.getenv("CI") == "true", reason="Live rozklad-pkp.pl network test skipped on CI runners")
 def test_fetch_live_train_connections_with_transfers():
     """Verify connections list includes both direct and transfer options when direct_only=False."""
     trains = fetch_live_train_connections(
@@ -114,6 +117,7 @@ def test_fetch_live_train_connections_with_transfers():
         assert any(t["train_number"].startswith(brand) for brand in ("IC", "EIP", "EIC", "TLK"))
 
 
+@pytest.mark.skipif(os.getenv("CI") == "true", reason="Live rozklad-pkp.pl network test skipped on CI runners")
 def test_resolve_real_route_koluszki_zakopane():
     """Verify Koluszki -> Zakopane resolves real stops and does not fall back to Kutno/Konin."""
     stops = resolve_real_route(

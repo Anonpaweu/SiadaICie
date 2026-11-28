@@ -26,5 +26,10 @@ jobs:
       - name: Install dependencies
         run: pip install -r backend/requirements.txt
 
+      - name: Seed offline stations database
+        run: python -m backend.app.db.seed_stations
+
       - name: Run pytest
-        run: pytest backend/tests -v
+        env:
+          CI: "true"
+        run: python -m pytest backend/tests -v

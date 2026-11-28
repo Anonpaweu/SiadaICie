@@ -23,6 +23,54 @@ STATIONS_JS_URL = "https://www.intercity.pl/js/station.js"
 EIC2_STATIONS_API_URL = "https://api-gateway.intercity.pl/server/public/endpoint/Aktualizacja"
 EIC2_DEVICE_NR = 956
 
+# Built-in offline fallback dictionary used when live intercity.pl endpoints are unreachable
+# (e.g. nightly maintenance window 23:45-00:30 or cloud CI runners blocked by Akamai).
+FALLBACK_STATIONS: List[Dict[str, str]] = [
+    {"eva_code": "5100065", "name": "Warszawa Centralna"},
+    {"eva_code": "5100067", "name": "Warszawa Zachodnia"},
+    {"eva_code": "5100066", "name": "Warszawa Wschodnia"},
+    {"eva_code": "5100028", "name": "Kraków Główny"},
+    {"eva_code": "5100009", "name": "Gdańsk Główny"},
+    {"eva_code": "5101307", "name": "Gdańsk Wrzeszcz"},
+    {"eva_code": "5100010", "name": "Gdynia Główna"},
+    {"eva_code": "5100056", "name": "Sopot"},
+    {"eva_code": "5100081", "name": "Poznań Główny"},
+    {"eva_code": "5100069", "name": "Wrocław Główny"},
+    {"eva_code": "5100020", "name": "Katowice"},
+    {"eva_code": "5100317", "name": "Łódź Fabryczna"},
+    {"eva_code": "5100037", "name": "Łódź Widzew"},
+    {"eva_code": "5100038", "name": "Łódź Kaliska"},
+    {"eva_code": "5100032", "name": "Kutno"},
+    {"eva_code": "5100005", "name": "Bydgoszcz Główna"},
+    {"eva_code": "5104415", "name": "Żyrardów"},
+    {"eva_code": "5100119", "name": "Koluszki"},
+    {"eva_code": "5100046", "name": "Opole Główne"},
+    {"eva_code": "5100097", "name": "Częstochowa"},
+    {"eva_code": "5100786", "name": "Częstochowa Stradom"},
+    {"eva_code": "5100191", "name": "Piotrków Trybunalski"},
+    {"eva_code": "5100201", "name": "Radomsko"},
+    {"eva_code": "5100210", "name": "Skierniewice"},
+    {"eva_code": "5102206", "name": "Modlin"},
+    {"eva_code": "5100178", "name": "Nasielsk"},
+    {"eva_code": "5100095", "name": "Ciechanów"},
+    {"eva_code": "5100219", "name": "Mława"},
+    {"eva_code": "5100100", "name": "Działdowo"},
+    {"eva_code": "5100075", "name": "Iława Główna"},
+    {"eva_code": "5100040", "name": "Malbork"},
+    {"eva_code": "5100061", "name": "Tczew"},
+    {"eva_code": "5104744", "name": "Opoczno Południe"},
+    {"eva_code": "5104660", "name": "Włoszczowa Północ"},
+    {"eva_code": "5100218", "name": "Miechów"},
+    {"eva_code": "5100258", "name": "Koło"},
+    {"eva_code": "5100026", "name": "Konin"},
+    {"eva_code": "5100157", "name": "Września"},
+    {"eva_code": "5100124", "name": "Kościan"},
+    {"eva_code": "5100036", "name": "Leszno"},
+    {"eva_code": "5100202", "name": "Rawicz"},
+    {"eva_code": "5104359", "name": "Żmigród"},
+    {"eva_code": "5100182", "name": "Oborniki Śląskie"},
+]
+
 
 @functools.lru_cache(maxsize=1)
 def _get_system_ssl_context() -> ssl.SSLContext:
@@ -214,8 +262,8 @@ def seed_stations_table(db_path: str = None):
     stations = fetch_and_parse_pkp_stations()
 
     if not stations:
-        print("Nie udało się pobrać stacji z sieci. Używam wbudowanej bazy bazowej.")
-        return 0
+        print("Nie udało się pobrać stacji z sieci. Ładuję wbudowaną bazę bazową offline...")
+        stations = [_build_station_record(s["eva_code"], s["name"], "") for s in FALLBACK_STATIONS]
 
     conn = get_connection(db_path)
     try:

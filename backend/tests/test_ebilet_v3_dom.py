@@ -10,6 +10,10 @@ import pytest
 from backend.app.scraper.ebilet_seat_scraper import EbiletSeatScraper
 
 SNAPSHOTS_DIR = Path("screeny i html krok po kroku strony icc")
+requires_local_snapshots = pytest.mark.skipif(
+    not SNAPSHOTS_DIR.exists(),
+    reason="Local HTML snapshots folder is gitignored and not present in this checkout",
+)
 
 
 class TestEbiletV3RealDOM:
@@ -19,6 +23,7 @@ class TestEbiletV3RealDOM:
     def scraper(self):
         return EbiletSeatScraper(headless=True)
 
+    @requires_local_snapshots
     def test_step2_connections_list_parsing(self):
         """Verifies finding train cards and buy buttons on real Step 2 HTML."""
         fpath = SNAPSHOTS_DIR / "2-e-IC2 - Internetowa rezerwacja miejsc.html"
@@ -37,6 +42,7 @@ class TestEbiletV3RealDOM:
         assert buy_btn is not None
         assert "Kup bilet" in buy_btn.get("aria-label", "")
 
+    @requires_local_snapshots
     def test_step3_class_2_selection(self):
         """Verifies finding the Class 2 selection button on real Step 3 HTML."""
         fpath = SNAPSHOTS_DIR / "3-e-IC2 - Internetowa rezerwacja miejsc.html"
@@ -48,6 +54,7 @@ class TestEbiletV3RealDOM:
         btn = c2_btns[0]
         assert "Wybierz 2 klasę" in btn.text or "Wybierz 2 klasę" in btn.get("aria-label", "")
 
+    @requires_local_snapshots
     def test_step4_schema_button(self):
         """Verifies finding the button opening seatmap on real Step 4 HTML."""
         fpath = SNAPSHOTS_DIR / "4-e-IC2 - Internetowa rezerwacja miejsc.html"
@@ -58,6 +65,7 @@ class TestEbiletV3RealDOM:
         assert len(schema_btns) > 0
         assert any("Wybierz miejsce" in b.text for b in schema_btns)
 
+    @requires_local_snapshots
     def test_step6_wagon_slides_and_class_filtering(self):
         """Verifies identifying all 8 wagons and filtering Class 2 sitting cars."""
         fpath = SNAPSHOTS_DIR / "6-e-IC2 - Internetowa rezerwacja miejsc.html"
@@ -81,6 +89,7 @@ class TestEbiletV3RealDOM:
         # Wagons 3, 4, 5, 6, 7, 8 are Class 2 (Wagons 1 & 2 are Class 1)
         assert class2_wagons == ["3", "4", "5", "6", "7", "8"]
 
+    @requires_local_snapshots
     def test_seatmap_iframe_free_seats_extraction(self):
         """Verifies extracting exact available seat numbers from saved seatmap iframe."""
         fpath = SNAPSHOTS_DIR / "6-e-IC2 - Internetowa rezerwacja miejsc_files" / "saved_resource(1).html"
@@ -139,6 +148,7 @@ class TestEbiletV3RealDOM:
         assert "3" in result
         assert result["3"] == ["14", "17"]
 
+    @requires_local_snapshots
     def test_wagon_aria_label_extraction_step6(self):
         """Verifies extracting wagon number from aria-label on Step 6 slides."""
         fpath = SNAPSHOTS_DIR / "6-e-IC2 - Internetowa rezerwacja miejsc.html"
@@ -284,6 +294,7 @@ class TestEbiletV3RealDOM:
         payload = [{"wagony": [{"nr": "3", "klasa": "2"}, {"nr": "4", "klasa": "2", "seats": []}]}]
         assert scraper._extract_seats_from_json_list(payload, ticket_class=2) == {}
 
+    @requires_local_snapshots
     def test_parse_grm_wagon_svg_real_snapshot(self):
         """Verifies parse_grm_wagon_svg on the real saved e-IC 2.0 SVG snapshot."""
         from backend.app.scraper.ebilet_seat_scraper import parse_grm_wagon_svg
